@@ -489,6 +489,7 @@ PoC完了時に次を判断する。
 - 複数Viewport
 - 複数Window
 - Timeline／Dope Sheet
+- Temporal Editorの詳細は[`TIMELINE_PLAN.md`](TIMELINE_PLAN.md)を参照
 - Node Editor
 - Undo／Redo Command System
 - PMX／VMD Loader
