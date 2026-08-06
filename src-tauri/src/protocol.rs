@@ -6,7 +6,7 @@
 /// Rectangle (in CSS pixels, relative to the window's inner viewport) that
 /// the frontend wants the native wgpu cube to be drawn into. Fixed IPC
 /// contract shared with the web side.
-#[derive(serde::Deserialize, Clone, Copy, Debug)]
+#[derive(serde::Deserialize, Clone, Copy, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ViewportRect {
     pub x: f32,

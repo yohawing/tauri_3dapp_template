@@ -2,8 +2,8 @@ mod camera;
 mod protocol;
 mod renderer;
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 use tauri::{Manager, RunEvent, WindowEvent};
 
@@ -16,6 +16,37 @@ use renderer::Renderer;
 /// reconfigured on resize so reactivation is seamless.
 struct RendererActive(AtomicBool);
 
+/// Diagnostic-only state for `[viewport-rect]` logging (see
+/// `set_viewport_rect`). Deliberately kept separate from `Renderer`: by the
+/// time a rect reaches `Renderer` it has already been converted from the
+/// wire-format CSS-pixel `ViewportRect` into a physical-pixel tuple
+/// (`viewport_px`), which is the representation the render loop cares about.
+/// The *previous raw `ViewportRect`* (for IPC-level dedup) and a log
+/// sequence number are purely a diagnostic concern of this command, not
+/// something the renderer needs to know about, so they get their own managed
+/// state — the same pattern already used for `RendererActive`.
+#[derive(Default)]
+struct ViewportRectLog {
+    last: Mutex<Option<ViewportRect>>,
+    seq: AtomicU64,
+}
+
+/// Whether `[viewport-rect]` diagnostic logging is enabled, read once from
+/// the `TAURI3D_LOG_VIEWPORT_RECT` env var (any value other than unset or
+/// `"0"` enables it). An env var (rather than `#[cfg(debug_assertions)]`) is
+/// used so the logging can be toggled per-run without needing a rebuild —
+/// useful since dev builds are already noisy and this is opt-in
+/// instrumentation for one specific verification task, not something that
+/// should print on every debug run.
+fn viewport_rect_logging_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("TAURI3D_LOG_VIEWPORT_RECT")
+            .map(|v| v != "0")
+            .unwrap_or(false)
+    })
+}
+
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -23,7 +54,23 @@ fn greet(name: &str) -> String {
 }
 
 #[tauri::command]
-fn set_viewport_rect(state: tauri::State<Mutex<Renderer>>, rect: ViewportRect) {
+fn set_viewport_rect(
+    state: tauri::State<Mutex<Renderer>>,
+    log: tauri::State<ViewportRectLog>,
+    rect: ViewportRect,
+) {
+    if viewport_rect_logging_enabled() {
+        let mut last = log.last.lock().unwrap();
+        if *last != Some(rect) {
+            let seq = log.seq.fetch_add(1, Ordering::Relaxed);
+            eprintln!(
+                "[viewport-rect] #{seq} x={:.1} y={:.1} w={:.1} h={:.1} scale={:.2}",
+                rect.x, rect.y, rect.width, rect.height, rect.scale_factor
+            );
+            *last = Some(rect);
+        }
+    }
+
     let mut renderer = state.lock().unwrap();
     renderer::apply_viewport_rect(&mut renderer, rect);
 }
@@ -78,6 +125,7 @@ pub fn run() {
             app.manage(Mutex::new(renderer));
             app.manage(Mutex::new(OrbitCamera::default()));
             app.manage(RendererActive(AtomicBool::new(true)));
+            app.manage(ViewportRectLog::default());
 
             // tauri-runtime-wry hard-resets tao's ControlFlow to `Wait` on every
             // loop iteration (it never lets user code switch to `Poll`), so
