@@ -1,0 +1,49 @@
+/*
+ * Global reset for the transparent-WebView PoC.
+ *
+ * html, body, and #root must fill the window and stay fully transparent so
+ * the native wgpu renderer (drawn behind the WebView by the Rust side) is
+ * visible wherever the React UI doesn't paint an opaque panel background.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+
+#root {
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+
+body {
+  font-family:
+    Inter,
+    "Segoe UI",
+    -apple-system,
+    BlinkMacSystemFont,
+    Avenir,
+    Helvetica,
+    Arial,
+    sans-serif;
+  font-size: 13px;
+  color: #e4e4e7;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+}

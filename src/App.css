@@ -1,0 +1,242 @@
+/*
+ * DCC-style shell layout:
+ *
+ *   ┌────────────────────────────────────────────┐
+ *   │ Toolbar                                    │
+ *   ├────────────┬──────────────────┬────────────┤
+ *   │ Outliner   │  ViewportHost    │ Inspector  │
+ *   ├────────────┴──────────────────┴────────────┤
+ *   │ Timeline / Console                         │
+ *   └────────────────────────────────────────────┘
+ *
+ * Only .viewport-host stays fully transparent; every chrome panel gets a
+ * semi-opaque dark background so overlap with the native render is visible.
+ */
+
+.app-shell {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-columns: 220px 1fr 280px;
+  grid-template-rows: 40px 1fr 140px;
+  grid-template-areas:
+    "toolbar toolbar toolbar"
+    "outliner viewport inspector"
+    "timeline timeline timeline";
+  background: transparent;
+  user-select: none;
+}
+
+.app-shell--no-inspector {
+  grid-template-columns: 220px 1fr;
+  grid-template-areas:
+    "toolbar toolbar"
+    "outliner viewport"
+    "timeline timeline";
+}
+
+/* ---------- Toolbar ---------- */
+
+.toolbar {
+  grid-area: toolbar;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px;
+  background: rgba(24, 24, 28, 0.92);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.toolbar__title {
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  color: #f4f4f5;
+}
+
+.toolbar__spacer {
+  flex: 1;
+}
+
+.toolbar__button {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  color: #e4e4e7;
+  font-size: 12px;
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.toolbar__button:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.toolbar__button:active {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+/* ---------- Generic panel chrome ---------- */
+
+.panel {
+  background: rgba(24, 24, 28, 0.92);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.panel__header {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #9a9aa2;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* ---------- Outliner ---------- */
+
+.outliner {
+  grid-area: outliner;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.outliner__tree {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  flex: 1;
+  overflow: auto;
+}
+
+.outliner__item {
+  padding: 3px 10px;
+  font-size: 12px;
+  color: #d4d4d8;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.outliner__item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* ---------- Inspector ---------- */
+
+.inspector {
+  grid-area: inspector;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.inspector__rows {
+  padding: 6px 0;
+  flex: 1;
+  overflow: auto;
+}
+
+.inspector__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.inspector__label {
+  color: #9a9aa2;
+}
+
+.inspector__value {
+  color: #e4e4e7;
+  font-family: "SF Mono", Consolas, monospace;
+  white-space: nowrap;
+}
+
+/* ---------- Timeline ---------- */
+
+.timeline {
+  grid-area: timeline;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.timeline__ruler {
+  display: flex;
+  flex: 0 0 auto;
+  overflow-x: auto;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.timeline__tick {
+  flex: 0 0 48px;
+  padding: 4px 0 4px 6px;
+  font-size: 10px;
+  color: #9a9aa2;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.timeline__track {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  background: repeating-linear-gradient(
+    to right,
+    rgba(255, 255, 255, 0.03),
+    rgba(255, 255, 255, 0.03) 1px,
+    transparent 1px,
+    transparent 48px
+  );
+}
+
+/* ---------- ViewportHost ---------- */
+
+.viewport-host {
+  grid-area: viewport;
+  position: relative;
+  background: transparent;
+  touch-action: none;
+  cursor: grab;
+}
+
+.viewport-host__overlay {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  padding: 6px 10px;
+  background: rgba(24, 24, 28, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #e4e4e7;
+  font-family: "SF Mono", Consolas, monospace;
+}
+
+.viewport-host__label {
+  font-family:
+    Inter,
+    "Segoe UI",
+    -apple-system,
+    BlinkMacSystemFont,
+    Avenir,
+    Helvetica,
+    Arial,
+    sans-serif;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.viewport-host__rect {
+  color: #a1a1aa;
+  white-space: nowrap;
+}
+
+.viewport-host__hint {
+  margin-top: 4px;
+  color: #a1a1aa;
+  white-space: nowrap;
+}
