@@ -1,0 +1,92 @@
+#!/bin/sh
+#
+# pre-push hook: refuse force pushes and remote-branch deletions.
+#
+# WHY: force-pushes and branch deletions can silently discard commits that
+# collaborators (or CI) already depend on. This hook makes those actions
+# fail loudly in this clone instead of surprising someone later.
+#
+# IMPORTANT LIMITATIONS - read before relying on this:
+#   * This is a LOCAL, PER-CLONE safety net only. It lives in .git/hooks/,
+#     which is never committed/cloned, so it protects only this working
+#     copy unless every collaborator installs it themselves (see
+#     .githooks/pre-push and the activation note next to it).
+#   * It is trivially bypassed with `git push --no-verify`, and anyone can
+#     delete or edit this file. It is NOT a security control.
+#   * The authoritative protection against force-push/deletion must be a
+#     server-side rule (e.g. a GitHub branch protection ruleset / required
+#     status checks on the remote). Treat this hook as a courtesy check
+#     that catches honest mistakes, not as enforcement.
+#
+# Git invokes this hook as:  pre-push <remote-name> <remote-url>
+# and feeds one line per pushed ref on stdin:
+#   <local-ref> <local-sha> <remote-ref> <remote-sha>
+
+remote_name="$1"
+remote_url="$2"
+
+exit_status=0
+
+# Return success (0) if "$1" is an all-zero SHA sentinel of any length.
+#
+# Git uses a string of all zeros (one per hex digit of the repo's hash
+# algorithm) to mean "this ref does not exist yet/anymore" - 40 zeros for
+# SHA-1, 64 for SHA-256. Some codepaths also emit a shorter/abbreviated
+# all-zero form. Rather than hardcode "0000000000000000000000000000000000000000"
+# (SHA-1-only), we accept ANY non-empty string made up entirely of the
+# digit 0, so this keeps working if the repo is ever migrated to SHA-256
+# or a future hash algorithm.
+is_zero_sha() {
+	case "$1" in
+	'') return 1 ;;      # empty string is not a valid sentinel
+	*[!0]*) return 1 ;;  # contains a non-zero character -> not the sentinel
+	*) return 0 ;;       # non-empty and only '0' characters -> zero sentinel
+	esac
+}
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+	# Guard against a trailing blank/partial line.
+	[ -n "$local_ref" ] || continue
+
+	if is_zero_sha "$local_sha"; then
+		printf 'pre-push: REJECTED deletion of remote ref %s (via %s)\n' \
+			"$remote_ref" "$remote_name" >&2
+		printf '  Deleting remote branches is blocked by the local pre-push hook.\n' >&2
+		printf '  If you really intend to delete this branch, delete it through\n' >&2
+		printf '  the GitHub UI/API (or run with --no-verify if you are certain\n' >&2
+		printf '  this is safe and intentional).\n' >&2
+		exit_status=1
+		continue
+	fi
+
+	if is_zero_sha "$remote_sha"; then
+		# Brand-new remote branch: nothing can be discarded. Allow.
+		continue
+	fi
+
+	if ! git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
+		printf 'pre-push: REJECTED push to %s: remote tip %s is unknown in this clone\n' \
+			"$remote_ref" "$remote_sha" >&2
+		printf '  This clone does not have the object the remote currently points\n' >&2
+		printf '  at, so it is impossible to verify this push would be a fast-forward.\n' >&2
+		printf '  Run "git fetch %s" (or "git fetch --all") and try again.\n' "$remote_name" >&2
+		exit_status=1
+		continue
+	fi
+
+	if ! git merge-base --is-ancestor "$remote_sha" "$local_sha"; then
+		printf 'pre-push: REJECTED non-fast-forward (force) push to %s\n' "$remote_ref" >&2
+		printf '  Local %s (%s) does not contain the current remote tip (%s).\n' \
+			"$local_ref" "$local_sha" "$remote_sha" >&2
+		printf '  Pushing would discard commits already on the remote. Run\n' >&2
+		printf '  "git fetch && git rebase %s/%s" (or merge) to incorporate the\n' \
+			"$remote_name" "$remote_ref" >&2
+		printf '  remote changes, then push again. If you are certain the remote\n' >&2
+		printf '  history should be overwritten, use --force-with-lease deliberately\n' >&2
+		printf '  and --no-verify to bypass this local check.\n' >&2
+		exit_status=1
+		continue
+	fi
+done
+
+exit "$exit_status"
