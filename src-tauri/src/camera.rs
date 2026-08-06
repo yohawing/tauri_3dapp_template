@@ -3,7 +3,7 @@
 
 use glam::{Mat4, Vec3};
 
-use crate::protocol::ViewportInput;
+use crate::protocol::{CameraState, ViewportInput};
 
 const PITCH_LIMIT: f32 = 1.55;
 const MIN_DISTANCE: f32 = 0.5;
@@ -86,6 +86,28 @@ impl OrbitCamera {
                 self.distance = (self.distance * (dy * ZOOM_SPEED).exp()).clamp(MIN_DISTANCE, MAX_DISTANCE);
             }
         }
+    }
+
+    /// Snapshot of the camera state for handing off to a Canvas fallback
+    /// renderer (see `CameraState`).
+    pub fn state(&self) -> CameraState {
+        CameraState {
+            target: self.target.into(),
+            yaw: self.yaw,
+            pitch: self.pitch,
+            distance: self.distance,
+        }
+    }
+
+    /// Restores camera state (e.g. handed back from a Canvas fallback
+    /// renderer), clearing any in-progress drag so the next input event
+    /// starts clean.
+    pub fn set_state(&mut self, state: CameraState) {
+        self.target = state.target.into();
+        self.yaw = state.yaw;
+        self.pitch = state.pitch;
+        self.distance = state.distance;
+        self.drag = DragMode::None;
     }
 
     fn eye(&self) -> Vec3 {

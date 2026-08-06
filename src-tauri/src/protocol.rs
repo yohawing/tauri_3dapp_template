@@ -27,6 +27,7 @@ pub struct ViewportRect {
 /// `modifiers` is a bitfield: 1=Shift, 2=Ctrl, 4=Alt, 8=Meta.
 #[derive(serde::Deserialize, Clone, Copy, Debug)]
 #[serde(tag = "type", rename_all = "camelCase")]
+#[allow(dead_code)] // fields are part of the fixed IPC contract; not all are read yet
 pub enum ViewportInput {
     PointerMove {
         x: f32,
@@ -51,4 +52,15 @@ pub enum ViewportInput {
         dy: f32,
         modifiers: u16,
     },
+}
+
+/// Orbit camera state exchanged with the frontend so a Canvas (three.js)
+/// fallback renderer can take over the viewport with camera continuity.
+/// Fixed IPC contract shared with the web side.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug)]
+pub struct CameraState {
+    pub target: [f32; 3],
+    pub yaw: f32,
+    pub pitch: f32,
+    pub distance: f32,
 }

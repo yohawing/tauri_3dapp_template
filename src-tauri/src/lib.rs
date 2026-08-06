@@ -2,13 +2,19 @@ mod camera;
 mod protocol;
 mod renderer;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use tauri::{Manager, RunEvent, WindowEvent};
 
 use camera::OrbitCamera;
-use protocol::{ViewportInput, ViewportRect};
+use protocol::{CameraState, ViewportInput, ViewportRect};
 use renderer::Renderer;
+
+/// Whether the native wgpu renderer should draw this frame. Flipped off when
+/// the frontend switches to its Canvas fallback; the surface is still kept
+/// reconfigured on resize so reactivation is seamless.
+struct RendererActive(AtomicBool);
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
@@ -33,6 +39,25 @@ fn viewport_input(state: tauri::State<Mutex<OrbitCamera>>, input: ViewportInput)
     camera.handle_input(input);
 }
 
+/// Toggles the native renderer on/off so the frontend can hand the viewport
+/// over to (or reclaim it from) a Canvas fallback. When inactive,
+/// `MainEventsCleared` skips rendering entirely; resize still reconfigures
+/// the surface so reactivation is clean.
+#[tauri::command]
+fn set_renderer_active(state: tauri::State<RendererActive>, active: bool) {
+    state.0.store(active, Ordering::Relaxed);
+}
+
+#[tauri::command]
+fn get_camera(state: tauri::State<Mutex<OrbitCamera>>) -> CameraState {
+    state.lock().unwrap().state()
+}
+
+#[tauri::command]
+fn set_camera(state: tauri::State<Mutex<OrbitCamera>>, camera: CameraState) {
+    state.lock().unwrap().set_state(camera);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -40,7 +65,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             set_viewport_rect,
-            viewport_input
+            viewport_input,
+            set_renderer_active,
+            get_camera,
+            set_camera
         ])
         .setup(|app| {
             let window = app.get_webview_window("main").expect("no main window");
@@ -49,6 +77,7 @@ pub fn run() {
             let renderer = Renderer::new(window, (size.width, size.height));
             app.manage(Mutex::new(renderer));
             app.manage(Mutex::new(OrbitCamera::default()));
+            app.manage(RendererActive(AtomicBool::new(true)));
 
             // tauri-runtime-wry hard-resets tao's ControlFlow to `Wait` on every
             // loop iteration (it never lets user code switch to `Poll`), so
@@ -82,6 +111,10 @@ pub fn run() {
                 renderer.resize(size.width, size.height);
             }
             RunEvent::MainEventsCleared => {
+                if !app_handle.state::<RendererActive>().0.load(Ordering::Relaxed) {
+                    return;
+                }
+
                 let renderer_state = app_handle.state::<Mutex<Renderer>>();
                 let camera_state = app_handle.state::<Mutex<OrbitCamera>>();
 
