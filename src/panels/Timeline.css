@@ -1,67 +1,321 @@
-/* Self-contained styling for the Timeline panel. The panel paints its own
- * opaque background because dockview keeps its containers transparent so the
- * native 3D viewport can show through elsewhere. */
-
 .timeline-panel {
+  --timeline-border: rgba(255, 255, 255, 0.075);
   width: 100%;
   height: 100%;
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  background: #1e1e22;
-  color: #d4d4d8;
-  font-family:
-    Inter,
-    "Segoe UI",
-    -apple-system,
-    BlinkMacSystemFont,
-    Avenir,
-    Helvetica,
-    Arial,
-    sans-serif;
+  overflow: hidden;
+  background: #181a20;
+  color: #d8d9df;
+  font-family: Inter, "Segoe UI", sans-serif;
 }
 
-/* Now the single title for this panel — dockview's own tab bar is hidden
- * (see App.tsx's onDidAddGroup), so this header no longer duplicates a tab
- * label above it. Styled to match the app's toolbar (same background/text
- * colors) rather than the old uppercase/11px "tab label" look, since it now
- * carries the full titling job on its own. */
 .timeline-panel__header {
-  flex: 0 0 auto;
-  padding: 7px 10px;
-  font-size: 12px;
-  font-weight: 600;
+  flex: 0 0 34px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 9px;
+  background: linear-gradient(180deg, #24262e 0%, #1f2128 100%);
+  border-bottom: 1px solid var(--timeline-border);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
+}
+
+.timeline-panel__title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 105px;
+  color: #f1f1f4;
+  font-size: 11px;
+  font-weight: 650;
   letter-spacing: 0.02em;
-  color: #e4e4e7;
-  background: rgba(24, 24, 28, 0.92);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.timeline-panel__title-icon {
+  color: #8997ff;
+  font-size: 9px;
+}
+
+.timeline-panel__tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.timeline-tool,
+.timeline-transport {
+  appearance: none;
+  height: 23px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: #9fa2ac;
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.timeline-tool {
+  padding: 0 7px;
+}
+
+.timeline-tool--active {
+  color: #e7e9ff;
+  background: rgba(117, 132, 255, 0.18);
+  border-color: rgba(137, 151, 255, 0.35);
+}
+
+.timeline-transport {
+  width: 24px;
+  padding: 0;
+  font-size: 9px;
+}
+
+.timeline-transport--play {
+  color: #f4f4f6;
+  background: rgba(255, 255, 255, 0.075);
+}
+
+.timeline-panel__divider {
+  width: 1px;
+  height: 17px;
+  margin: 0 3px;
+  background: var(--timeline-border);
+}
+
+.timeline-panel__readout {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #ececf0;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.timeline-panel__status-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #ff5d73;
+  box-shadow: 0 0 7px rgba(255, 93, 115, 0.65);
+}
+
+.timeline-panel__fps {
+  color: #777b86;
+}
+
+.timeline-panel__body {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 228px minmax(0, 1fr);
+  grid-template-rows: 25px minmax(0, 1fr);
+}
+
+.timeline-panel__tree-heading,
+.timeline-panel__ruler-viewport {
+  background: #202229;
+  border-bottom: 1px solid var(--timeline-border);
+}
+
+.timeline-panel__tree-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px;
+  border-right: 1px solid var(--timeline-border);
+  color: #727681;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.timeline-panel__tree-actions {
+  color: #8d909a;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+}
+
+.timeline-panel__ruler-viewport,
+.timeline-panel__tree-viewport {
+  position: relative;
+  overflow: hidden;
 }
 
 .timeline-panel__ruler {
-  display: flex;
-  flex: 0 0 auto;
-  overflow-x: auto;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  position: relative;
+  height: 100%;
+  will-change: transform;
+  background: repeating-linear-gradient(
+    to right,
+    transparent 0,
+    transparent 51px,
+    rgba(255, 255, 255, 0.055) 52px
+  );
 }
 
 .timeline-panel__tick {
-  flex: 0 0 48px;
-  padding: 4px 0 4px 6px;
-  font-size: 10px;
-  color: #9a9aa2;
-  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  position: absolute;
+  top: 0;
+  width: 1px;
+  height: 100%;
+  border-left: 1px solid rgba(255, 255, 255, 0.13);
 }
 
-.timeline-panel__track {
-  flex: 1;
+.timeline-panel__tick span {
+  position: absolute;
+  top: 6px;
+  left: 5px;
+  color: #7d818c;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 8px;
+  white-space: nowrap;
+}
+
+.timeline-panel__ruler-playhead {
+  position: absolute;
+  top: 0;
+  width: 0;
+  height: 100%;
+  border-left: 1px solid #ff5d73;
+}
+
+.timeline-panel__ruler-playhead::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -4px;
+  width: 7px;
+  height: 6px;
+  border-radius: 0 0 3px 3px;
+  background: #ff5d73;
+}
+
+.timeline-panel__tree-viewport {
+  border-right: 1px solid var(--timeline-border);
+  background: #1b1d23;
+}
+
+.timeline-panel__tree-viewport > div {
+  will-change: transform;
+}
+
+.timeline-row {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding-right: 7px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.055);
+  color: #c8cad1;
+  font-size: 10px;
+}
+
+.timeline-row:nth-child(odd) {
+  background: rgba(255, 255, 255, 0.012);
+}
+
+.timeline-row--group {
+  background: #22242d !important;
+  color: #9da0aa;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+}
+
+.timeline-row:hover {
+  background: rgba(127, 140, 255, 0.075);
+}
+
+.timeline-row__disclosure {
+  flex: 0 0 10px;
+  color: #80848e;
+  font-size: 8px;
+}
+
+.timeline-row__color {
+  flex: 0 0 3px;
+  align-self: stretch;
+  margin: 7px 7px 7px 0;
+  border-radius: 2px;
+  opacity: 0.85;
+}
+
+.timeline-row__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timeline-row__binding {
+  margin-left: auto;
+  max-width: 58px;
+  overflow: hidden;
+  color: #696e79;
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timeline-row__state {
+  flex: 0 0 14px;
+  color: #555964;
+  font-size: 8px;
+  text-align: right;
+}
+
+.timeline-row__state.is-on {
+  color: #e9b867;
+}
+
+.timeline-panel__canvas-viewport {
+  min-width: 0;
   min-height: 0;
-  position: relative;
-  background: repeating-linear-gradient(
-    to right,
-    rgba(255, 255, 255, 0.03),
-    rgba(255, 255, 255, 0.03) 1px,
-    transparent 1px,
-    transparent 48px
-  );
+  overflow: auto;
+  background: #191b21;
+  scrollbar-color: #3b3e48 #1b1d23;
+  scrollbar-width: thin;
+}
+
+.timeline-panel__canvas-viewport canvas {
+  display: block;
+}
+
+.timeline-panel__canvas-viewport::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.timeline-panel__canvas-viewport::-webkit-scrollbar-track {
+  background: #1b1d23;
+}
+
+.timeline-panel__canvas-viewport::-webkit-scrollbar-thumb {
+  border: 2px solid #1b1d23;
+  border-radius: 5px;
+  background: #3b3e48;
+}
+
+@media (max-width: 760px) {
+  .timeline-panel__body {
+    grid-template-columns: 180px minmax(0, 1fr);
+  }
+
+  .timeline-panel__title {
+    min-width: auto;
+  }
+
+  .timeline-panel__fps,
+  .timeline-tool:not(.timeline-tool--active) {
+    display: none;
+  }
 }
