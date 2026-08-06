@@ -1,0 +1,53 @@
+/* Self-contained styling for the Inspector panel. The panel paints its own
+ * opaque background because dockview keeps its containers transparent so the
+ * native 3D viewport can show through elsewhere. */
+
+.inspector-panel {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: #1e1e22;
+  color: #d4d4d8;
+  font-family:
+    Inter,
+    "Segoe UI",
+    -apple-system,
+    BlinkMacSystemFont,
+    Avenir,
+    Helvetica,
+    Arial,
+    sans-serif;
+}
+
+/* Now the single title for this panel — dockview's own tab bar is hidden
+ * (see App.tsx's onDidAddGroup), so this header no longer duplicates a tab
+ * label above it. Styled to match the app's toolbar (same background/text
+ * colors) rather than the old uppercase/11px "tab label" look, since it now
+ * carries the full titling job on its own. */
+.inspector-panel__header {
+  flex: 0 0 auto;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #e4e4e7;
+  background: rgba(24, 24, 28, 0.92);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.inspector-panel__pane {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 8px;
+}
+
+/* tweakpane's root element has no explicit width when given a custom
+ * `container` (that's only forced for its own default floating wrapper), so
+ * as a block element it naturally stretches to fill this 100%-wide parent. */
+.inspector-panel__pane > .tp-rotv {
+  width: 100%;
+}

@@ -2,47 +2,41 @@
  * DCC-style shell layout:
  *
  *   ┌────────────────────────────────────────────┐
- *   │ Toolbar                                    │
- *   ├────────────┬──────────────────┬────────────┤
- *   │ Outliner   │  ViewportHost    │ Inspector  │
- *   ├────────────┴──────────────────┴────────────┤
- *   │ Timeline / Console                         │
+ *   │ Toolbar (plain DOM, fixed height)          │
+ *   ├──────────────────────────────────────────────┤
+ *   │ dockview (fills the rest — Outliner/         │
+ *   │ Viewport/Inspector/Timeline are dock panels, │
+ *   │ freely resizable via sashes; dockview's own  │
+ *   │ tab bar/dnd are off, so rearranging isn't)   │
  *   └────────────────────────────────────────────┘
  *
- * Only .viewport-host stays fully transparent; every chrome panel gets a
- * semi-opaque dark background so overlap with the native render is visible.
+ * dockview's own stylesheet (dockview/dist/styles/dockview.css) paints an
+ * opaque background on every group (`.dv-groupview`), which would hide the
+ * native wgpu render behind the viewport panel. We neutralize that globally
+ * within `.dockview-shell` and instead paint the opaque background ourselves
+ * on each non-viewport panel's content wrapper (`.dock-panel-content`) — see
+ * the ViewportHost section below for why the viewport panel is left
+ * transparent instead.
  */
 
 .app-shell {
   width: 100%;
   height: 100%;
-  display: grid;
-  grid-template-columns: 220px 1fr 280px;
-  grid-template-rows: 40px 1fr 140px;
-  grid-template-areas:
-    "toolbar toolbar toolbar"
-    "outliner viewport inspector"
-    "timeline timeline timeline";
+  display: flex;
+  flex-direction: column;
   background: transparent;
   user-select: none;
-}
-
-.app-shell--no-inspector {
-  grid-template-columns: 220px 1fr;
-  grid-template-areas:
-    "toolbar toolbar"
-    "outliner viewport"
-    "timeline timeline";
 }
 
 /* ---------- Toolbar ---------- */
 
 .toolbar {
-  grid-area: toolbar;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 0 12px;
+  height: 40px;
   background: rgba(24, 24, 28, 0.92);
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
@@ -77,125 +71,80 @@
   background: rgba(255, 255, 255, 0.18);
 }
 
-/* ---------- Generic panel chrome ---------- */
+/* ---------- dockview shell ---------- */
 
-.panel {
-  background: rgba(24, 24, 28, 0.92);
-  display: flex;
-  flex-direction: column;
+.dockview-shell {
+  flex: 1;
   min-height: 0;
   min-width: 0;
+  position: relative;
+  background: transparent;
+}
+
+/* Neutralize every opaque layer in the ancestor chain that sits behind panel
+ * content, so the viewport panel's transparency isn't blocked. The chain,
+ * confirmed against node_modules/dockview-react/dist/styles/dockview.css and
+ * the live DOM, is:
+ *
+ *   .dockview-shell (ours, transparent)
+ *     -> .dv-dockview            (root grid element; opaque in every theme)
+ *          -> grid/branch/leaf nodes (no background rule — already fine)
+ *               -> .dv-groupview      (per-tab-group content pane; opaque)
+ *                    -> .dv-content-container (no background rule — already fine)
+ *                         -> .dv-react-part    (dockview-react's fixed
+ *                              per-panel wrapper class, no background rule)
+ *                              -> .dock-panel-content (ours, see below)
+ *     -> .dv-resize-container    (wraps each *floating* group; not used by
+ *                                  our default layout, and no longer reachable
+ *                                  by dragging a panel out — see `disableDnd`
+ *                                  on <DockviewReact> in App.tsx — but still
+ *                                  reachable programmatically via api.addGroup
+ *                                  ({ floating: true }), so this stays
+ *                                  neutralized in case that's ever wired up)
+ *
+ * Each of these three paints `var(--dv-group-view-background-color)`
+ * directly (verified via grep of the stylesheet), so all three are listed
+ * explicitly rather than relying on one to imply the others.
+ *
+ * Deliberately NOT included: .dv-tab / .dv-tab-group-chip,
+ * .dv-tabs-overflow-container, .dv-context-menu, .dv-floating-titlebar. These
+ * are dock chrome rather than the content backdrop, and must stay opaque for
+ * the UI to stay readable if they're ever shown. `.dv-tabs-and-actions-container`
+ * (the tab bar) used to be listed here for the same reason, but every group's
+ * tab bar is now hidden via `group.header.hidden = true` (set in App.tsx's
+ * `onDidAddGroup`, not CSS) — display:none takes it out of the render tree
+ * entirely, so its background color is moot and it isn't listed here anymore. */
+.dockview-shell .dv-dockview,
+.dockview-shell .dv-groupview,
+.dockview-shell .dv-resize-container {
+  background-color: transparent;
+}
+
+/* Opaque wrapper painted around every panel's React content — this is what
+ * actually gives Outliner/Inspector/Timeline their solid panel look now that
+ * `.dv-groupview` above no longer provides one. */
+.dock-panel-content {
+  width: 100%;
+  height: 100%;
   overflow: hidden;
 }
 
-.panel__header {
-  flex: 0 0 auto;
-  padding: 6px 10px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: #9a9aa2;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+.dock-panel-content:not(.dock-panel-content--viewport) {
+  background: rgba(24, 24, 28, 0.92);
 }
 
-/* ---------- Outliner ---------- */
-
-.outliner {
-  grid-area: outliner;
-  border-right: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.outliner__tree {
-  list-style: none;
-  margin: 0;
-  padding: 4px 0;
-  flex: 1;
-  overflow: auto;
-}
-
-.outliner__item {
-  padding: 3px 10px;
-  font-size: 12px;
-  color: #d4d4d8;
-  white-space: nowrap;
-  cursor: default;
-}
-
-.outliner__item:hover {
-  background: rgba(255, 255, 255, 0.06);
-}
-
-/* ---------- Inspector ---------- */
-
-.inspector {
-  grid-area: inspector;
-  border-left: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.inspector__rows {
-  padding: 6px 0;
-  flex: 1;
-  overflow: auto;
-}
-
-.inspector__row {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 4px 10px;
-  font-size: 12px;
-}
-
-.inspector__label {
-  color: #9a9aa2;
-}
-
-.inspector__value {
-  color: #e4e4e7;
-  font-family: "SF Mono", Consolas, monospace;
-  white-space: nowrap;
-}
-
-/* ---------- Timeline ---------- */
-
-.timeline {
-  grid-area: timeline;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.timeline__ruler {
-  display: flex;
-  flex: 0 0 auto;
-  overflow-x: auto;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-}
-
-.timeline__tick {
-  flex: 0 0 48px;
-  padding: 4px 0 4px 6px;
-  font-size: 10px;
-  color: #9a9aa2;
-  border-left: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.timeline__track {
-  flex: 1;
-  min-height: 0;
-  position: relative;
-  background: repeating-linear-gradient(
-    to right,
-    rgba(255, 255, 255, 0.03),
-    rgba(255, 255, 255, 0.03) 1px,
-    transparent 1px,
-    transparent 48px
-  );
+/* The viewport panel's content wrapper must stay fully transparent — this is
+ * the hole the native wgpu surface (or, in canvas mode, the three.js canvas)
+ * renders through. */
+.dock-panel-content--viewport {
+  background: transparent;
 }
 
 /* ---------- ViewportHost ---------- */
 
 .viewport-host {
-  grid-area: viewport;
+  width: 100%;
+  height: 100%;
   position: relative;
   background: transparent;
   touch-action: none;

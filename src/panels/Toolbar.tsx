@@ -5,6 +5,7 @@ interface ToolbarProps {
   onToggleInspector: () => void;
   viewportMode: ViewportMode;
   onToggleViewportMode: () => void;
+  onResetLayout: () => void;
 }
 
 export function Toolbar({
@@ -12,6 +13,7 @@ export function Toolbar({
   onToggleInspector,
   viewportMode,
   onToggleViewportMode,
+  onResetLayout,
 }: ToolbarProps) {
   return (
     <div className="toolbar">
@@ -30,6 +32,13 @@ export function Toolbar({
         onClick={onToggleInspector}
       >
         {inspectorVisible ? "Hide Inspector" : "Show Inspector"}
+      </button>
+      <button
+        type="button"
+        className="toolbar__button"
+        onClick={onResetLayout}
+      >
+        Reset Layout
       </button>
     </div>
   );

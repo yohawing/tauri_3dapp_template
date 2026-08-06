@@ -1,0 +1,81 @@
+/* Self-contained styling for the Outliner panel. The panel paints its own
+ * opaque background because dockview keeps its containers transparent so the
+ * native 3D viewport can show through elsewhere. */
+
+.outliner-panel {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: #1e1e22;
+  color: #d4d4d8;
+  font-family:
+    Inter,
+    "Segoe UI",
+    -apple-system,
+    BlinkMacSystemFont,
+    Avenir,
+    Helvetica,
+    Arial,
+    sans-serif;
+}
+
+/* Now the single title for this panel — dockview's own tab bar is hidden
+ * (see App.tsx's onDidAddGroup), so this header no longer duplicates a tab
+ * label above it. Styled to match the app's toolbar (same background/text
+ * colors) rather than the old uppercase/11px "tab label" look, since it now
+ * carries the full titling job on its own. */
+.outliner-panel__header {
+  flex: 0 0 auto;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #e4e4e7;
+  background: rgba(24, 24, 28, 0.92);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.outliner-panel__body {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Row rendered by react-arborist's `children` render prop. `style` (passed
+ * inline by react-window) controls position/height — this only adds look. */
+.outliner-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #d4d4d8;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.outliner-row:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.outliner-row--selected {
+  background: rgba(78, 140, 255, 0.25);
+}
+
+.outliner-row--selected:hover {
+  background: rgba(78, 140, 255, 0.32);
+}
+
+.outliner-row__caret {
+  flex: 0 0 14px;
+  text-align: center;
+  color: #9a9aa2;
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.outliner-row__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

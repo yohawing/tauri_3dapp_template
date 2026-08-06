@@ -17,6 +17,15 @@ interface ViewportRect {
 
 export type ViewportMode = "native" | "canvas";
 
+// Escape hatch for the dock shell: dockview's onDidLayoutChange fires when a
+// panel is moved without being resized (e.g. swapping left/right groups),
+// which a ResizeObserver alone would miss even though the viewport's on-screen
+// position changed. The mounted instance registers/unregisters itself below.
+let remeasure: (() => void) | null = null;
+export function requestViewportRemeasure(): void {
+  remeasure?.();
+}
+
 // Mirrors OrbitCamera::default() in src-tauri/src/camera.rs, used only as a
 // fallback when get_camera can't be reached (e.g. plain `vite dev`).
 const DEFAULT_CAMERA: CameraState = {
@@ -104,6 +113,7 @@ export function ViewportHost({ mode }: ViewportHostProps) {
       return;
     }
 
+    remeasure = scheduleMeasure;
     scheduleMeasure();
 
     const resizeObserver = new ResizeObserver(() => {
@@ -130,6 +140,9 @@ export function ViewportHost({ mode }: ViewportHostProps) {
     armDprWatcher();
 
     return () => {
+      if (remeasure === scheduleMeasure) {
+        remeasure = null;
+      }
       resizeObserver.disconnect();
       window.removeEventListener("resize", scheduleMeasure);
       dprQuery?.removeEventListener("change", onDprChange);
