@@ -36,6 +36,17 @@ DCCエディタシェル(Toolbar / Outliner / Viewport / Inspector / Timeline)�
 - **pmndrs/react-three-editor** — archived (2023)。
 - **Needle Engine** — コア非公開かつ編集はUnity/Blender側で行う設計のため無関係。
 
+### 個別評価: baku89/tweeq
+
+橋本麦氏のVue 3製パラメータ調整UIキット(MIT、UIST 2025論文の実装)。`InputRotary` / `InputCubicBezier` / `Timeline` / `PaneZUI` などアニメツール向けウィジェットが揃いコンセプトは本プロジェクトのど真ん中だが、**採用は見送り**:
+
+- Vue 3専用・npm未配布(`private: true`、git依存のみ)・`TweeqProvider`+Pinia前提の深い統合設計で、React 19からの利用は第2フレームワーク常設が必要
+- 実質ソロ開発(バス係数1)、サードパーティ採用ゼロ、内部API変動中
+- 回転ノブ/ベジェエディタは tweakpane プラグイン(`@tweakpane/plugin-cubic-bezier`、`tweakpane-plugin-rotation`)で代替可能
+
+**借用価値**: 数値スクラブの操作感(フォーカス状態別ドラッグ挙動、px-per-step感度、修飾キー精度切替)の実装知見と、ウィジェット一覧のチェックリスト的価値。独自Timeline/カスタムウィジェット実装時に参照する。
+https://github.com/baku89/tweeq / https://baku89.github.io/tweeq/ / https://dl.acm.org/doi/10.1145/3746059.3747723
+
 ### 同領域の実例
 
 - **Reze Studio** (AmyangXYZ/reze-studio) — MMDモーション編集 + WebGPU + ドープシート/ベジェカーブエディタを実装した実在プロジェクト。Next.js 16 + React 19 + shadcn/ui。本プロジェクトのユースケース(MMD/モーション編集)と直接重なるため要ウォッチ。
