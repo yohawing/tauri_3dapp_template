@@ -15,9 +15,12 @@ Tauri + wgpu renderer でつくるDCC／CGアプリ基盤のテンプレート�
 PowerShellでリポジトリrootから実行します。
 
 ```powershell
+git submodule update --init --recursive
 npm ci
 npm run tauri dev
 ```
+
+Native rendererは`vendor/kiss3d-toon`のforkをpath dependencyとして使用します。このforkではTauriが所有するwindow／event loopへKiss3dを埋め込むためのAPIと、アプリ本体に合わせたwgpu 30対応を追加しています。forkを更新する場合は、先にsubmodule側の変更をcommit／pushし、その後このリポジトリでsubmodule pointerを更新してください。
 
 Frontendだけをブラウザーで確認する場合:
 

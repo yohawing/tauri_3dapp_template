@@ -1,7 +1,7 @@
 //! Minimal orbit camera: pure glam math, no wgpu/tauri dependency, so the
 //! renderer backend can be swapped without touching this file.
 
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 
 use crate::protocol::{CameraState, ViewportInput};
 
@@ -52,9 +52,16 @@ impl OrbitCamera {
     /// orbit/pan/zoom parameters.
     pub fn handle_input(&mut self, input: ViewportInput) {
         match input {
-            ViewportInput::PointerDown { x, y, button, modifiers } => {
+            ViewportInput::PointerDown {
+                x,
+                y,
+                button,
+                modifiers,
+            } => {
                 self.last_pos = (x, y);
-                self.drag = if button == MIDDLE_BUTTON || (button == LEFT_BUTTON && modifiers & SHIFT != 0) {
+                self.drag = if button == MIDDLE_BUTTON
+                    || (button == LEFT_BUTTON && modifiers & SHIFT != 0)
+                {
                     DragMode::Pan
                 } else if button == LEFT_BUTTON {
                     DragMode::Orbit
@@ -71,7 +78,8 @@ impl OrbitCamera {
                         // Reversed per request: orbit direction negated on
                         // both axes relative to the raw pointer delta.
                         self.yaw += dx * ORBIT_SPEED;
-                        self.pitch = (self.pitch + dy * ORBIT_SPEED).clamp(-PITCH_LIMIT, PITCH_LIMIT);
+                        self.pitch =
+                            (self.pitch + dy * ORBIT_SPEED).clamp(-PITCH_LIMIT, PITCH_LIMIT);
                     }
                     DragMode::Pan => {
                         let (right, up) = self.basis();
@@ -83,7 +91,8 @@ impl OrbitCamera {
                 }
             }
             ViewportInput::Wheel { dy, .. } => {
-                self.distance = (self.distance * (dy * ZOOM_SPEED).exp()).clamp(MIN_DISTANCE, MAX_DISTANCE);
+                self.distance =
+                    (self.distance * (dy * ZOOM_SPEED).exp()).clamp(MIN_DISTANCE, MAX_DISTANCE);
             }
         }
     }
@@ -122,14 +131,5 @@ impl OrbitCamera {
         let right = forward.cross(Vec3::Y).normalize_or_zero();
         let up = right.cross(forward);
         (right, up)
-    }
-
-    /// Builds the view-projection matrix for the given viewport aspect
-    /// ratio, matching wgpu's [0, 1] NDC depth range (same helpers the
-    /// renderer previously used directly).
-    pub fn view_proj(&self, aspect: f32) -> Mat4 {
-        let proj = glam::camera::rh::proj::directx::perspective(45f32.to_radians(), aspect, 0.1, 100.0);
-        let view = glam::camera::rh::view::look_at_mat4(self.eye(), self.target, Vec3::Y);
-        proj * view
     }
 }

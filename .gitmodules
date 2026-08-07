@@ -1,0 +1,3 @@
+[submodule "vendor/kiss3d-toon"]
+	path = vendor/kiss3d-toon
+	url = https://github.com/yohawing/kiss3d-toon.git

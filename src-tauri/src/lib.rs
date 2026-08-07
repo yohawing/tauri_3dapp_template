@@ -2,6 +2,7 @@ mod camera;
 mod protocol;
 mod renderer;
 
+use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
@@ -11,10 +12,22 @@ use camera::OrbitCamera;
 use protocol::{CameraState, ViewportInput, ViewportRect};
 use renderer::Renderer;
 
+thread_local! {
+    /// Kiss3d uses single-threaded scene graph internals (`Rc`/`RefCell`). Keep
+    /// the renderer on Tauri's event-loop thread and share only DTO state with
+    /// command handlers.
+    static NATIVE_RENDERER: RefCell<Option<Renderer>> = const { RefCell::new(None) };
+}
+
 /// Whether the native wgpu renderer should draw this frame. Flipped off when
 /// the frontend switches to its Canvas fallback; the surface is still kept
 /// reconfigured on resize so reactivation is seamless.
 struct RendererActive(AtomicBool);
+
+#[derive(Default)]
+struct RendererControl {
+    viewport_rect: Mutex<Option<ViewportRect>>,
+}
 
 /// Diagnostic-only state for `[viewport-rect]` logging (see
 /// `set_viewport_rect`). Deliberately kept separate from `Renderer`: by the
@@ -55,7 +68,7 @@ fn greet(name: &str) -> String {
 
 #[tauri::command]
 fn set_viewport_rect(
-    state: tauri::State<Mutex<Renderer>>,
+    state: tauri::State<RendererControl>,
     log: tauri::State<ViewportRectLog>,
     rect: ViewportRect,
 ) {
@@ -71,8 +84,7 @@ fn set_viewport_rect(
         }
     }
 
-    let mut renderer = state.lock().unwrap();
-    renderer::apply_viewport_rect(&mut renderer, rect);
+    *state.viewport_rect.lock().unwrap() = Some(rect);
 }
 
 /// Generic input entry point for the ViewportHost: pointer/wheel events are
@@ -122,9 +134,12 @@ pub fn run() {
             let size = window.inner_size()?;
 
             let renderer = Renderer::new(window, (size.width, size.height));
-            app.manage(Mutex::new(renderer));
+            NATIVE_RENDERER.with(|slot| {
+                *slot.borrow_mut() = Some(renderer);
+            });
             app.manage(Mutex::new(OrbitCamera::default()));
             app.manage(RendererActive(AtomicBool::new(true)));
+            app.manage(RendererControl::default());
             app.manage(ViewportRectLog::default());
 
             // tauri-runtime-wry hard-resets tao's ControlFlow to `Wait` on every
@@ -154,26 +169,38 @@ pub fn run() {
                 event: WindowEvent::Resized(size),
                 ..
             } => {
-                let state = app_handle.state::<Mutex<Renderer>>();
-                let mut renderer = state.lock().unwrap();
-                renderer.resize(size.width, size.height);
+                NATIVE_RENDERER.with(|slot| {
+                    if let Some(renderer) = slot.borrow_mut().as_mut() {
+                        renderer.resize(size.width, size.height);
+                    }
+                });
             }
             RunEvent::MainEventsCleared => {
-                if !app_handle.state::<RendererActive>().0.load(Ordering::Relaxed) {
+                if !app_handle
+                    .state::<RendererActive>()
+                    .0
+                    .load(Ordering::Relaxed)
+                {
                     return;
                 }
 
-                let renderer_state = app_handle.state::<Mutex<Renderer>>();
                 let camera_state = app_handle.state::<Mutex<OrbitCamera>>();
+                let camera = camera_state.lock().unwrap().state();
+                let viewport_rect = *app_handle
+                    .state::<RendererControl>()
+                    .viewport_rect
+                    .lock()
+                    .unwrap();
 
-                // Aspect ratio comes from the CURRENT viewport rect (the
-                // region the cube actually draws into), not the full window.
-                let aspect = renderer_state.lock().unwrap().viewport_aspect();
-                let view_proj = camera_state.lock().unwrap().view_proj(aspect);
-
-                let mut renderer = renderer_state.lock().unwrap();
-                renderer.set_view_proj(view_proj);
-                renderer.render();
+                NATIVE_RENDERER.with(|slot| {
+                    if let Some(renderer) = slot.borrow_mut().as_mut() {
+                        if let Some(rect) = viewport_rect {
+                            renderer::apply_viewport_rect(renderer, rect);
+                        }
+                        renderer.set_camera_state(camera);
+                        renderer.render();
+                    }
+                });
             }
             _ => {}
         });
