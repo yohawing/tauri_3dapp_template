@@ -1,32 +1,28 @@
 import { useEffect, useRef, useState } from "react";
 import { Tree, type NodeRendererProps } from "react-arborist";
+import { selectSceneNode, useSceneProjection } from "../scene/adapters/sceneProjectionDataSource";
+import type { SceneNodeSummary } from "../scene/core/projection";
 import "./Outliner.css";
 
-interface SceneNode {
-  id: string;
-  name: string;
+interface SceneNode extends SceneNodeSummary {
   children?: SceneNode[];
 }
 
-// Placeholder scene tree mirroring what the app actually renders today (see
-// viewport/canvasBackend.ts): a single cube mesh, a directional light and a
-// camera. The cube lives under a "Geometry" group so expand/collapse is
-// actually exercised — Phase 0/1 has no real scene graph synced from Rust yet.
-const SCENE_TREE: SceneNode[] = [
-  {
-    id: "scene",
-    name: "Scene",
-    children: [
-      {
-        id: "geometry",
-        name: "Geometry",
-        children: [{ id: "cube", name: "Cube" }],
-      },
-      { id: "light", name: "Directional Light" },
-      { id: "camera", name: "Camera" },
-    ],
-  },
-];
+function toTree(nodes: SceneNodeSummary[]): SceneNode[] {
+  const byId = new Map(nodes.map((node) => [node.id, { ...node } as SceneNode]));
+  const roots: SceneNode[] = [];
+  byId.forEach((node) => {
+    if (node.parent === null) {
+      roots.push(node);
+      return;
+    }
+    const parent = byId.get(node.parent);
+    if (parent) {
+      (parent.children ??= []).push(node);
+    }
+  });
+  return roots;
+}
 
 function Node({ node, style, dragHandle }: NodeRendererProps<SceneNode>) {
   return (
@@ -34,7 +30,10 @@ function Node({ node, style, dragHandle }: NodeRendererProps<SceneNode>) {
       ref={dragHandle}
       style={style}
       className={`outliner-row${node.isSelected ? " outliner-row--selected" : ""}`}
-      onClick={() => node.select()}
+      onClick={() => {
+        node.select();
+        selectSceneNode(node.data.id);
+      }}
     >
       <span
         className="outliner-row__caret"
@@ -45,7 +44,7 @@ function Node({ node, style, dragHandle }: NodeRendererProps<SceneNode>) {
       >
         {node.isInternal ? (node.isOpen ? "▾" : "▸") : ""}
       </span>
-      <span className="outliner-row__label">{node.data.name}</span>
+      <span className="outliner-row__label">{node.data.label}</span>
     </div>
   );
 }
@@ -79,7 +78,8 @@ function useElementSize<T extends HTMLElement>() {
 
 export function Outliner() {
   const { ref: bodyRef, size } = useElementSize<HTMLDivElement>();
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const projection = useSceneProjection();
+  const tree = toTree(projection.nodes);
 
   return (
     <div className="outliner-panel">
@@ -87,7 +87,7 @@ export function Outliner() {
       <div className="outliner-panel__body" ref={bodyRef}>
         {size && size.width > 0 && size.height > 0 && (
           <Tree<SceneNode>
-            data={SCENE_TREE}
+            data={tree}
             width={size.width}
             height={size.height}
             rowHeight={22}
@@ -95,8 +95,7 @@ export function Outliner() {
             openByDefault
             disableEdit
             disableDrag
-            selection={selectedId ?? undefined}
-            onSelect={(nodes) => setSelectedId(nodes[0]?.id ?? null)}
+            selection={projection.selectedNodeId ?? undefined}
           >
             {Node}
           </Tree>

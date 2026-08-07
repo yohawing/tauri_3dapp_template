@@ -1,6 +1,7 @@
 mod camera;
 mod protocol;
 mod renderer;
+mod scene_projection;
 
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -11,6 +12,7 @@ use tauri::{Manager, RunEvent, WindowEvent};
 use camera::OrbitCamera;
 use protocol::{CameraState, ViewportInput, ViewportRect};
 use renderer::Renderer;
+use scene_projection::{SceneCommand, SceneProjectionStore};
 
 thread_local! {
     /// Kiss3d uses single-threaded scene graph internals (`Rc`/`RefCell`). Keep
@@ -117,6 +119,26 @@ fn set_camera(state: tauri::State<Mutex<OrbitCamera>>, camera: CameraState) {
     state.lock().unwrap().set_state(camera);
 }
 
+#[tauri::command]
+fn get_scene_projection(
+    state: tauri::State<SceneProjectionStore>,
+) -> scene_projection::SceneProjection {
+    state.projection()
+}
+
+#[tauri::command(rename_all = "camelCase")]
+fn select_scene_node(state: tauri::State<SceneProjectionStore>, node_id: String) {
+    state.request_selection(node_id);
+}
+
+#[tauri::command]
+fn dispatch_scene_command(
+    state: tauri::State<SceneProjectionStore>,
+    command: SceneCommand,
+) -> Result<(), String> {
+    state.request_command(command)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -127,13 +149,18 @@ pub fn run() {
             viewport_input,
             set_renderer_active,
             get_camera,
-            set_camera
+            set_camera,
+            get_scene_projection,
+            select_scene_node,
+            dispatch_scene_command
         ])
         .setup(|app| {
             let window = app.get_webview_window("main").expect("no main window");
             let size = window.inner_size()?;
 
             let renderer = Renderer::new(window, (size.width, size.height));
+            let projection_store = SceneProjectionStore::default();
+            projection_store.publish(renderer.scene_projection(Some(renderer::CUBE_ID)));
             NATIVE_RENDERER.with(|slot| {
                 *slot.borrow_mut() = Some(renderer);
             });
@@ -141,6 +168,7 @@ pub fn run() {
             app.manage(RendererActive(AtomicBool::new(true)));
             app.manage(RendererControl::default());
             app.manage(ViewportRectLog::default());
+            app.manage(projection_store);
 
             // tauri-runtime-wry hard-resets tao's ControlFlow to `Wait` on every
             // loop iteration (it never lets user code switch to `Poll`), so
@@ -176,14 +204,6 @@ pub fn run() {
                 });
             }
             RunEvent::MainEventsCleared => {
-                if !app_handle
-                    .state::<RendererActive>()
-                    .0
-                    .load(Ordering::Relaxed)
-                {
-                    return;
-                }
-
                 let camera_state = app_handle.state::<Mutex<OrbitCamera>>();
                 let camera = camera_state.lock().unwrap().state();
                 let viewport_rect = *app_handle
@@ -191,14 +211,33 @@ pub fn run() {
                     .viewport_rect
                     .lock()
                     .unwrap();
+                let active = app_handle
+                    .state::<RendererActive>()
+                    .0
+                    .load(Ordering::Relaxed);
+                let projection_store = app_handle.state::<SceneProjectionStore>();
+                let commands = projection_store.take_commands();
+                let current_selection = projection_store.projection().selected_node_id;
+                let requested_selection = projection_store.take_selection();
+                let selected_id = requested_selection.or(current_selection);
 
                 NATIVE_RENDERER.with(|slot| {
                     if let Some(renderer) = slot.borrow_mut().as_mut() {
-                        if let Some(rect) = viewport_rect {
-                            renderer::apply_viewport_rect(renderer, rect);
+                        for command in commands {
+                            renderer.apply_scene_command(command);
                         }
-                        renderer.set_camera_state(camera);
-                        renderer.render();
+                        let selected_id = selected_id
+                            .as_deref()
+                            .filter(|id| renderer.has_node(id))
+                            .or(Some(renderer::CUBE_ID));
+                        if active {
+                            if let Some(rect) = viewport_rect {
+                                renderer::apply_viewport_rect(renderer, rect);
+                            }
+                            renderer.set_camera_state(camera);
+                            renderer.render();
+                        }
+                        projection_store.publish(renderer.scene_projection(selected_id));
                     }
                 });
             }

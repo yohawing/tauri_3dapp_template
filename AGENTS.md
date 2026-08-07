@@ -49,6 +49,8 @@ Viewport、CSS、input、renderer lifecycleを変更した場合は、CLI gate�
 
 必要に応じて`TAURI3D_LOG_VIEWPORT_RECT`、`VITE_INPUT_SELF_TEST`、`VITE_BACKEND_SELF_TEST`、`VITE_DOCK_SELF_TEST`を使う。pass／fail／未検証と実行環境を明記する。
 
+GUI確認ではComputer Useをなるべく使わない。まずCLI gate、`VITE_*_SELF_TEST`、ログ、`screenshot-ui`による起動・ウィンドウキャプチャなど、再現可能で非対話的な経路を優先する。Computer Useは、それらでは確認できない操作が完了条件に含まれ、ほかに安全な手段がない場合だけ最小範囲で使い、使用理由と確認内容を報告する。
+
 
 ## Git境界
 

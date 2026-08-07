@@ -38,16 +38,129 @@
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-.inspector-panel__pane {
+.inspector-panel__content {
   flex: 1;
   min-height: 0;
   overflow: auto;
   padding: 6px 8px;
 }
 
-/* tweakpane's root element has no explicit width when given a custom
- * `container` (that's only forced for its own default floating wrapper), so
- * as a block element it naturally stretches to fill this 100%-wide parent. */
-.inspector-panel__pane > .tp-rotv {
-  width: 100%;
+.inspector-empty {
+  padding: 12px 4px;
+  color: #8f8f98;
+  font-size: 12px;
+}
+
+.inspector-selection {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 4px 2px 9px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.inspector-selection__label {
+  color: #f1f1f4;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.inspector-selection__kind {
+  color: #8f8f98;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.inspector-section {
+  padding: 10px 2px 4px;
+}
+
+.inspector-section__title {
+  padding-bottom: 6px;
+  color: #aeb8cf;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.inspector-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 24px;
+  color: #c8c8ce;
+  font-size: 11px;
+}
+
+.inspector-field__label {
+  color: #93939b;
+}
+
+.inspector-field__values {
+  display: flex;
+  gap: 4px;
+}
+
+.inspector-value,
+.inspector-readonly,
+.inspector-color {
+  display: inline-flex;
+  align-items: center;
+  min-width: 48px;
+  justify-content: flex-end;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.06);
+  padding: 2px 4px;
+  color: #dedee2;
+  font-variant-numeric: tabular-nums;
+}
+
+.inspector-value__axis {
+  margin-right: 3px;
+  color: #888894;
+  font-size: 9px;
+}
+
+.inspector-color {
+  gap: 5px;
+}
+
+.inspector-color__swatch {
+  width: 11px;
+  height: 11px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 2px;
+}
+
+.inspector-color-editor,
+.inspector-slider-editor {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  color: #dedee2;
+  font-variant-numeric: tabular-nums;
+}
+
+.inspector-color-input {
+  width: 38px;
+  height: 22px;
+  padding: 1px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.06);
+  cursor: pointer;
+}
+
+.inspector-slider {
+  width: 90px;
+  accent-color: #64a7ff;
+  cursor: ew-resize;
+}
+
+.inspector-number {
+  width: 30px;
+  text-align: right;
 }
