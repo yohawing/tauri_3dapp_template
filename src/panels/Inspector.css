@@ -164,3 +164,10 @@
   width: 30px;
   text-align: right;
 }
+
+.inspector-material-error {
+  margin-top: 7px;
+  color: #ff9f9f;
+  font-size: 11px;
+  line-height: 1.35;
+}

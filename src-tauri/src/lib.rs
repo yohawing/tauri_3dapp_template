@@ -12,7 +12,7 @@ use tauri::{Manager, RunEvent, WindowEvent};
 use camera::OrbitCamera;
 use protocol::{CameraState, ViewportInput, ViewportRect};
 use renderer::Renderer;
-use scene_projection::{SceneCommand, SceneProjectionStore};
+use scene_projection::{SceneCommandEnvelope, SceneCommandResult, SceneProjectionStore};
 
 thread_local! {
     /// Kiss3d uses single-threaded scene graph internals (`Rc`/`RefCell`). Keep
@@ -134,7 +134,7 @@ fn select_scene_node(state: tauri::State<SceneProjectionStore>, node_id: String)
 #[tauri::command]
 fn dispatch_scene_command(
     state: tauri::State<SceneProjectionStore>,
-    command: SceneCommand,
+    command: SceneCommandEnvelope,
 ) -> Result<(), String> {
     state.request_command(command)
 }
@@ -223,8 +223,18 @@ pub fn run() {
 
                 NATIVE_RENDERER.with(|slot| {
                     if let Some(renderer) = slot.borrow_mut().as_mut() {
-                        for command in commands {
-                            renderer.apply_scene_command(command);
+                        for envelope in commands {
+                            let node_id = envelope.command.node_id().to_string();
+                            let property = envelope.command.property().to_string();
+                            let sequence = envelope.sequence;
+                            let result = renderer.apply_scene_command(envelope.command);
+                            projection_store.record_command_result(SceneCommandResult {
+                                sequence,
+                                node_id,
+                                property,
+                                applied: result.is_ok(),
+                                error: result.err(),
+                            });
                         }
                         let selected_id = selected_id
                             .as_deref()

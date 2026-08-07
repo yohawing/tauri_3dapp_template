@@ -3,7 +3,7 @@ import {
   dispatchSceneCommand,
   useSceneProjection,
 } from "../scene/adapters/sceneProjectionDataSource";
-import type { SceneMaterial, SceneTransform } from "../scene/core/projection";
+import type { SceneMaterial, SceneProjection, SceneTransform } from "../scene/core/projection";
 import "./Inspector.css";
 
 const format = (value: number) => value.toFixed(3);
@@ -48,7 +48,7 @@ function hexToColor(hex: string, alpha: number): SceneMaterial["color"] {
   ];
 }
 
-function MaterialSection({ nodeId, material }: { nodeId: string; material: SceneMaterial }) {
+function MaterialSection({ nodeId, material, error }: { nodeId: string; material: SceneMaterial; error?: string }) {
   const [draft, setDraft] = useState(material);
 
   useEffect(() => setDraft(material), [nodeId, material]);
@@ -95,6 +95,7 @@ function MaterialSection({ nodeId, material }: { nodeId: string; material: Scene
         value={draft.roughness}
         onChange={(value) => setScalar("roughness", value)}
       />
+      {error && <div className="inspector-material-error">{error}</div>}
     </section>
   );
 }
@@ -124,6 +125,7 @@ export function Inspector() {
   const projection = useSceneProjection();
   const selected = projection.selected;
   const summary = projection.nodes.find((node) => node.id === projection.selectedNodeId);
+  const materialError = selected ? latestMaterialErrors(projection.commandResults, selected.id) : undefined;
 
   return (
     <div className="inspector-panel">
@@ -138,10 +140,23 @@ export function Inspector() {
               <span className="inspector-selection__kind">{summary.kind}</span>
             </div>
             <TransformSection transform={selected.transform} />
-            {selected.material && <MaterialSection nodeId={selected.id} material={selected.material} />}
+            {selected.material && (
+              <MaterialSection nodeId={selected.id} material={selected.material} error={materialError} />
+            )}
           </>
         )}
       </div>
     </div>
   );
+}
+
+function latestMaterialErrors(results: SceneProjection["commandResults"], nodeId: string): string | undefined {
+  const latestByProperty = new Map<string, (typeof results)[number]>();
+  for (const result of results) {
+    if (result.nodeId === nodeId) latestByProperty.set(result.property, result);
+  }
+  const errors = [...latestByProperty.values()].flatMap((result) =>
+    !result.applied && result.error ? [result.error] : [],
+  );
+  return errors.length > 0 ? errors.join(" · ") : undefined;
 }

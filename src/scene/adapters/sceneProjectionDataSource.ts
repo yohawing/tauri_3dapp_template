@@ -1,6 +1,13 @@
 import { useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { SceneCommand, SceneMaterial, SceneProjection } from "../core/projection";
+import type {
+  SceneCommand,
+  SceneCommandEnvelope,
+  SceneCommandResult,
+  SceneMaterial,
+  SceneMaterialProperty,
+  SceneProjection,
+} from "../core/projection";
 
 const FIXTURE_PROJECTION: SceneProjection = {
   revision: 1,
@@ -19,29 +26,33 @@ const FIXTURE_PROJECTION: SceneProjection = {
     },
     material: { color: [1, 0.45, 0.1, 1], metallic: 0, roughness: 0.5 },
   },
+  lastProcessedSequence: 0,
+  commandResults: [],
 };
 
 const POLL_INTERVAL_MS = 100;
 
-// Tauri's invoke implementation is unavailable in a plain Vite browser. Do
-// not start a rejected promise loop there; the deterministic fixture remains
-// a useful standalone preview of both panels.
 function hasTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
 type Listener = () => void;
 
-class SceneProjectionDataSource {
+export class SceneProjectionDataSource {
   private snapshot: SceneProjection = FIXTURE_PROJECTION;
   private readonly listeners = new Set<Listener>();
   private pollId: number | undefined;
+  private pollInFlight: Promise<void> | undefined;
+  private nativeSnapshotAccepted = false;
+  // Keep sequences monotonic across ordinary WebView reloads as well as
+  // within one module instance. Date.now() leaves ample integer headroom.
+  private nextSequence = Date.now() * 1000;
+  private readonly pendingCommands = new Map<string, SceneCommandEnvelope>();
+  private readonly commandFlights = new Map<string, { active: boolean; queued?: SceneCommandEnvelope }>();
   private warned = false;
 
   constructor() {
     if (hasTauriRuntime()) {
-      void this.poll();
-      this.pollId = window.setInterval(() => void this.poll(), POLL_INTERVAL_MS);
       if (import.meta.env.VITE_SCENE_SELF_TEST) {
         window.setTimeout(() => {
           console.log("[scene-self-test] select=key-light");
@@ -63,7 +74,16 @@ class SceneProjectionDataSource {
 
   subscribe = (listener: Listener): (() => void) => {
     this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+    if (this.listeners.size === 1 && hasTauriRuntime()) {
+      void this.poll();
+      this.pollId = window.setInterval(() => void this.poll(), POLL_INTERVAL_MS);
+    }
+    return () => {
+      this.listeners.delete(listener);
+      if (this.listeners.size === 0) {
+        this.dispose();
+      }
+    };
   };
 
   dispose(): void {
@@ -76,9 +96,7 @@ class SceneProjectionDataSource {
   async select(nodeId: string): Promise<void> {
     if (!hasTauriRuntime()) {
       const selected = this.snapshot.nodes.some((node) => node.id === nodeId) ? nodeId : null;
-      if (selected === null) {
-        return;
-      }
+      if (selected === null) return;
       this.snapshot = {
         ...this.snapshot,
         revision: this.snapshot.revision + 1,
@@ -100,52 +118,171 @@ class SceneProjectionDataSource {
   }
 
   async dispatch(command: SceneCommand): Promise<void> {
+    const envelope: SceneCommandEnvelope = { sequence: ++this.nextSequence, command };
     if (!hasTauriRuntime()) {
       const selected = this.snapshot.selected;
       const material = selected?.material;
-      if (!selected || !material || selected.id !== command.nodeId) {
-        return;
-      }
+      if (!selected || !material || selected.id !== command.nodeId) return;
       const nextMaterial = applyFixtureCommand(material, command);
       this.snapshot = {
         ...this.snapshot,
         revision: this.snapshot.revision + 1,
         selected: { ...selected, material: nextMaterial },
+        lastProcessedSequence: envelope.sequence,
+        commandResults: [...this.snapshot.commandResults, resultFor(envelope, true)].slice(-32),
       };
       this.emit();
       return;
     }
 
+    const key = commandKey(command);
+    this.pendingCommands.set(key, envelope);
+    this.applyOptimistic(envelope);
+
+    const flight = this.commandFlights.get(key);
+    if (flight?.active) {
+      flight.queued = envelope;
+      return;
+    }
+    this.commandFlights.set(key, { active: true });
+    await this.sendCommand(key, envelope);
+  }
+
+  private async poll(): Promise<void> {
+    if (this.pollInFlight) return this.pollInFlight;
+    const request = (async () => {
+      try {
+        const projection = await invoke<SceneProjection>("get_scene_projection");
+        // The first native snapshot is authoritative even when its revision is
+        // lower than the browser fixture.  Later rollbacks are rejected.
+        if (shouldAcceptSceneProjection(this.nativeSnapshotAccepted, this.snapshot.revision, projection.revision)) {
+          this.nativeSnapshotAccepted = true;
+          this.applyProjection(projection);
+        }
+      } catch (error) {
+        if (!this.warned) {
+          this.warned = true;
+          console.warn("[SceneProjection] get_scene_projection invoke failed; using fixture:", error);
+        }
+      }
+    })();
+    this.pollInFlight = request;
     try {
-      await invoke("dispatch_scene_command", { command });
+      await request;
+    } finally {
+      if (this.pollInFlight === request) this.pollInFlight = undefined;
+    }
+  }
+
+  private async sendCommand(key: string, envelope: SceneCommandEnvelope): Promise<void> {
+    try {
+      await invoke("dispatch_scene_command", { command: envelope });
     } catch (error) {
+      if (this.pendingCommands.get(key)?.sequence === envelope.sequence) {
+        this.pendingCommands.delete(key);
+        this.recordCommandResult(resultFor(envelope, false, String(error)));
+      }
       if (!this.warned) {
         this.warned = true;
         console.warn("[SceneProjection] dispatch_scene_command invoke failed:", error);
       }
+    } finally {
+      const flight = this.commandFlights.get(key);
+      if (flight?.queued) {
+        const next = flight.queued;
+        flight.queued = undefined;
+        await this.sendCommand(key, next);
+      } else {
+        this.commandFlights.delete(key);
+      }
     }
   }
 
-  private async poll(): Promise<void> {
-    try {
-      const projection = await invoke<SceneProjection>("get_scene_projection");
-      if (projection.revision !== this.snapshot.revision || projection.selectedNodeId !== this.snapshot.selectedNodeId) {
-        this.snapshot = projection;
-        this.emit();
-      }
-    } catch (error) {
-      // A runtime can briefly be unavailable while the WebView is starting.
-      // Keep the fixture visible and warn once instead of flooding the console.
-      if (!this.warned) {
-        this.warned = true;
-        console.warn("[SceneProjection] get_scene_projection invoke failed; using fixture:", error);
-      }
+  private applyProjection(projection: SceneProjection): void {
+    const reconciled = reconcileSceneProjection(projection, this.pendingCommands);
+    this.pendingCommands.clear();
+    reconciled.pending.forEach((envelope, key) => this.pendingCommands.set(key, envelope));
+    const next = reconciled.projection;
+    if (next !== this.snapshot || next.revision !== this.snapshot.revision) {
+      this.snapshot = next;
+      this.emit();
     }
+  }
+
+  private applyOptimistic(envelope: SceneCommandEnvelope): void {
+    const next = applyOptimisticToProjection(this.snapshot, envelope);
+    if (next !== this.snapshot) {
+      this.snapshot = next;
+      this.emit();
+    }
+  }
+
+  private recordCommandResult(result: SceneCommandResult): void {
+    this.snapshot = {
+      ...this.snapshot,
+      revision: this.snapshot.revision + 1,
+      lastProcessedSequence: Math.max(this.snapshot.lastProcessedSequence, result.sequence),
+      commandResults: [...this.snapshot.commandResults, result].slice(-32),
+    };
+    this.emit();
   }
 
   private emit(): void {
     this.listeners.forEach((listener) => listener());
   }
+}
+
+export function shouldAcceptSceneProjection(
+  nativeSnapshotAccepted: boolean,
+  currentRevision: number,
+  nextRevision: number,
+): boolean {
+  return !nativeSnapshotAccepted || nextRevision > currentRevision;
+}
+
+function commandKey(command: SceneCommand): string {
+  return `${command.nodeId}/${command.type === "setBaseColor" ? "baseColor" : command.type === "setMetallic" ? "metallic" : "roughness"}`;
+}
+
+function commandProperty(command: SceneCommand): SceneMaterialProperty {
+  return command.type === "setBaseColor" ? "baseColor" : command.type === "setMetallic" ? "metallic" : "roughness";
+}
+
+function resultFor(envelope: SceneCommandEnvelope, applied: boolean, error: string | null = null): SceneCommandResult {
+  return {
+    sequence: envelope.sequence,
+    nodeId: envelope.command.nodeId,
+    property: commandProperty(envelope.command),
+    applied,
+    error,
+  };
+}
+
+export function applyOptimisticToProjection(projection: SceneProjection, envelope: SceneCommandEnvelope): SceneProjection {
+  const selected = projection.selected;
+  if (!selected || selected.id !== envelope.command.nodeId || !selected.material) return projection;
+  return {
+    ...projection,
+    selected: {
+      ...selected,
+      material: applyFixtureCommand(selected.material, envelope.command),
+    },
+  };
+}
+
+/** Apply command acknowledgements and retain only still-pending optimistic values. */
+export function reconcileSceneProjection(
+  projection: SceneProjection,
+  pendingCommands: ReadonlyMap<string, SceneCommandEnvelope>,
+): { projection: SceneProjection; pending: Map<string, SceneCommandEnvelope> } {
+  const pending = new Map(pendingCommands);
+  for (const result of projection.commandResults) {
+    const key = `${result.nodeId}/${result.property}`;
+    if (pending.get(key)?.sequence === result.sequence) pending.delete(key);
+  }
+  let next = projection;
+  for (const envelope of pending.values()) next = applyOptimisticToProjection(next, envelope);
+  return { projection: next, pending };
 }
 
 function applyFixtureCommand(material: SceneMaterial, command: SceneCommand): SceneMaterial {
@@ -160,9 +297,7 @@ function applyFixtureCommand(material: SceneMaterial, command: SceneCommand): Sc
 }
 
 function fixtureDetails(nodeId: string): SceneProjection["selected"] {
-  if (nodeId === "cube") {
-    return FIXTURE_PROJECTION.selected;
-  }
+  if (nodeId === "cube") return FIXTURE_PROJECTION.selected;
   return {
     id: nodeId,
     transform: {
@@ -175,6 +310,12 @@ function fixtureDetails(nodeId: string): SceneProjection["selected"] {
 }
 
 export const sceneProjectionDataSource = new SceneProjectionDataSource();
+
+// Vite HMR can recreate React modules without unloading the page.  Stop the
+// timer owned by the old singleton so duplicate polling loops do not survive.
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => sceneProjectionDataSource.dispose());
+}
 
 export function useSceneProjection(): SceneProjection {
   return useSyncExternalStore(

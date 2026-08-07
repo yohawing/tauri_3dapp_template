@@ -90,7 +90,7 @@ impl Renderer {
         matches!(node_id, SCENE_ID | KEY_LIGHT_ID | CUBE_ID)
     }
 
-    pub fn apply_scene_command(&mut self, command: SceneCommand) -> bool {
+    pub fn apply_scene_command(&mut self, command: SceneCommand) -> Result<(), String> {
         match command {
             SceneCommand::SetBaseColor { node_id, color } if node_id == CUBE_ID => {
                 self.cube
@@ -102,9 +102,13 @@ impl Renderer {
             SceneCommand::SetRoughness { node_id, value } if node_id == CUBE_ID => {
                 self.cube.set_roughness(value);
             }
-            _ => return false,
+            SceneCommand::SetBaseColor { node_id, .. }
+            | SceneCommand::SetMetallic { node_id, .. }
+            | SceneCommand::SetRoughness { node_id, .. } => {
+                return Err(format!("unsupported scene node '{node_id}'"));
+            }
         }
-        true
+        Ok(())
     }
 
     pub fn scene_projection(&self, selected_id: Option<&str>) -> SceneProjection {
@@ -145,6 +149,8 @@ impl Renderer {
             selected_node_id,
             nodes,
             selected,
+            last_processed_sequence: 0,
+            command_results: Vec::new(),
         }
     }
 

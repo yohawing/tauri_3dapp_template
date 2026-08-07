@@ -38,9 +38,26 @@ export interface SceneProjection {
   selectedNodeId: string | null;
   nodes: SceneNodeSummary[];
   selected: SelectedSceneNode | null;
+  lastProcessedSequence: number;
+  commandResults: SceneCommandResult[];
 }
+
+export interface SceneCommandResult {
+  sequence: number;
+  nodeId: string;
+  property: SceneMaterialProperty;
+  applied: boolean;
+  error: string | null;
+}
+
+export type SceneMaterialProperty = "baseColor" | "metallic" | "roughness";
 
 export type SceneCommand =
   | { type: "setBaseColor"; nodeId: string; color: [number, number, number, number] }
   | { type: "setMetallic"; nodeId: string; value: number }
   | { type: "setRoughness"; nodeId: string; value: number };
+
+export interface SceneCommandEnvelope {
+  sequence: number;
+  command: SceneCommand;
+}
