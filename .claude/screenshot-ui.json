@@ -7,8 +7,16 @@
   },
   "kill_pattern": "tauri3d",
   "ui_source_dirs": [
+    "src/App.tsx",
+    "src/App.css",
+    "src/index.css",
     "src/panels",
-    "src/scene"
+    "src/console",
+    "src/settings",
+    "src/scene",
+    "src/shell",
+    "src/styles",
+    "src/viewport"
   ],
   "screenshot_basename": "tauri3d"
 }

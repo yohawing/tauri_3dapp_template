@@ -15,7 +15,9 @@ function VectorField({ label, values, names }: { label: string; values: readonly
       <div className="inspector-field__values">
         {values.map((value, index) => (
           <span className="inspector-value" key={`${label}-${names[index]}`}>
-            <span className="inspector-value__axis">{names[index]}</span>
+            <span className={`inspector-value__axis inspector-value__axis--${names[index].toLowerCase()}`}>
+              {names[index]}
+            </span>
             {format(value)}
           </span>
         ))}

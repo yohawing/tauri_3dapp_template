@@ -385,6 +385,28 @@
   background: rgba(244, 63, 94, 0.1);
 }
 
+.viewport-host__overlay {
+  top: 8px;
+  left: 8px;
+  padding: 5px 8px;
+  border-color: var(--divider);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  background: rgba(14, 14, 17, 0.72);
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+
+.viewport-host__label {
+  font-family: var(--font-ui);
+  color: var(--text-strong);
+}
+
+.viewport-host__rect,
+.viewport-host__hint {
+  color: var(--text-muted);
+}
+
 .console-drawer__entry--warn .console-drawer__level { color: #fbbf24; }
 .console-drawer__entry--error .console-drawer__level { color: #fb7185; }
 .console-drawer__timestamp,
@@ -476,4 +498,242 @@
   color: white;
   background: #315a9c;
   cursor: pointer;
+}
+
+/* Design-system overrides: keep legacy selectors stable while making the
+ * shell share the same compact tokens as every panel. */
+.app-shell {
+  color: var(--text);
+  font-family: var(--font-ui);
+}
+
+.menu-bar {
+  height: 24px;
+  background: var(--surface-3);
+  border-bottom-color: var(--divider-strong);
+}
+
+.menu-bar__title {
+  color: var(--text-strong);
+  font-size: 11px;
+  padding-right: 12px;
+}
+
+.menu-bar__trigger {
+  color: var(--text);
+  font-size: 10px;
+  height: 18px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+}
+
+.menu-bar__trigger:hover,
+.menu-bar__trigger--open {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.menu-bar__backend {
+  color: var(--text-muted);
+  font-size: 9px;
+}
+
+.menu-bar__renderer-toggle {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--surface-0);
+  border: 1px solid var(--divider-strong);
+  border-radius: var(--radius-sm);
+}
+
+.menu-bar__renderer-button {
+  appearance: none;
+  height: 14px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 2px;
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+  font-size: 9px;
+}
+
+.menu-bar__renderer-button:hover:not(:disabled) {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.menu-bar__renderer-button.is-active {
+  color: var(--text-strong);
+  background: var(--accent);
+}
+
+.menu-popup {
+  min-width: 200px;
+  padding: 3px;
+  background: var(--surface-3);
+  border-color: var(--divider-strong);
+  border-radius: var(--radius-sm);
+}
+
+.menu-popup__item {
+  min-height: 24px;
+  font-size: 10px;
+  border-radius: var(--radius-sm);
+}
+
+.menu-popup__item:hover:not(:disabled),
+.menu-popup__item:focus-visible {
+  background: var(--accent);
+}
+
+.dock-panel-content:not(.dock-panel-content--viewport) {
+  background: var(--surface-2);
+}
+
+@media (max-width: 900px) {
+  .menu-bar__title {
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .menu-bar__backend {
+    display: none;
+  }
+}
+
+/* Console is an integrated bottom panel when opened from the View menu or
+ * the Timeline tab. */
+.console-drawer {
+  background: var(--surface-0);
+  color: var(--text);
+  font-family: var(--font-ui);
+}
+
+.console-drawer__header {
+  flex-basis: 24px;
+  min-height: 24px;
+  padding: 0 8px;
+  gap: 8px;
+  background: var(--surface-2);
+  border-bottom-color: var(--divider);
+}
+
+.console-drawer__tabs {
+  display: flex;
+  align-items: stretch;
+  height: 24px;
+}
+
+.console-drawer__tab {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 100%;
+  padding: 0 10px;
+  border: 0;
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.console-drawer__tab:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.console-drawer__tab--active {
+  color: var(--text-strong);
+  background: var(--surface-1);
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.console-drawer__filter {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-sm);
+  background: var(--surface-0);
+}
+
+.console-drawer__filter-button {
+  height: 14px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 2px;
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+  font-size: 9px;
+}
+
+.console-drawer__filter-button:hover,
+.console-drawer__filter-button.is-active {
+  color: var(--text-strong);
+  background: var(--accent);
+}
+
+.console-drawer__search {
+  width: 150px;
+  height: 17px;
+  padding: 0 7px;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-sm);
+  outline: none;
+  color: var(--text);
+  background: var(--surface-0);
+  font-size: 9px;
+}
+
+.console-drawer__search:focus {
+  border-color: var(--accent-strong);
+}
+
+.console-drawer__count {
+  border-radius: 2px;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+
+.console-drawer__entries {
+  background: var(--surface-0);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.console-drawer__entry {
+  min-height: 20px;
+  grid-template-columns: 116px 42px 68px minmax(0, 1fr);
+  gap: 6px;
+  padding: 1px 12px;
+  border-left: 2px solid transparent;
+  border-bottom: 0;
+}
+
+.console-drawer__entry--warn {
+  border-left-color: var(--warning);
+  background: rgba(224, 163, 58, 0.06);
+}
+
+.console-drawer__entry--error {
+  border-left-color: var(--error);
+  background: rgba(240, 97, 111, 0.08);
+}
+
+@media (max-width: 900px) {
+  .console-drawer__search {
+    width: 100px;
+  }
+
+  .console-drawer__filter-button {
+    padding: 0 5px;
+  }
 }

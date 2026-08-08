@@ -68,9 +68,13 @@ export function ConsoleDrawer(props: ConsoleDrawerProps) {
     },
     [props, store],
   );
+  const [query, setQuery] = useState("");
   const visibleEntries = useMemo(
-    () => selectVisibleConsoleEntries(state.entries, state.levelFilter),
-    [state.entries, state.levelFilter],
+    () => selectVisibleConsoleEntries(state.entries, state.levelFilter).filter((entry) => {
+      const needle = query.trim().toLocaleLowerCase();
+      return needle.length === 0 || `${entry.source} ${entry.message}`.toLocaleLowerCase().includes(needle);
+    }),
+    [query, state.entries, state.levelFilter],
   );
   const listRef = useRef<HTMLOListElement>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
@@ -149,26 +153,45 @@ export function ConsoleDrawer(props: ConsoleDrawerProps) {
         onPointerCancel={handleResizePointerEnd}
       />
       <header className="console-drawer__header">
-        <div className="console-drawer__title">
-          <span className="console-drawer__title-icon" aria-hidden="true">›_</span>
-          <span>Console</span>
+        <div className="console-drawer__tabs" role="tablist" aria-label="Bottom panel">
+          <button
+            className="console-drawer__tab"
+            type="button"
+            role="tab"
+            onClick={() => window.dispatchEvent(new CustomEvent("tauri3d:console-toggle", { detail: { open: false } }))}
+          >
+            Timeline
+          </button>
+          <button className="console-drawer__tab console-drawer__tab--active" type="button" role="tab" aria-selected="true">
+            <span className="console-drawer__title-icon" aria-hidden="true">›_</span>
+            Console
+          </button>
           <span className="console-drawer__count" aria-label={`${state.entries.length} entries`}>
             {state.entries.length}
           </span>
         </div>
         <div className="console-drawer__controls">
-          <label className="console-drawer__filter">
-            <span className="console-drawer__filter-label">Level</span>
-            <select
-              aria-label="Console level filter"
-              value={state.levelFilter}
-              onChange={(event) => dispatch({ type: "setFilter", filter: event.target.value as ConsoleFilter })}
-            >
-              {(["all", "info", "warn", "error"] as const).map((filter) => (
-                <option key={filter} value={filter}>{filterLabel(filter)}</option>
-              ))}
-            </select>
-          </label>
+          <div className="console-drawer__filter" role="group" aria-label="Console level filter">
+            {(["all", "info", "warn", "error"] as const).map((filter) => (
+              <button
+                key={filter}
+                className={`console-drawer__filter-button${state.levelFilter === filter ? " is-active" : ""}`}
+                type="button"
+                aria-pressed={state.levelFilter === filter}
+                onClick={() => dispatch({ type: "setFilter", filter })}
+              >
+                {filterLabel(filter).replace("+", "")}
+              </button>
+            ))}
+          </div>
+          <input
+            className="console-drawer__search"
+            aria-label="Filter console messages"
+            type="search"
+            placeholder="Filter…"
+            value={query}
+            onChange={(event) => setQuery(event.currentTarget.value)}
+          />
           <button className="console-drawer__button" type="button" onClick={() => dispatch({ type: "clear" })}>
             Clear
           </button>

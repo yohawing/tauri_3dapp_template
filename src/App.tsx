@@ -134,11 +134,17 @@ function App() {
       }>).detail;
       appendDiagnostic(detail.level, detail.source, detail.message);
     };
+    const onConsoleToggle = (event: Event) => {
+      const open = (event as CustomEvent<{ open?: boolean }>).detail?.open;
+      if (typeof open === "boolean") setConsoleVisible(open);
+    };
     window.addEventListener("tauri3d:viewport-rect", onViewportRect);
     window.addEventListener("tauri3d:diagnostic", onDiagnostic);
+    window.addEventListener("tauri3d:console-toggle", onConsoleToggle);
     return () => {
       window.removeEventListener("tauri3d:viewport-rect", onViewportRect);
       window.removeEventListener("tauri3d:diagnostic", onDiagnostic);
+      window.removeEventListener("tauri3d:console-toggle", onConsoleToggle);
     };
   }, [appendDiagnostic]);
 

@@ -190,6 +190,8 @@ function paintTimeline(
   keyColumns: readonly TimelineKeyColumn[],
   pixelsPerSecond: number,
   timeEnd: number,
+  playheadTime: number,
+  range: { enabled: boolean; start: number; end: number },
 ) {
   const canvasWidth = Math.max(1, timeEnd * pixelsPerSecond);
   const height = rows.length * ROW_HEIGHT;
@@ -250,7 +252,24 @@ function paintTimeline(
     if (rowIndex != null) drawKeyColumn(context, column, rowIndex, transform.timeToX);
   }
 
-  const playheadX = transform.timeToX(PLAYHEAD_TIME) + 0.5;
+  if (range.enabled) {
+    const startX = transform.timeToX(range.start);
+    const endX = transform.timeToX(range.end);
+    context.fillStyle = "rgba(10, 10, 13, 0.45)";
+    context.fillRect(0, 0, Math.max(0, startX), height);
+    context.fillRect(endX, 0, Math.max(0, canvasWidth - endX), height);
+    context.fillStyle = "rgba(90, 143, 224, 0.10)";
+    context.fillRect(startX, 0, Math.max(0, endX - startX), height);
+    context.strokeStyle = "#5a8fe0";
+    context.beginPath();
+    context.moveTo(startX + 0.5, 0);
+    context.lineTo(startX + 0.5, height);
+    context.moveTo(endX + 0.5, 0);
+    context.lineTo(endX + 0.5, height);
+    context.stroke();
+  }
+
+  const playheadX = transform.timeToX(playheadTime) + 0.5;
   context.strokeStyle = "#ff5d73";
   context.lineWidth = 1;
   context.beginPath();
@@ -271,6 +290,12 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
   const canvasViewportRef = useRef<HTMLDivElement>(null);
   const [pixelsPerSecond, setPixelsPerSecond] = useState(DEFAULT_PIXELS_PER_SECOND);
   const [visibleRange, setVisibleRange] = useState({ start: 0, end: 12 });
+  const [playheadTime, setPlayheadTime] = useState(PLAYHEAD_TIME);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [loop, setLoop] = useState(false);
+  const [rangeEnabled, setRangeEnabled] = useState(true);
+  const [rangeStart, setRangeStart] = useState(2);
+  const [rangeEnd, setRangeEnd] = useState(9.5);
 
   const rows = useMemo(() => dataSource.getRows({ start: 0, count: 10_000 }), [dataSource, revision]);
   const timelineRange = useMemo(() => dataSource.getRange(), [dataSource, revision]);
@@ -297,11 +322,33 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
     const canvas = canvasRef.current;
     if (!canvas) return;
     const paint = () =>
-      paintTimeline(canvas, rows, items, keys, keyColumns, pixelsPerSecond, timeEnd);
+      paintTimeline(canvas, rows, items, keys, keyColumns, pixelsPerSecond, timeEnd, playheadTime, {
+        enabled: rangeEnabled,
+        start: rangeStart,
+        end: rangeEnd,
+      });
     paint();
     window.addEventListener("resize", paint);
     return () => window.removeEventListener("resize", paint);
-  }, [items, keyColumns, keys, pixelsPerSecond, rows, timeEnd]);
+  }, [items, keyColumns, keys, pixelsPerSecond, rows, timeEnd, playheadTime, rangeEnabled, rangeStart, rangeEnd]);
+
+  useEffect(() => {
+    if (!isPlaying) return;
+    const timer = window.setInterval(() => {
+      setPlayheadTime((current) => {
+        const next = current + 1 / 24;
+        const start = rangeEnabled ? rangeStart : 0;
+        const end = rangeEnabled ? rangeEnd : timeEnd;
+        if (next >= end) {
+          if (loop) return start;
+          setIsPlaying(false);
+          return end;
+        }
+        return next;
+      });
+    }, 1000 / 24);
+    return () => window.clearInterval(timer);
+  }, [isPlaying, loop, rangeEnabled, rangeStart, rangeEnd, timeEnd]);
 
   useEffect(() => {
     const viewport = canvasViewportRef.current;
@@ -352,25 +399,68 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
   const tickStep = pixelsPerSecond < 18 ? 5 : 1;
   const ticks = Array.from({ length: Math.floor(timeEnd / tickStep) + 1 }, (_, index) => index * tickStep);
   const canvasWidth = timeEnd * pixelsPerSecond;
+  const nudgePlayhead = (delta: number) => {
+    const min = rangeEnabled ? rangeStart : 0;
+    const max = rangeEnabled ? rangeEnd : timeEnd;
+    setPlayheadTime((current) => Math.min(max, Math.max(min, current + delta)));
+  };
+  const jumpTo = (time: number) => setPlayheadTime(Math.min(timeEnd, Math.max(0, time)));
 
   return (
     <section className="timeline-panel" aria-label="Timeline editor preview">
       <header className="timeline-panel__header">
-        <div className="timeline-panel__title">
-          <span className="timeline-panel__title-icon">◆</span>
-          Timeline
+        <div className="timeline-panel__tabs" role="tablist" aria-label="Bottom panel">
+          <button className="timeline-panel__tab timeline-panel__tab--active" type="button" role="tab" aria-selected="true">
+            <span className="timeline-panel__title-icon">◆</span>
+            Timeline
+          </button>
+          <button
+            className="timeline-panel__tab"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            onClick={() => window.dispatchEvent(new CustomEvent("tauri3d:console-toggle", { detail: { open: true } }))}
+          >
+            Console
+          </button>
         </div>
-        <div className="timeline-panel__tools" aria-hidden="true">
-          <button className="timeline-tool timeline-tool--active" type="button" tabIndex={-1}>Select</button>
-          <button className="timeline-tool" type="button" tabIndex={-1}>Snap</button>
+        <div className="timeline-panel__tools">
+          <button className="timeline-tool timeline-tool--active" type="button">Select</button>
+          <button className="timeline-tool" type="button" disabled title="Snapping is preview-only">Snap</button>
           <span className="timeline-panel__divider" />
-          <button className="timeline-transport" type="button" tabIndex={-1}>◀</button>
-          <button className="timeline-transport timeline-transport--play" type="button" tabIndex={-1}>▶</button>
-          <button className="timeline-transport" type="button" tabIndex={-1}>▶|</button>
+          <button className="timeline-transport" type="button" aria-label="Go to start" onClick={() => jumpTo(0)}>◀|</button>
+          <button className="timeline-transport" type="button" aria-label="Previous frame" onClick={() => nudgePlayhead(-1 / 24)}>◀</button>
+          <button
+            className="timeline-transport timeline-transport--play"
+            type="button"
+            aria-label={isPlaying ? "Pause" : "Play"}
+            aria-pressed={isPlaying}
+            onClick={() => setIsPlaying((playing) => !playing)}
+          >
+            {isPlaying ? "Ⅱ" : "▶"}
+          </button>
+          <button className="timeline-transport" type="button" aria-label="Next frame" onClick={() => nudgePlayhead(1 / 24)}>▶</button>
+          <button className="timeline-transport" type="button" aria-label="Go to end" onClick={() => jumpTo(timeEnd)}>▶|</button>
+          <button
+            className={`timeline-tool timeline-tool--range${rangeEnabled ? " timeline-tool--active" : ""}`}
+            type="button"
+            aria-pressed={rangeEnabled}
+            onClick={() => setRangeEnabled((enabled) => !enabled)}
+          >
+            Range
+          </button>
+          <button
+            className={`timeline-tool timeline-tool--loop${loop ? " timeline-tool--active" : ""}`}
+            type="button"
+            aria-pressed={loop}
+            onClick={() => setLoop((enabled) => !enabled)}
+          >
+            Loop
+          </button>
         </div>
         <div className="timeline-panel__readout">
           <span className="timeline-panel__status-dot" />
-          <span>{PLAYHEAD_TIME.toFixed(2)} s</span>
+          <span>{playheadTime.toFixed(2)} s</span>
           <span className="timeline-panel__fps">24 fps</span>
           <label className="timeline-panel__zoom">
             Zoom
@@ -381,6 +471,30 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
               max="180"
               value={pixelsPerSecond}
               onChange={(event) => setPixelsPerSecond(Number(event.currentTarget.value))}
+            />
+          </label>
+          <label className="timeline-panel__range-field">
+            <span>Range</span>
+            <input
+              aria-label="Range start"
+              type="number"
+              min="0"
+              max={rangeEnd}
+              step="0.1"
+              value={rangeStart}
+              disabled={!rangeEnabled}
+              onChange={(event) => setRangeStart(Math.max(0, Math.min(rangeEnd - 0.1, event.currentTarget.valueAsNumber || 0)))}
+            />
+            <span>–</span>
+            <input
+              aria-label="Range end"
+              type="number"
+              min={rangeStart + 0.1}
+              max={timeEnd}
+              step="0.1"
+              value={rangeEnd}
+              disabled={!rangeEnabled}
+              onChange={(event) => setRangeEnd(Math.min(timeEnd, Math.max(rangeStart + 0.1, event.currentTarget.valueAsNumber || timeEnd)))}
             />
           </label>
         </div>
@@ -404,7 +518,7 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
             ))}
             <div
               className="timeline-panel__ruler-playhead"
-              style={{ left: Math.min(PLAYHEAD_TIME, timeEnd) * pixelsPerSecond }}
+              style={{ left: Math.min(playheadTime, timeEnd) * pixelsPerSecond }}
             />
           </div>
         </div>

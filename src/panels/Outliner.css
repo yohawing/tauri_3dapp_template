@@ -79,3 +79,118 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* Reference shell density: tabs/search are panel-owned chrome, so they do not
+ * depend on dockview's hidden tab strip. */
+.outliner-panel {
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: var(--font-ui);
+}
+
+.outliner-panel__header {
+  display: flex;
+  align-items: stretch;
+  height: var(--panel-header-height);
+  padding: 0;
+  background: var(--surface-0);
+  border-bottom: 1px solid var(--divider-strong);
+}
+
+.outliner-panel__tab {
+  appearance: none;
+  height: 100%;
+  padding: 0 11px;
+  border: 0;
+  color: var(--text-muted);
+  background: transparent;
+  cursor: default;
+  font-size: 10px;
+}
+
+.outliner-panel__tab--active {
+  color: var(--text-strong);
+  background: var(--surface-2);
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.outliner-panel__tab:disabled {
+  opacity: 0.8;
+}
+
+.outliner-panel__actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+  padding: 0 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.outliner-panel__search {
+  display: flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 7px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--divider);
+}
+
+.outliner-panel__search input {
+  width: 100%;
+  height: 15px;
+  padding: 0 6px;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-sm);
+  outline: none;
+  color: var(--text);
+  background: var(--surface-0);
+  font-size: 9px;
+}
+
+.outliner-panel__search input:focus {
+  border-color: var(--accent-strong);
+}
+
+.outliner-row {
+  height: var(--row-height);
+  font-size: 10px;
+  color: var(--text);
+}
+
+.outliner-row--hidden .outliner-row__label {
+  opacity: 0.45;
+}
+
+.outliner-row__visibility {
+  flex: 0 0 18px;
+  height: 17px;
+  margin-right: 3px;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.outliner-row__visibility:hover,
+.outliner-row__visibility:focus-visible {
+  outline: none;
+  color: var(--text-strong);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
