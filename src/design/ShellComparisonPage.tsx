@@ -47,6 +47,7 @@ export function ShellComparisonPage() {
           <button className={mode === "overlay" ? "is-active" : ""} type="button" onClick={() => setMode("overlay")}>Overlay</button>
         </div>
         <label className={mode === "overlay" ? "" : "is-disabled"}>Implementation opacity<input type="range" min="0" max="1" step="0.05" value={opacity} disabled={mode !== "overlay"} onChange={(event) => setOpacity(Number(event.currentTarget.value))} /><output>{Math.round(opacity * 100)}%</output></label>
+        <a className="compare-toolbar__catalog" href="/?shell=components">All components ↗</a>
       </header>
       <div className={`compare-stage compare-stage--${mode}`}>
         <ScaledFrame title="Reference" src="/?shell=reference" />
