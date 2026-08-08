@@ -192,11 +192,11 @@ export function ConsoleDrawer(props: ConsoleDrawerProps) {
             value={query}
             onChange={(event) => setQuery(event.currentTarget.value)}
           />
-          <button className="console-drawer__button" type="button" onClick={() => dispatch({ type: "clear" })}>
-            Clear
-          </button>
           <button className="console-drawer__button" type="button" onClick={handleCopyAll}>
             {copyLabel}
+          </button>
+          <button className="console-drawer__button" type="button" onClick={() => dispatch({ type: "clear" })}>
+            Clear
           </button>
           <button
             className={`console-drawer__button console-drawer__button--autoscroll${state.autoScroll ? " is-active" : ""}`}

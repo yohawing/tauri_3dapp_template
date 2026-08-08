@@ -128,8 +128,8 @@
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-columns: 228px minmax(0, 1fr);
-  grid-template-rows: 25px minmax(0, 1fr);
+  grid-template-columns: 212px minmax(0, 1fr);
+  grid-template-rows: 18px minmax(0, 1fr);
 }
 
 .timeline-panel__tree-heading,
@@ -184,7 +184,7 @@
 
 .timeline-panel__tick span {
   position: absolute;
-  top: 6px;
+  top: 3px;
   left: 5px;
   color: #7d818c;
   font-family: "SFMono-Regular", Consolas, monospace;

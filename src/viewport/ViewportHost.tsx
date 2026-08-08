@@ -212,8 +212,11 @@ export function ViewportHost({ mode, showDebugOverlay = true }: ViewportHostProp
     };
   }, [mode]);
 
+  const browserNativePreview = mode === "native" && !("__TAURI_INTERNALS__" in window);
+
   return (
-    <div ref={hostRef} className="viewport-host">
+    <div ref={hostRef} className={`viewport-host${browserNativePreview ? " viewport-host--browser-preview" : ""}`}>
+      {browserNativePreview && <span className="viewport-host__preview-label">native wgpu surface (transparent DOM hole)</span>}
       {showDebugOverlay && <div className="viewport-host__overlay">
         <div className="viewport-host__label">
           {mode === "native" ? "Backend: native wgpu" : "Backend: canvas (three.js)"}

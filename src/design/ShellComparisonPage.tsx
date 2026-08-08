@@ -50,7 +50,7 @@ export function ShellComparisonPage() {
         <a className="compare-toolbar__catalog" href="/?shell=components">All components ↗</a>
       </header>
       <div className={`compare-stage compare-stage--${mode}`}>
-        <ScaledFrame title="Reference" src="/?shell=reference" />
+        <ScaledFrame title="Reference HTML" src="/.claude/Tauri3D%20Shell.html" />
         <ScaledFrame title="Implementation" src="/?shell=implementation" opacity={mode === "overlay" ? opacity : 1} />
       </div>
     </main>

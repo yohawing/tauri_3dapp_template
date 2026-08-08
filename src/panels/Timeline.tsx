@@ -10,7 +10,7 @@ import {
 } from "../timeline/core/contracts";
 import "./Timeline.css";
 
-const ROW_HEIGHT = 34;
+const ROW_HEIGHT = 26;
 const DEFAULT_PIXELS_PER_SECOND = 60;
 const PLAYHEAD_TIME = 4.55;
 let timelineSelfTestHasRun = false;
@@ -56,7 +56,7 @@ function drawItem(
   if (item.kind === "clip") {
     const x = timeToX(item.range.start);
     const width = Math.max(3, timeToX(item.range.end) - x);
-    roundedRect(context, x + 1, rowY + 6, width - 2, 22, 4);
+    roundedRect(context, x + 1, rowY + 4, width - 2, 18, 3);
     context.fillStyle = item.color;
     context.globalAlpha = 0.82;
     context.fill();
@@ -74,12 +74,12 @@ function drawItem(
 
     context.save();
     context.beginPath();
-    context.rect(x + 7, rowY + 6, Math.max(0, width - 14), 22);
+    context.rect(x + 7, rowY + 4, Math.max(0, width - 14), 18);
     context.clip();
     context.fillStyle = "rgba(255, 255, 255, 0.9)";
     context.font = "500 10px Inter, Segoe UI, sans-serif";
     context.textBaseline = "middle";
-    context.fillText(item.label, x + 8, rowY + 17);
+    context.fillText(item.label, x + 8, rowY + 13);
 
     if (item.rowId === "row-audio") {
       context.strokeStyle = "rgba(218, 255, 244, 0.44)";
@@ -87,8 +87,8 @@ function drawItem(
       context.beginPath();
       for (let offset = 0; offset < width - 12; offset += 4) {
         const amplitude = 2 + Math.abs(Math.sin(offset * 0.17)) * 3;
-        context.moveTo(x + 7 + offset, rowY + 17 - amplitude);
-        context.lineTo(x + 7 + offset, rowY + 17 + amplitude);
+        context.moveTo(x + 7 + offset, rowY + 13 - amplitude);
+        context.lineTo(x + 7 + offset, rowY + 13 + amplitude);
       }
       context.stroke();
     }
@@ -101,38 +101,38 @@ function drawItem(
     context.strokeStyle = item.color;
     context.lineWidth = 1;
     context.beginPath();
-    context.moveTo(x + 0.5, rowY + 9);
-    context.lineTo(x + 0.5, rowY + 28);
+    context.moveTo(x + 0.5, rowY + 7);
+    context.lineTo(x + 0.5, rowY + 22);
     context.stroke();
     context.fillStyle = item.color;
     context.beginPath();
-    context.moveTo(x - 5, rowY + 7);
-    context.lineTo(x + 5, rowY + 7);
-    context.lineTo(x, rowY + 13);
+    context.moveTo(x - 5, rowY + 5);
+    context.lineTo(x + 5, rowY + 5);
+    context.lineTo(x, rowY + 11);
     context.closePath();
     context.fill();
   } else if (item.kind === "event-cue") {
     context.fillStyle = item.color;
     context.beginPath();
-    context.moveTo(x, rowY + 7);
-    context.lineTo(x + 6, rowY + 11);
-    context.lineTo(x + 6, rowY + 19);
-    context.lineTo(x, rowY + 23);
-    context.lineTo(x - 6, rowY + 19);
-    context.lineTo(x - 6, rowY + 11);
+    context.moveTo(x, rowY + 5);
+    context.lineTo(x + 6, rowY + 9);
+    context.lineTo(x + 6, rowY + 17);
+    context.lineTo(x, rowY + 21);
+    context.lineTo(x - 6, rowY + 17);
+    context.lineTo(x - 6, rowY + 9);
     context.closePath();
     context.fill();
   } else {
     context.fillStyle = item.color;
     context.beginPath();
-    context.arc(x, rowY + 16, 5, 0, Math.PI * 2);
+    context.arc(x, rowY + 13, 5, 0, Math.PI * 2);
     context.fill();
   }
 
   context.fillStyle = "rgba(238, 238, 244, 0.78)";
   context.font = "500 9px Inter, Segoe UI, sans-serif";
   context.textBaseline = "middle";
-  context.fillText(item.label, x + 9, rowY + 17);
+  context.fillText(item.label, x + 9, rowY + 13);
 }
 
 function drawKey(
@@ -142,7 +142,7 @@ function drawKey(
   timeToX: (time: number) => number,
 ) {
   const x = timeToX(key.time);
-  const y = rowIndex * ROW_HEIGHT + 25;
+  const y = rowIndex * ROW_HEIGHT + 19;
   drawDiamond(context, x, y, key.selected ? 4.5 : 3.5);
   context.fillStyle = key.selected ? "#ffffff" : "rgba(230, 232, 255, 0.78)";
   context.fill();
@@ -173,7 +173,7 @@ function drawKeyColumn(
     return;
   }
   const x = Math.round(timeToX(column.time)) + 0.5;
-  const y = rowIndex * ROW_HEIGHT + 17;
+  const y = rowIndex * ROW_HEIGHT + 13;
   context.strokeStyle = `rgba(230, 232, 255, ${Math.min(1, 0.3 + Math.log2(column.count) / 8)})`;
   context.lineWidth = Math.min(4, 1 + Math.log2(column.count) / 3);
   context.beginPath();
@@ -405,6 +405,8 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
     setPlayheadTime((current) => Math.min(max, Math.max(min, current + delta)));
   };
   const jumpTo = (time: number) => setPlayheadTime(Math.min(timeEnd, Math.max(0, time)));
+  const jumpToPreviousKey = () => jumpTo(Math.max(0, Math.ceil(playheadTime) - 1));
+  const jumpToNextKey = () => jumpTo(Math.min(timeEnd, Math.floor(playheadTime) + 1));
 
   return (
     <section className="timeline-panel" aria-label="Timeline editor preview">
@@ -427,6 +429,7 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
         <div className="timeline-panel__toolbar">
           <div className="timeline-panel__tools">
           <button className="timeline-transport" type="button" aria-label="Go to start" onClick={() => jumpTo(0)}>◀|</button>
+          <button className="timeline-transport" type="button" aria-label="Previous key" onClick={jumpToPreviousKey}>◆◀</button>
           <button className="timeline-transport" type="button" aria-label="Previous frame" onClick={() => nudgePlayhead(-1 / 24)}>◀</button>
           <button
             className="timeline-transport timeline-transport--play"
@@ -438,7 +441,15 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
             {isPlaying ? "Ⅱ" : "▶"}
           </button>
           <button className="timeline-transport" type="button" aria-label="Next frame" onClick={() => nudgePlayhead(1 / 24)}>▶</button>
+          <button className="timeline-transport" type="button" aria-label="Next key" onClick={jumpToNextKey}>▶◆</button>
           <button className="timeline-transport" type="button" aria-label="Go to end" onClick={() => jumpTo(timeEnd)}>▶|</button>
+          <button
+            className={`timeline-transport${loop ? " timeline-tool--active" : ""}`}
+            type="button"
+            aria-label="Loop"
+            aria-pressed={loop}
+            onClick={() => setLoop((enabled) => !enabled)}
+          >↔</button>
           <span className="timeline-panel__frame">{String(Math.round(playheadTime * 24)).padStart(4, "0")} / {String(Math.round(timeEnd * 24)).padStart(4, "0")}</span>
           <span className="timeline-panel__divider" />
           <button className="timeline-tool timeline-tool--active" type="button">Select</button>
@@ -450,14 +461,6 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
             onClick={() => setRangeEnabled((enabled) => !enabled)}
           >
             Range
-          </button>
-          <button
-            className={`timeline-tool timeline-tool--loop${loop ? " timeline-tool--active" : ""}`}
-            type="button"
-            aria-pressed={loop}
-            onClick={() => setLoop((enabled) => !enabled)}
-          >
-            Loop
           </button>
           </div>
           <div className="timeline-panel__readout">
