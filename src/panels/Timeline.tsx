@@ -424,10 +424,8 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
             Console
           </button>
         </div>
-        <div className="timeline-panel__tools">
-          <button className="timeline-tool timeline-tool--active" type="button">Select</button>
-          <button className="timeline-tool" type="button" disabled title="Snapping is preview-only">Snap</button>
-          <span className="timeline-panel__divider" />
+        <div className="timeline-panel__toolbar">
+          <div className="timeline-panel__tools">
           <button className="timeline-transport" type="button" aria-label="Go to start" onClick={() => jumpTo(0)}>◀|</button>
           <button className="timeline-transport" type="button" aria-label="Previous frame" onClick={() => nudgePlayhead(-1 / 24)}>◀</button>
           <button
@@ -441,6 +439,10 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
           </button>
           <button className="timeline-transport" type="button" aria-label="Next frame" onClick={() => nudgePlayhead(1 / 24)}>▶</button>
           <button className="timeline-transport" type="button" aria-label="Go to end" onClick={() => jumpTo(timeEnd)}>▶|</button>
+          <span className="timeline-panel__frame">{String(Math.round(playheadTime * 24)).padStart(4, "0")} / {String(Math.round(timeEnd * 24)).padStart(4, "0")}</span>
+          <span className="timeline-panel__divider" />
+          <button className="timeline-tool timeline-tool--active" type="button">Select</button>
+          <button className="timeline-tool" type="button" disabled title="Snapping is preview-only">Snap</button>
           <button
             className={`timeline-tool timeline-tool--range${rangeEnabled ? " timeline-tool--active" : ""}`}
             type="button"
@@ -457,46 +459,47 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
           >
             Loop
           </button>
-        </div>
-        <div className="timeline-panel__readout">
-          <span className="timeline-panel__status-dot" />
-          <span>{playheadTime.toFixed(2)} s</span>
-          <span className="timeline-panel__fps">24 fps</span>
-          <label className="timeline-panel__zoom">
-            Zoom
-            <input
-              aria-label="Timeline zoom"
-              type="range"
-              min="12"
-              max="180"
-              value={pixelsPerSecond}
-              onChange={(event) => setPixelsPerSecond(Number(event.currentTarget.value))}
-            />
-          </label>
-          <label className="timeline-panel__range-field">
-            <span>Range</span>
-            <input
-              aria-label="Range start"
-              type="number"
-              min="0"
-              max={rangeEnd}
-              step="0.1"
-              value={rangeStart}
-              disabled={!rangeEnabled}
-              onChange={(event) => setRangeStart(Math.max(0, Math.min(rangeEnd - 0.1, event.currentTarget.valueAsNumber || 0)))}
-            />
-            <span>–</span>
-            <input
-              aria-label="Range end"
-              type="number"
-              min={rangeStart + 0.1}
-              max={timeEnd}
-              step="0.1"
-              value={rangeEnd}
-              disabled={!rangeEnabled}
-              onChange={(event) => setRangeEnd(Math.min(timeEnd, Math.max(rangeStart + 0.1, event.currentTarget.valueAsNumber || timeEnd)))}
-            />
-          </label>
+          </div>
+          <div className="timeline-panel__readout">
+            <span className="timeline-panel__status-dot" />
+            <span>{playheadTime.toFixed(2)} s</span>
+            <span className="timeline-panel__fps">24 fps</span>
+            <label className="timeline-panel__zoom">
+              Zoom
+              <input
+                aria-label="Timeline zoom"
+                type="range"
+                min="12"
+                max="180"
+                value={pixelsPerSecond}
+                onChange={(event) => setPixelsPerSecond(Number(event.currentTarget.value))}
+              />
+            </label>
+            <label className="timeline-panel__range-field">
+              <span>Range</span>
+              <input
+                aria-label="Range start"
+                type="number"
+                min="0"
+                max={rangeEnd}
+                step="0.1"
+                value={rangeStart}
+                disabled={!rangeEnabled}
+                onChange={(event) => setRangeStart(Math.max(0, Math.min(rangeEnd - 0.1, event.currentTarget.valueAsNumber || 0)))}
+              />
+              <span>–</span>
+              <input
+                aria-label="Range end"
+                type="number"
+                min={rangeStart + 0.1}
+                max={timeEnd}
+                step="0.1"
+                value={rangeEnd}
+                disabled={!rangeEnabled}
+                onChange={(event) => setRangeEnd(Math.min(timeEnd, Math.max(rangeStart + 0.1, event.currentTarget.valueAsNumber || timeEnd)))}
+              />
+            </label>
+          </div>
         </div>
       </header>
 

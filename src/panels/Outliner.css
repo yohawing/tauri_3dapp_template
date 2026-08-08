@@ -76,8 +76,23 @@
 }
 
 .outliner-row__label {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.outliner-row__kind {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: 50%;
+}
+
+.outliner-row__tag {
+  margin-left: auto;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 8px;
 }
 
 /* Reference shell density: tabs/search are panel-owned chrome, so they do not
@@ -100,7 +115,8 @@
 .outliner-panel__tab {
   appearance: none;
   height: 100%;
-  padding: 0 11px;
+  min-width: 70px;
+  padding: 0 9px;
   border: 0;
   color: var(--text-muted);
   background: transparent;
@@ -164,17 +180,30 @@
 }
 
 .outliner-row__visibility {
-  flex: 0 0 18px;
-  height: 17px;
-  margin-right: 3px;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  margin-right: 2px;
   padding: 0;
   border: 0;
   border-radius: 2px;
   color: var(--text-muted);
   background: transparent;
   cursor: pointer;
-  font-size: 10px;
-  line-height: 1;
+  line-height: 0;
+}
+
+.outliner-row__visibility svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.1;
+}
+
+.outliner-row__visibility circle {
+  fill: currentColor;
+  stroke: none;
 }
 
 .outliner-row__visibility:hover,

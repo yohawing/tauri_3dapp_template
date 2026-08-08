@@ -14,6 +14,25 @@ interface SceneNode extends SceneNodeSummary {
   toggleVisibility?: () => void;
 }
 
+const kindMeta = {
+  scene: { tag: "ROOT", color: "#d7a448" },
+  light: { tag: "LIGHT", color: "#f5c15d" },
+  mesh: { tag: "MESH", color: "#8c79d8" },
+} as const;
+
+function VisibilityIcon({ hidden }: { hidden: boolean }) {
+  return hidden ? (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path d="m3 3 10 10M6.4 5.1A4.8 4.8 0 0 1 8 4.8c3.2 0 5.3 3.2 5.3 3.2a9 9 0 0 1-1.6 1.8M9.8 10.8A4.9 4.9 0 0 1 8 11.2C4.8 11.2 2.7 8 2.7 8a9 9 0 0 1 1.5-1.7" />
+    </svg>
+  ) : (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path d="M2.7 8S4.8 4.8 8 4.8 13.3 8 13.3 8 11.2 11.2 8 11.2 2.7 8 2.7 8Z" />
+      <circle cx="8" cy="8" r="1.55" />
+    </svg>
+  );
+}
+
 function toTree(
   nodes: SceneNodeSummary[],
   toggleVisibility: (nodeId: string) => void,
@@ -54,6 +73,7 @@ function toTree(
 
 function Node({ node, style, dragHandle }: NodeRendererProps<SceneNode>) {
   const hidden = node.data.uiHidden === true;
+  const meta = kindMeta[node.data.kind];
   return (
     <div
       ref={dragHandle}
@@ -73,7 +93,9 @@ function Node({ node, style, dragHandle }: NodeRendererProps<SceneNode>) {
       >
         {node.isInternal ? (node.isOpen ? "▾" : "▸") : ""}
       </span>
+      <span className="outliner-row__kind" style={{ backgroundColor: meta.color }} />
       <span className="outliner-row__label">{node.data.label}</span>
+      <span className="outliner-row__tag">{meta.tag}</span>
       <button
         type="button"
         className="outliner-row__visibility"
@@ -84,7 +106,7 @@ function Node({ node, style, dragHandle }: NodeRendererProps<SceneNode>) {
           node.data.toggleVisibility?.();
         }}
       >
-        {hidden ? "◌" : "◉"}
+        <VisibilityIcon hidden={hidden} />
       </button>
     </div>
   );
@@ -173,7 +195,7 @@ export function Outliner() {
             data={tree}
             width={size.width}
             height={size.height}
-            rowHeight={22}
+            rowHeight={18}
             indent={14}
             openByDefault
             disableEdit

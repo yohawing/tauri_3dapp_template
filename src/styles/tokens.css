@@ -22,6 +22,7 @@
   --font-mono: "JetBrains Mono", "SF Mono", Consolas, monospace;
   --radius-sm: 3px;
   --radius-md: 4px;
-  --panel-header-height: 24px;
-  --row-height: 20px;
+  --panel-header-height: 20px;
+  --toolbar-height: 24px;
+  --row-height: 18px;
 }
