@@ -45,17 +45,19 @@ export interface SceneProjection {
 export interface SceneCommandResult {
   sequence: number;
   nodeId: string;
-  property: SceneMaterialProperty;
+  property: SceneCommandProperty;
   applied: boolean;
   error: string | null;
 }
 
 export type SceneMaterialProperty = "baseColor" | "metallic" | "roughness";
+export type SceneCommandProperty = SceneMaterialProperty | "visibility";
 
 export type SceneCommand =
   | { type: "setBaseColor"; nodeId: string; color: [number, number, number, number] }
   | { type: "setMetallic"; nodeId: string; value: number }
-  | { type: "setRoughness"; nodeId: string; value: number };
+  | { type: "setRoughness"; nodeId: string; value: number }
+  | { type: "setVisibility"; nodeId: string; visible: boolean };
 
 export interface SceneCommandEnvelope {
   sequence: number;

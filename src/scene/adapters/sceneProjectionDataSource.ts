@@ -5,7 +5,7 @@ import type {
   SceneCommandEnvelope,
   SceneCommandResult,
   SceneMaterial,
-  SceneMaterialProperty,
+  SceneCommandProperty,
   SceneProjection,
 } from "../core/projection";
 
@@ -67,7 +67,40 @@ export class SceneProjectionDataSource {
           void this.dispatch({ type: "setRoughness", nodeId: "cube", value: 0.2 });
         }, 2500);
       }
+      if (import.meta.env.VITE_VISIBILITY_SELF_TEST) {
+        this.scheduleVisibilitySelfTest();
+      }
     }
+  }
+
+  private scheduleVisibilitySelfTest(): void {
+    window.setTimeout(() => {
+      console.log("[visibility-self-test] step=hide cube");
+      void this.dispatch({ type: "setVisibility", nodeId: "cube", visible: false });
+    }, 2500);
+    window.setTimeout(() => {
+      this.logVisibilitySelfTestResult("hide");
+      console.log("[visibility-self-test] step=show cube");
+      void this.dispatch({ type: "setVisibility", nodeId: "cube", visible: true });
+    }, 4000);
+    window.setTimeout(() => this.logVisibilitySelfTestResult("show"), 5500);
+  }
+
+  private logVisibilitySelfTestResult(step: string): void {
+    const result = [...this.snapshot.commandResults]
+      .reverse()
+      .find((candidate) => candidate.nodeId === "cube" && candidate.property === "visibility");
+    const visible = this.snapshot.nodes.find((node) => node.id === "cube")?.visible;
+    const message =
+      `[visibility-self-test] step=${step} sequence=${result?.sequence ?? "pending"} ` +
+      `applied=${result?.applied ?? "pending"} visible=${visible ?? "missing"}`;
+    console.log(message);
+    window.dispatchEvent(
+      new CustomEvent("tauri3d:diagnostic", {
+        detail: { level: "info", source: "scene", message },
+      }),
+    );
+    window.dispatchEvent(new CustomEvent("tauri3d:console-toggle", { detail: { open: true } }));
   }
 
   getSnapshot = (): SceneProjection => this.snapshot;
@@ -120,6 +153,21 @@ export class SceneProjectionDataSource {
   async dispatch(command: SceneCommand): Promise<void> {
     const envelope: SceneCommandEnvelope = { sequence: ++this.nextSequence, command };
     if (!hasTauriRuntime()) {
+      if (command.type === "setVisibility") {
+        const node = this.snapshot.nodes.find((candidate) => candidate.id === command.nodeId);
+        if (!node) return;
+        this.snapshot = {
+          ...this.snapshot,
+          revision: this.snapshot.revision + 1,
+          nodes: this.snapshot.nodes.map((candidate) =>
+            candidate.id === command.nodeId ? { ...candidate, visible: command.visible } : candidate,
+          ),
+          lastProcessedSequence: envelope.sequence,
+          commandResults: [...this.snapshot.commandResults, resultFor(envelope, true)].slice(-32),
+        };
+        this.emit();
+        return;
+      }
       const selected = this.snapshot.selected;
       const material = selected?.material;
       if (!selected || !material || selected.id !== command.nodeId) return;
@@ -241,11 +289,20 @@ export function shouldAcceptSceneProjection(
 }
 
 function commandKey(command: SceneCommand): string {
-  return `${command.nodeId}/${command.type === "setBaseColor" ? "baseColor" : command.type === "setMetallic" ? "metallic" : "roughness"}`;
+  return `${command.nodeId}/${commandProperty(command)}`;
 }
 
-function commandProperty(command: SceneCommand): SceneMaterialProperty {
-  return command.type === "setBaseColor" ? "baseColor" : command.type === "setMetallic" ? "metallic" : "roughness";
+function commandProperty(command: SceneCommand): SceneCommandProperty {
+  switch (command.type) {
+    case "setBaseColor":
+      return "baseColor";
+    case "setMetallic":
+      return "metallic";
+    case "setRoughness":
+      return "roughness";
+    case "setVisibility":
+      return "visibility";
+  }
 }
 
 function resultFor(envelope: SceneCommandEnvelope, applied: boolean, error: string | null = null): SceneCommandResult {
@@ -259,6 +316,19 @@ function resultFor(envelope: SceneCommandEnvelope, applied: boolean, error: stri
 }
 
 export function applyOptimisticToProjection(projection: SceneProjection, envelope: SceneCommandEnvelope): SceneProjection {
+  if (envelope.command.type === "setVisibility") {
+    const visibility = envelope.command;
+    const node = projection.nodes.find((candidate) => candidate.id === visibility.nodeId);
+    if (!node) return projection;
+    return {
+      ...projection,
+      nodes: projection.nodes.map((candidate) =>
+        candidate.id === visibility.nodeId
+          ? { ...candidate, visible: visibility.visible }
+          : candidate,
+      ),
+    };
+  }
   const selected = projection.selected;
   if (!selected || selected.id !== envelope.command.nodeId || !selected.material) return projection;
   return {
@@ -293,6 +363,8 @@ function applyFixtureCommand(material: SceneMaterial, command: SceneCommand): Sc
       return { ...material, metallic: command.value };
     case "setRoughness":
       return { ...material, roughness: command.value };
+    case "setVisibility":
+      return material;
   }
 }
 

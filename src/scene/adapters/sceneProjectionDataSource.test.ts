@@ -77,4 +77,30 @@ describe("scene projection synchronization", () => {
     expect(reconciled.projection.selected?.material?.roughness).toBe(0.8);
     expect(older.sequence).toBeLessThan(newer.sequence);
   });
+
+  it("optimistically toggles canonical node visibility and rolls back on reject", () => {
+    const command: SceneCommandEnvelope = {
+      sequence: 11,
+      command: { type: "setVisibility", nodeId: "cube", visible: false },
+    };
+    const optimistic = applyOptimisticToProjection(projection(), command);
+    expect(optimistic.nodes.find((node) => node.id === "cube")?.visible).toBe(false);
+
+    const rejected = projection();
+    rejected.commandResults = [
+      {
+        sequence: 11,
+        nodeId: "cube",
+        property: "visibility",
+        applied: false,
+        error: "unsupported scene node",
+      },
+    ];
+    const reconciled = reconcileSceneProjection(
+      rejected,
+      new Map([["cube/visibility", command]]),
+    );
+    expect(reconciled.pending.size).toBe(0);
+    expect(reconciled.projection.nodes.find((node) => node.id === "cube")?.visible).toBe(true);
+  });
 });

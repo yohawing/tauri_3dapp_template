@@ -285,6 +285,24 @@ impl Renderer {
                     return Err(format!("unsupported scene node '{node_id}'"));
                 }
             }
+            SceneCommand::SetVisibility { node_id, visible } => {
+                match node_id.as_str() {
+                    SCENE_ID => self.scene.set_visible(visible),
+                    KEY_LIGHT_ID => self.key_light.set_visible(visible),
+                    CUBE_ID => self
+                        .cube
+                        .as_mut()
+                        .ok_or_else(|| format!("unsupported scene node '{node_id}'"))?
+                        .set_visible(visible),
+                    _ => self
+                        .instances
+                        .iter_mut()
+                        .find(|instance| instance.id == node_id)
+                        .ok_or_else(|| format!("unsupported scene node '{node_id}'"))?
+                        .root
+                        .set_visible(visible),
+                };
+            }
             SceneCommand::SetBaseColor { node_id, .. }
             | SceneCommand::SetMetallic { node_id, .. }
             | SceneCommand::SetRoughness { node_id, .. } => {

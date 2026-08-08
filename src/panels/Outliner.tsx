@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Tree, type NodeRendererProps } from "react-arborist";
-import { selectSceneNode, useSceneProjection } from "../scene/adapters/sceneProjectionDataSource";
+import {
+  dispatchSceneCommand,
+  selectSceneNode,
+  useSceneProjection,
+} from "../scene/adapters/sceneProjectionDataSource";
 import type { SceneNodeSummary } from "../scene/core/projection";
 import "./Outliner.css";
 
@@ -12,13 +16,12 @@ interface SceneNode extends SceneNodeSummary {
 
 function toTree(
   nodes: SceneNodeSummary[],
-  hiddenIds: ReadonlySet<string>,
   toggleVisibility: (nodeId: string) => void,
   query: string,
 ): SceneNode[] {
   const byId = new Map(nodes.map((node) => [node.id, { ...node } as SceneNode]));
   byId.forEach((node) => {
-    node.uiHidden = hiddenIds.has(node.id) || !node.visible;
+    node.uiHidden = !node.visible;
     node.toggleVisibility = () => toggleVisibility(node.id);
   });
   const roots: SceneNode[] = [];
@@ -75,7 +78,7 @@ function Node({ node, style, dragHandle }: NodeRendererProps<SceneNode>) {
         type="button"
         className="outliner-row__visibility"
         aria-label={`${hidden ? "Show" : "Hide"} ${node.data.label}`}
-        title="Toggle visibility (UI preview)"
+        title="Toggle visibility"
         onClick={(event) => {
           event.stopPropagation();
           node.data.toggleVisibility?.();
@@ -118,27 +121,34 @@ export function Outliner() {
   const { ref: bodyRef, size } = useElementSize<HTMLDivElement>();
   const projection = useSceneProjection();
   const [query, setQuery] = useState("");
-  const [hiddenIds, setHiddenIds] = useState<ReadonlySet<string>>(() => new Set());
+  const visibilityFailureRef = useRef<number | null>(null);
   const tree = useMemo(
-    () => toTree(projection.nodes, hiddenIds, (nodeId) => {
-      setHiddenIds((current) => {
-        const next = new Set(current);
-        if (next.has(nodeId)) next.delete(nodeId);
-        else next.add(nodeId);
-        window.dispatchEvent(
-          new CustomEvent("tauri3d:diagnostic", {
-            detail: {
-              level: "info",
-              source: "outliner",
-              message: `Visibility preview ${next.has(nodeId) ? "hidden" : "shown"}: ${nodeId}`,
-            },
-          }),
-        );
-        return next;
-      });
-    }, query),
-    [hiddenIds, projection.nodes, query],
+    () => toTree(
+      projection.nodes,
+      (nodeId) => {
+        const node = projection.nodes.find((candidate) => candidate.id === nodeId);
+        if (!node) return;
+        dispatchSceneCommand({ type: "setVisibility", nodeId, visible: !node.visible });
+      },
+      query,
+    ),
+    [projection.nodes, query],
   );
+
+  useEffect(() => {
+    const failure = [...projection.commandResults]
+      .reverse()
+      .find((result) => result.property === "visibility" && !result.applied);
+    if (!failure || visibilityFailureRef.current === failure.sequence) return;
+    visibilityFailureRef.current = failure.sequence;
+    const message = `Visibility rejected for ${failure.nodeId}: ${failure.error ?? "unsupported scene node"}`;
+    console.warn(`[Outliner] ${message}`);
+    window.dispatchEvent(
+      new CustomEvent("tauri3d:diagnostic", {
+        detail: { level: "warn", source: "outliner", message },
+      }),
+    );
+  }, [projection.commandResults]);
 
   return (
     <div className="outliner-panel">
