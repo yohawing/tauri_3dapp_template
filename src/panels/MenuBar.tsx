@@ -92,6 +92,24 @@ export function MenuBar({ actions, backendLabel, isMac }: MenuBarProps) {
       <span className="menu-bar__title">Tauri3D</span>
       {renderMenu("view", VIEW_ACTIONS)}
       {renderMenu("renderer", RENDERER_ACTIONS)}
+      <div className="menu-bar__renderer-toggle" role="group" aria-label="Renderer backend">
+        {RENDERER_ACTIONS.map((id) => {
+          const action = actionById(actions, id);
+          const label = id === "renderer.native" ? "Native" : "Canvas";
+          return (
+            <button
+              key={id}
+              type="button"
+              className={`menu-bar__renderer-button${action.checked ? " is-active" : ""}`}
+              aria-pressed={action.checked}
+              disabled={!action.enabled}
+              onClick={action.run}
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
       <span className="menu-bar__backend">Backend: {backendLabel}</span>
     </nav>
   );
