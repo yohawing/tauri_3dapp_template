@@ -82,6 +82,8 @@ npm run tauri dev
 
 - [`TODO.md`](TODO.md): 依存順の実行queueと完了条件
 - [`docs/IDEA.md`](docs/IDEA.md): PoC企画書
+- [`docs/SCENE_FORMAT.md`](docs/SCENE_FORMAT.md): version付きScene JSONとローカルAsset pathの最小契約
+- [`docs/POC_STATUS.md`](docs/POC_STATUS.md): 実装、検証、未実装、外部証拠待ちを分けたPoC台帳
 - [`docs/TIMELINE_PLAN.md`](docs/TIMELINE_PLAN.md): Temporal Editor subsystemの正式実装計画
 - [`docs/ui-research.md`](docs/ui-research.md): DCC UI library調査
 

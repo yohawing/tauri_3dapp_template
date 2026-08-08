@@ -107,6 +107,13 @@ export interface TimelineKey {
   selected?: boolean;
 }
 
+export interface TimelineKeyColumn {
+  rowId: RowId;
+  channelId: ChannelId;
+  time: TimeValue;
+  count: number;
+}
+
 export type TimelineItem = TimelineClip | TimelineCue | TimelineMarker | TimelineEventCue;
 
 export interface RowRangeQuery {
@@ -123,11 +130,16 @@ export interface TimelineDataSource {
   subscribe(listener: () => void): () => void;
   getRevision(): number;
   getDomain(): TimeDomain;
+  getRange(): TimeRange;
   getGroups(): readonly TimelineGroup[];
   getBindings(): readonly TimelineBinding[];
   getRows(query: RowRangeQuery): readonly TimelineRow[];
   getItems(query: VisibleTimeQuery): readonly TimelineItem[];
   getKeys(query: VisibleTimeQuery): readonly TimelineKey[];
+  getKeyColumns?(
+    query: VisibleTimeQuery,
+    pixelsPerTimeUnit: number,
+  ): readonly TimelineKeyColumn[];
 }
 
 export function createViewTransform(

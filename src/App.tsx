@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   DockviewReact,
   themeAbyss,
@@ -9,7 +9,17 @@ import {
 } from "dockview-react";
 import "dockview-react/dist/styles/dockview.css";
 import "./App.css";
-import { Toolbar } from "./panels/Toolbar";
+import {
+  actionById,
+  findShortcutAction,
+  isEditableTarget,
+  isMacPlatform,
+  type EditorAction,
+} from "./actions/editorActions";
+import { MenuBar } from "./panels/MenuBar";
+import { ConsoleDrawer, createConsoleStore, type ConsoleEntry } from "./console";
+import { SettingsModal } from "./settings/SettingsModal";
+import { loadSettings, saveSettings, type Settings } from "./settings/model";
 import { Outliner } from "./panels/Outliner";
 import { Inspector } from "./panels/Inspector";
 import { Timeline } from "./panels/Timeline";
@@ -18,6 +28,8 @@ import { buildDefaultLayout } from "./shell/layout";
 
 let backendSelfTestHasRun = false;
 let dockSelfTestHasRun = false;
+let shortcutSelfTestHasRun = false;
+let shellSelfTestHasRun = false;
 
 // Panel content, keyed by the `component` name used in shell/layout.ts. Each
 // entry wraps the (self-contained, opaque) panel component or ViewportHost in
@@ -44,7 +56,10 @@ const DOCK_COMPONENTS: Record<string, React.FunctionComponent<IDockviewPanelProp
   ),
   viewport: (props) => (
     <div className="dock-panel-content dock-panel-content--viewport">
-      <ViewportHost mode={(props.params.mode as ViewportMode) ?? "native"} />
+      <ViewportHost
+        mode={(props.params.mode as ViewportMode) ?? "native"}
+        showDebugOverlay={(props.params.showDebugOverlay as boolean | undefined) ?? true}
+      />
     </div>
   ),
 };
@@ -55,23 +70,39 @@ function App() {
   const addGroupSubRef = useRef<DockviewIDisposable | null>(null);
   const [inspectorVisible, setInspectorVisible] = useState(true);
   const [viewportMode, setViewportMode] = useState<ViewportMode>("native");
+  const [consoleVisible, setConsoleVisible] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settings, setSettings] = useState<Settings>(() => loadSettings());
+  const [consoleStore] = useState(() =>
+    createConsoleStore({
+      capacity: 500,
+      levelFilter: settings.console.minimumLevel,
+      autoScroll: settings.console.autoScroll,
+    }),
+  );
+  const consoleState = useSyncExternalStore(
+    consoleStore.subscribe,
+    consoleStore.getState,
+    consoleStore.getState,
+  );
+  const consoleErrorCount = consoleState.entries.filter((entry) => entry.level === "error").length;
+  const isMac = useMemo(() => isMacPlatform(navigator.platform), []);
 
-  const toggleViewportMode = useCallback(() => {
-    setViewportMode((mode) => (mode === "native" ? "canvas" : "native"));
-  }, []);
+  const appendDiagnostic = useCallback(
+    (level: ConsoleEntry["level"], source: ConsoleEntry["source"], message: string) => {
+      consoleStore.append({ timestamp: new Date().toISOString(), level, source, message });
+    },
+    [consoleStore],
+  );
 
-  // Dev-only self-test, gated behind VITE_BACKEND_SELF_TEST: drives the same
-  // toggle code path as the Toolbar button to auto-switch to canvas at +3s
-  // and back to native at +6s. Runs at most once per page load, same pattern
-  // as VITE_INPUT_SELF_TEST in viewport/input.ts.
-  useEffect(() => {
-    if (backendSelfTestHasRun || !import.meta.env.VITE_BACKEND_SELF_TEST) {
-      return;
-    }
-    backendSelfTestHasRun = true;
-    setTimeout(toggleViewportMode, 3000);
-    setTimeout(toggleViewportMode, 6000);
-  }, [toggleViewportMode]);
+  const selectNativeRenderer = useCallback(() => {
+    setViewportMode("native");
+    appendDiagnostic("info", "renderer", "Backend selected: Native wgpu");
+  }, [appendDiagnostic]);
+  const selectCanvasRenderer = useCallback(() => {
+    setViewportMode("canvas");
+    appendDiagnostic("info", "renderer", "Backend selected: Canvas (three.js)");
+  }, [appendDiagnostic]);
 
   // Disposes the onDidLayoutChange subscription (created in onReady, below)
   // when App unmounts. DockviewReact owns creating/disposing the DockviewApi
@@ -82,6 +113,52 @@ function App() {
       addGroupSubRef.current?.dispose();
     };
   }, []);
+
+  useEffect(() => {
+    appendDiagnostic("info", "frontend", "Application shell ready");
+    appendDiagnostic("info", "scene", "Scene projection connected");
+
+    const onViewportRect = (event: Event) => {
+      const rect = (event as CustomEvent<{ x: number; y: number; width: number; height: number }>).detail;
+      appendDiagnostic(
+        "info",
+        "viewport",
+        `rect x=${rect.x.toFixed(1)} y=${rect.y.toFixed(1)} w=${rect.width.toFixed(1)} h=${rect.height.toFixed(1)}`,
+      );
+    };
+    const onDiagnostic = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        level: ConsoleEntry["level"];
+        source: ConsoleEntry["source"];
+        message: string;
+      }>).detail;
+      appendDiagnostic(detail.level, detail.source, detail.message);
+    };
+    window.addEventListener("tauri3d:viewport-rect", onViewportRect);
+    window.addEventListener("tauri3d:diagnostic", onDiagnostic);
+    return () => {
+      window.removeEventListener("tauri3d:viewport-rect", onViewportRect);
+      window.removeEventListener("tauri3d:diagnostic", onDiagnostic);
+    };
+  }, [appendDiagnostic]);
+
+  useEffect(() => {
+    consoleStore.setFilter(settings.console.minimumLevel);
+    consoleStore.setAutoScroll(settings.console.autoScroll);
+    apiRef.current?.getPanel("viewport")?.update({
+      params: { mode: viewportMode, showDebugOverlay: settings.viewport.debugOverlay },
+    });
+  }, [consoleStore, settings, viewportMode]);
+
+  const onSettingsChange = useCallback(
+    (next: Settings) => {
+      setSettings(next);
+      if (!saveSettings(next)) {
+        appendDiagnostic("warn", "frontend", "Settings changed for this session but could not be persisted");
+      }
+    },
+    [appendDiagnostic],
+  );
 
   // Called once by DockviewReact after it builds the DockviewApi. Wires
   // onDidAddGroup *before* building the layout so it also catches the initial
@@ -110,6 +187,9 @@ function App() {
       group.header.hidden = true;
     });
     buildDefaultLayout(api, viewportMode);
+    api.getPanel("viewport")?.update({
+      params: { mode: viewportMode, showDebugOverlay: settings.viewport.debugOverlay },
+    });
     requestViewportRemeasure();
     layoutSubRef.current = api.onDidLayoutChange(() => {
       requestViewportRemeasure();
@@ -118,10 +198,12 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fires once on mount; viewportMode changes are pushed via the effect below instead.
   }, []);
 
-  // Keeps the mounted viewport panel's mode in sync with Toolbar toggles.
+  // Keeps the mounted viewport panel's mode in sync with renderer actions.
   useEffect(() => {
-    apiRef.current?.getPanel("viewport")?.update({ params: { mode: viewportMode } });
-  }, [viewportMode]);
+    apiRef.current?.getPanel("viewport")?.update({
+      params: { mode: viewportMode, showDebugOverlay: settings.viewport.debugOverlay },
+    });
+  }, [settings.viewport.debugOverlay, viewportMode]);
 
   const onToggleInspector = useCallback(() => {
     const api = apiRef.current;
@@ -148,8 +230,124 @@ function App() {
       return;
     }
     buildDefaultLayout(api, viewportMode);
+    api.getPanel("viewport")?.update({
+      params: { mode: viewportMode, showDebugOverlay: settings.viewport.debugOverlay },
+    });
     requestViewportRemeasure();
-  }, [viewportMode]);
+  }, [settings.viewport.debugOverlay, viewportMode]);
+
+  const actions = useMemo<readonly EditorAction[]>(
+    () => [
+      {
+        id: "renderer.native",
+        label: "Native",
+        shortcut: { code: "Digit1", primary: true },
+        enabled: true,
+        checked: viewportMode === "native",
+        run: selectNativeRenderer,
+      },
+      {
+        id: "renderer.canvas",
+        label: "Canvas",
+        shortcut: { code: "Digit2", primary: true },
+        enabled: true,
+        checked: viewportMode === "canvas",
+        run: selectCanvasRenderer,
+      },
+      {
+        id: "view.inspector.toggle",
+        label: inspectorVisible ? "Hide Inspector" : "Show Inspector",
+        shortcut: { code: "KeyI", primary: true },
+        enabled: true,
+        checked: inspectorVisible,
+        run: onToggleInspector,
+      },
+      {
+        id: "view.console.toggle",
+        label: `${consoleVisible ? "Hide" : "Show"} Console${consoleErrorCount > 0 ? ` • ${consoleErrorCount}` : ""}`,
+        enabled: true,
+        checked: consoleVisible,
+        run: () => setConsoleVisible((visible) => !visible),
+      },
+      {
+        id: "view.settings.open",
+        label: "Settings…",
+        enabled: true,
+        run: () => setSettingsOpen(true),
+      },
+      {
+        id: "view.layout.reset",
+        label: "Reset Layout",
+        shortcut: { code: "Digit0", primary: true, shift: true },
+        enabled: true,
+        run: onResetLayout,
+      },
+    ],
+    [
+      inspectorVisible,
+      consoleVisible,
+      consoleErrorCount,
+      onResetLayout,
+      onToggleInspector,
+      selectCanvasRenderer,
+      selectNativeRenderer,
+      viewportMode,
+    ],
+  );
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (isEditableTarget(event.target)) return;
+      const action = findShortcutAction(actions, event, isMac);
+      if (!action) return;
+      event.preventDefault();
+      action.run();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [actions, isMac]);
+
+  // Dev-only shortcut integration gate. Synthetic keydown events exercise
+  // the same window listener as physical keyboard input without bypassing
+  // shortcut matching, editable-target filtering, or Action dispatch.
+  useEffect(() => {
+    if (shortcutSelfTestHasRun || !import.meta.env.VITE_SHORTCUT_SELF_TEST) return;
+    shortcutSelfTestHasRun = true;
+    const press = (code: string, shiftKey = false) =>
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          code,
+          ctrlKey: !isMac,
+          metaKey: isMac,
+          shiftKey,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    setTimeout(() => press("Digit2"), 2000);
+    setTimeout(() => press("KeyI"), 4000);
+    setTimeout(() => press("Digit0", true), 6000);
+    setTimeout(() => press("Digit1"), 8000);
+  }, [isMac]);
+
+  // Dev-only self-test, gated behind VITE_BACKEND_SELF_TEST. It uses the same
+  // finite actions as the Menu Bar and shortcuts.
+  useEffect(() => {
+    if (backendSelfTestHasRun || !import.meta.env.VITE_BACKEND_SELF_TEST) return;
+    backendSelfTestHasRun = true;
+    setTimeout(() => actionById(actions, "renderer.canvas").run(), 3000);
+    setTimeout(() => actionById(actions, "renderer.native").run(), 6000);
+  }, [actions]);
+
+  // Reproducible GUI gate for the Console drawer and Settings modal. Both
+  // steps use the exact finite actions exposed by the View menu.
+  useEffect(() => {
+    if (shellSelfTestHasRun || !import.meta.env.VITE_SHELL_SELF_TEST) return;
+    shellSelfTestHasRun = true;
+    setTimeout(() => actionById(actions, "view.console.toggle").run(), 2000);
+    setTimeout(() => actionById(actions, "view.settings.open").run(), 5000);
+    setTimeout(() => setSettingsOpen(false), 8000);
+  }, [actions]);
 
   // Dev-only self-test, gated behind VITE_DOCK_SELF_TEST: proves the viewport
   // rect stays correct across dock layout changes, including the one case a
@@ -161,6 +359,15 @@ function App() {
       return;
     }
     dockSelfTestHasRun = true;
+
+    setTimeout(() => {
+      console.log("[dock-self-test] step=resize-viewport-group");
+      const viewportPanel = apiRef.current?.getPanel("viewport");
+      // Dockview's group size API drives the same grid allocation that a sash
+      // drag commits, without depending on OS pointer injection or DPI-aware
+      // cursor coordinates in the repeatable self-test.
+      viewportPanel?.group.api.setSize({ width: 620 });
+    }, 1500);
 
     setTimeout(() => {
       console.log("[dock-self-test] step=move-outliner-right");
@@ -184,29 +391,27 @@ function App() {
 
     setTimeout(() => {
       console.log("[dock-self-test] step=remove-inspector");
-      // Same code path the Toolbar's "Hide Inspector" button calls. Removing
+      // Same action path the View menu and Ctrl+I call. Removing
       // the inspector widens the viewport group — the resize case, which a
       // plain ResizeObserver on the viewport element already handles, used
       // here as a control/contrast to the move-only step above.
-      onToggleInspector();
+      actionById(actions, "view.inspector.toggle").run();
     }, 6000);
 
     setTimeout(() => {
       console.log("[dock-self-test] step=reset-layout");
-      // Same code path the Toolbar's "Reset Layout" button calls.
-      onResetLayout();
+      // Same action path the View menu and Ctrl+Shift+0 call.
+      actionById(actions, "view.layout.reset").run();
     }, 9000);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fires at most once per page load; intentionally not re-arming on onToggleInspector/onResetLayout identity changes.
-  }, []);
+  }, [actions]);
 
   return (
     <div className="app-shell">
-      <Toolbar
-        inspectorVisible={inspectorVisible}
-        onToggleInspector={onToggleInspector}
-        viewportMode={viewportMode}
-        onToggleViewportMode={toggleViewportMode}
-        onResetLayout={onResetLayout}
+      <MenuBar
+        actions={actions}
+        backendLabel={viewportMode === "native" ? "Native wgpu" : "Canvas (three.js)"}
+        isMac={isMac}
       />
       <div className="dockview-shell">
         {/* themeAbyss is kept deliberately even though App.css nulls out its
@@ -239,6 +444,13 @@ function App() {
           disableDnd
         />
       </div>
+      {consoleVisible && <ConsoleDrawer store={consoleStore} />}
+      <SettingsModal
+        open={settingsOpen}
+        settings={settings}
+        onChange={onSettingsChange}
+        onClose={() => setSettingsOpen(false)}
+      />
     </div>
   );
 }

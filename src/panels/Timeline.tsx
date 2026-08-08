@@ -1,19 +1,19 @@
-import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
-import { fixtureTimelineDataSource } from "../timeline/adapters/fixtureDataSource";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { runtimeTimelineDataSource } from "../timeline/adapters/gltfProjectionDataSource";
 import {
   createViewTransform,
   type TimelineDataSource,
   type TimelineItem,
   type TimelineKey,
+  type TimelineKeyColumn,
   type TimelineRow,
 } from "../timeline/core/contracts";
 import "./Timeline.css";
 
 const ROW_HEIGHT = 34;
-const TIME_END = 12;
-const PIXELS_PER_SECOND = 104;
-const CANVAS_WIDTH = TIME_END * PIXELS_PER_SECOND;
+const DEFAULT_PIXELS_PER_SECOND = 60;
 const PLAYHEAD_TIME = 4.55;
+let timelineSelfTestHasRun = false;
 
 interface TimelineProps {
   dataSource?: TimelineDataSource;
@@ -151,23 +151,58 @@ function drawKey(
   context.stroke();
 }
 
+function drawKeyColumn(
+  context: CanvasRenderingContext2D,
+  column: TimelineKeyColumn,
+  rowIndex: number,
+  timeToX: (time: number) => number,
+) {
+  if (column.count === 1) {
+    drawKey(
+      context,
+      {
+        kind: "key",
+        id: `aggregate:${column.channelId}:${column.time}` as TimelineKey["id"],
+        rowId: column.rowId,
+        channelId: column.channelId,
+        time: column.time,
+      },
+      rowIndex,
+      timeToX,
+    );
+    return;
+  }
+  const x = Math.round(timeToX(column.time)) + 0.5;
+  const y = rowIndex * ROW_HEIGHT + 17;
+  context.strokeStyle = `rgba(230, 232, 255, ${Math.min(1, 0.3 + Math.log2(column.count) / 8)})`;
+  context.lineWidth = Math.min(4, 1 + Math.log2(column.count) / 3);
+  context.beginPath();
+  context.moveTo(x, y - 9);
+  context.lineTo(x, y + 9);
+  context.stroke();
+}
+
 function paintTimeline(
   canvas: HTMLCanvasElement,
   rows: readonly TimelineRow[],
   items: readonly TimelineItem[],
   keys: readonly TimelineKey[],
+  keyColumns: readonly TimelineKeyColumn[],
+  pixelsPerSecond: number,
+  timeEnd: number,
 ) {
+  const canvasWidth = Math.max(1, timeEnd * pixelsPerSecond);
   const height = rows.length * ROW_HEIGHT;
   const dpr = window.devicePixelRatio || 1;
-  canvas.width = Math.round(CANVAS_WIDTH * dpr);
+  canvas.width = Math.round(canvasWidth * dpr);
   canvas.height = Math.round(height * dpr);
-  canvas.style.width = `${CANVAS_WIDTH}px`;
+  canvas.style.width = `${canvasWidth}px`;
   canvas.style.height = `${height}px`;
 
   const context = canvas.getContext("2d");
   if (!context) return;
   context.setTransform(dpr, 0, 0, dpr, 0, 0);
-  context.clearRect(0, 0, CANVAS_WIDTH, height);
+  context.clearRect(0, 0, canvasWidth, height);
 
   rows.forEach((row, index) => {
     const y = index * ROW_HEIGHT;
@@ -177,18 +212,19 @@ function paintTimeline(
         : index % 2 === 0
           ? "#1c1e25"
           : "#191b21";
-    context.fillRect(0, y, CANVAS_WIDTH, ROW_HEIGHT);
+    context.fillRect(0, y, canvasWidth, ROW_HEIGHT);
     context.strokeStyle = "rgba(255, 255, 255, 0.055)";
     context.lineWidth = 1;
     context.beginPath();
     context.moveTo(0, y + ROW_HEIGHT - 0.5);
-    context.lineTo(CANVAS_WIDTH, y + ROW_HEIGHT - 0.5);
+    context.lineTo(canvasWidth, y + ROW_HEIGHT - 0.5);
     context.stroke();
   });
 
-  for (let halfSecond = 0; halfSecond <= TIME_END * 2; halfSecond += 1) {
-    const x = (halfSecond / 2) * PIXELS_PER_SECOND + 0.5;
-    const major = halfSecond % 2 === 0;
+  const gridStep = pixelsPerSecond >= 40 ? 0.5 : pixelsPerSecond >= 15 ? 1 : 5;
+  for (let time = 0; time <= timeEnd; time += gridStep) {
+    const x = time * pixelsPerSecond + 0.5;
+    const major = Number.isInteger(time);
     context.strokeStyle = major
       ? "rgba(255, 255, 255, 0.105)"
       : "rgba(255, 255, 255, 0.045)";
@@ -199,7 +235,7 @@ function paintTimeline(
     context.stroke();
   }
 
-  const transform = createViewTransform(0, PIXELS_PER_SECOND);
+  const transform = createViewTransform(0, pixelsPerSecond);
   const rowIndexById = new Map(rows.map((row, index) => [row.id, index]));
   for (const item of items) {
     const rowIndex = rowIndexById.get(item.rowId);
@@ -208,6 +244,10 @@ function paintTimeline(
   for (const key of keys) {
     const rowIndex = rowIndexById.get(key.rowId);
     if (rowIndex != null) drawKey(context, key, rowIndex, transform.timeToX);
+  }
+  for (const column of keyColumns) {
+    const rowIndex = rowIndexById.get(column.rowId);
+    if (rowIndex != null) drawKeyColumn(context, column, rowIndex, transform.timeToX);
   }
 
   const playheadX = transform.timeToX(PLAYHEAD_TIME) + 0.5;
@@ -219,7 +259,7 @@ function paintTimeline(
   context.stroke();
 }
 
-export function Timeline({ dataSource = fixtureTimelineDataSource }: TimelineProps) {
+export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelineProps) {
   const revision = useSyncExternalStore(
     dataSource.subscribe,
     dataSource.getRevision,
@@ -228,16 +268,25 @@ export function Timeline({ dataSource = fixtureTimelineDataSource }: TimelinePro
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const treeRowsRef = useRef<HTMLDivElement>(null);
   const rulerRef = useRef<HTMLDivElement>(null);
+  const canvasViewportRef = useRef<HTMLDivElement>(null);
+  const [pixelsPerSecond, setPixelsPerSecond] = useState(DEFAULT_PIXELS_PER_SECOND);
+  const [visibleRange, setVisibleRange] = useState({ start: 0, end: 12 });
 
   const rows = useMemo(() => dataSource.getRows({ start: 0, count: 10_000 }), [dataSource, revision]);
+  const timelineRange = useMemo(() => dataSource.getRange(), [dataSource, revision]);
+  const timeEnd = Math.max(1, timelineRange.end);
   const rowIds = useMemo(() => rows.map((row) => row.id), [rows]);
   const items = useMemo(
-    () => dataSource.getItems({ rowIds, range: { start: 0, end: TIME_END } }),
-    [dataSource, revision, rowIds],
+    () => dataSource.getItems({ rowIds, range: visibleRange }),
+    [dataSource, revision, rowIds, visibleRange],
   );
   const keys = useMemo(
-    () => dataSource.getKeys({ rowIds, range: { start: 0, end: TIME_END } }),
-    [dataSource, revision, rowIds],
+    () => (dataSource.getKeyColumns ? [] : dataSource.getKeys({ rowIds, range: visibleRange })),
+    [dataSource, revision, rowIds, visibleRange],
+  );
+  const keyColumns = useMemo(
+    () => dataSource.getKeyColumns?.({ rowIds, range: visibleRange }, pixelsPerSecond) ?? [],
+    [dataSource, revision, rowIds, visibleRange, pixelsPerSecond],
   );
   const bindingById = useMemo(
     () => new Map(dataSource.getBindings().map((binding) => [binding.id, binding])),
@@ -247,11 +296,44 @@ export function Timeline({ dataSource = fixtureTimelineDataSource }: TimelinePro
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const paint = () => paintTimeline(canvas, rows, items, keys);
+    const paint = () =>
+      paintTimeline(canvas, rows, items, keys, keyColumns, pixelsPerSecond, timeEnd);
     paint();
     window.addEventListener("resize", paint);
     return () => window.removeEventListener("resize", paint);
-  }, [items, keys, rows]);
+  }, [items, keyColumns, keys, pixelsPerSecond, rows, timeEnd]);
+
+  useEffect(() => {
+    const viewport = canvasViewportRef.current;
+    if (!viewport) return;
+    const update = () => {
+      setVisibleRange({
+        start: viewport.scrollLeft / pixelsPerSecond,
+        end: Math.min(timeEnd + 0.001, (viewport.scrollLeft + viewport.clientWidth) / pixelsPerSecond),
+      });
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, [pixelsPerSecond, timeEnd]);
+
+  useEffect(() => {
+    if (timelineSelfTestHasRun || !import.meta.env.VITE_TIMELINE_SELF_TEST) return;
+    timelineSelfTestHasRun = true;
+    const zoomTimer = window.setTimeout(() => setPixelsPerSecond(160), 2000);
+    const scrollTimer = window.setTimeout(() => {
+      const viewport = canvasViewportRef.current;
+      if (!viewport) return;
+      viewport.scrollLeft = 1800;
+      viewport.scrollTop = 680;
+      viewport.dispatchEvent(new Event("scroll", { bubbles: true }));
+    }, 4000);
+    return () => {
+      window.clearTimeout(zoomTimer);
+      window.clearTimeout(scrollTimer);
+    };
+  }, []);
 
   const handleScroll = (event: React.UIEvent<HTMLDivElement>) => {
     const target = event.currentTarget;
@@ -261,9 +343,15 @@ export function Timeline({ dataSource = fixtureTimelineDataSource }: TimelinePro
     if (rulerRef.current) {
       rulerRef.current.style.transform = `translateX(${-target.scrollLeft}px)`;
     }
+    setVisibleRange({
+      start: target.scrollLeft / pixelsPerSecond,
+      end: Math.min(timeEnd + 0.001, (target.scrollLeft + target.clientWidth) / pixelsPerSecond),
+    });
   };
 
-  const ticks = Array.from({ length: TIME_END + 1 }, (_, second) => second);
+  const tickStep = pixelsPerSecond < 18 ? 5 : 1;
+  const ticks = Array.from({ length: Math.floor(timeEnd / tickStep) + 1 }, (_, index) => index * tickStep);
+  const canvasWidth = timeEnd * pixelsPerSecond;
 
   return (
     <section className="timeline-panel" aria-label="Timeline editor preview">
@@ -284,6 +372,17 @@ export function Timeline({ dataSource = fixtureTimelineDataSource }: TimelinePro
           <span className="timeline-panel__status-dot" />
           <span>{PLAYHEAD_TIME.toFixed(2)} s</span>
           <span className="timeline-panel__fps">24 fps</span>
+          <label className="timeline-panel__zoom">
+            Zoom
+            <input
+              aria-label="Timeline zoom"
+              type="range"
+              min="12"
+              max="180"
+              value={pixelsPerSecond}
+              onChange={(event) => setPixelsPerSecond(Number(event.currentTarget.value))}
+            />
+          </label>
         </div>
       </header>
 
@@ -293,19 +392,19 @@ export function Timeline({ dataSource = fixtureTimelineDataSource }: TimelinePro
           <span className="timeline-panel__tree-actions">＋ ⋯</span>
         </div>
         <div className="timeline-panel__ruler-viewport">
-          <div className="timeline-panel__ruler" ref={rulerRef} style={{ width: CANVAS_WIDTH }}>
+          <div className="timeline-panel__ruler" ref={rulerRef} style={{ width: canvasWidth }}>
             {ticks.map((second) => (
               <div
                 className="timeline-panel__tick"
                 key={second}
-                style={{ left: second * PIXELS_PER_SECOND }}
+                style={{ left: second * pixelsPerSecond }}
               >
                 <span>{String(second).padStart(2, "0")}:00</span>
               </div>
             ))}
             <div
               className="timeline-panel__ruler-playhead"
-              style={{ left: PLAYHEAD_TIME * PIXELS_PER_SECOND }}
+              style={{ left: Math.min(PLAYHEAD_TIME, timeEnd) * pixelsPerSecond }}
             />
           </div>
         </div>
@@ -336,7 +435,7 @@ export function Timeline({ dataSource = fixtureTimelineDataSource }: TimelinePro
           </div>
         </div>
 
-        <div className="timeline-panel__canvas-viewport" onScroll={handleScroll}>
+        <div className="timeline-panel__canvas-viewport" ref={canvasViewportRef} onScroll={handleScroll}>
           <canvas ref={canvasRef} aria-label="Timeline tracks" />
         </div>
       </div>

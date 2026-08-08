@@ -111,6 +111,18 @@
   color: #777b86;
 }
 
+.timeline-panel__zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #8f93a3;
+  font-size: 9px;
+}
+
+.timeline-panel__zoom input {
+  width: 72px;
+}
+
 .timeline-panel__body {
   flex: 1;
   min-width: 0;

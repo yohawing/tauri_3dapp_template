@@ -197,9 +197,17 @@ React: UI Projection
 
 ### 9.2 Canvas mode
 
-Canvas Rendererは互換表示用のMirrorとする。初期PoCではNative Stateから軽量Snapshotを受け取る。
+Canvas RendererはCamera continuityと最低限のSafe Mode／診断表示を担当する、明示的にlossyなfallbackとする。Native Rendererの完全なMirrorにはしない。
+
+Scene previewが必要になった場合も、Scene JSONを完全にMirrorすることやThree.js固有型の共有を前提にせず、Transform、Visibility、proxy geometry、基本色などに制限した小さな読み取り専用DTOを別途定義する。Canvas runtime stateからScene JSONへの逆変換は行わない。
 
 Native／CanvasでGPU Resourceは共有しない。
+
+### 9.3 Scene file
+
+PoCの起動条件を再現するため、ローカルAsset path、instance Transform、Camera初期値をversion付き`.scene.json`へ保存する。Rust側の永続型は`Scene`とし、Kiss3D／wgpu runtime handleやThree.js固有型を含めない。
+
+初版は起動時loadとSerde round-tripを対象とし、Scene Editor、Save UI、Undo／Redo、Asset database、Canvas Scene同期は対象外とする。
 
 ## 10. IPC設計
 
@@ -313,8 +321,11 @@ pub trait ViewportBackend {
 - ViewportHostへCanvas Renderer追加
 - Native／Canvas切替ボタン
 - 同一Camera Parameterの同期
-- 同一glTFを両Backendで表示
+- fallback理由とrenderer statusの表示
+- 最低限のSafe Mode／診断表示
 - Native初期化失敗時の自動Fallback
+
+同一glTF、Material、Shaderを両Backendで同等表示することは、このPoCの必須条件にしない。
 
 ### Phase 4: DCC UI検証
 

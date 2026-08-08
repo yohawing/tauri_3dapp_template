@@ -2,7 +2,7 @@
  * DCC-style shell layout:
  *
  *   ┌────────────────────────────────────────────┐
- *   │ Toolbar (plain DOM, fixed height)          │
+ *   │ Menu Bar (plain DOM, fixed height)         │
  *   ├──────────────────────────────────────────────┤
  *   │ dockview (fills the rest — Outliner/         │
  *   │ Viewport/Inspector/Timeline are dock panels, │
@@ -28,47 +28,112 @@
   user-select: none;
 }
 
-/* ---------- Toolbar ---------- */
+/* ---------- Menu Bar ---------- */
 
-.toolbar {
+.menu-bar {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 0 12px;
-  height: 40px;
-  background: rgba(24, 24, 28, 0.92);
+  gap: 2px;
+  padding: 0 8px;
+  height: 32px;
+  position: relative;
+  z-index: 1000;
+  background: rgba(24, 24, 28, 0.97);
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-.toolbar__title {
+.menu-bar__title {
   font-weight: 600;
   font-size: 13px;
   letter-spacing: 0.02em;
   color: #f4f4f5;
+  padding: 0 10px 0 2px;
 }
 
-.toolbar__spacer {
-  flex: 1;
+.menu-bar__menu {
+  height: 100%;
+  position: relative;
+  display: flex;
+  align-items: center;
 }
 
-.toolbar__button {
+.menu-bar__trigger {
   appearance: none;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.06);
+  border: 0;
+  background: transparent;
   color: #e4e4e7;
   font-size: 12px;
-  padding: 5px 10px;
-  border-radius: 4px;
+  height: 26px;
+  padding: 0 9px;
+  border-radius: 3px;
   cursor: pointer;
 }
 
-.toolbar__button:hover {
+.menu-bar__trigger:hover,
+.menu-bar__trigger--open {
   background: rgba(255, 255, 255, 0.12);
 }
 
-.toolbar__button:active {
-  background: rgba(255, 255, 255, 0.18);
+.menu-bar__backend {
+  margin-left: auto;
+  padding: 0 4px 0 12px;
+  color: #a1a1aa;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.menu-popup {
+  position: absolute;
+  z-index: 1001;
+  top: calc(100% - 1px);
+  left: 0;
+  min-width: 220px;
+  padding: 4px;
+  background: #242429;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 4px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.48);
+}
+
+.menu-popup__item {
+  width: 100%;
+  min-height: 28px;
+  display: grid;
+  grid-template-columns: 16px 1fr auto;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-radius: 3px;
+  padding: 4px 7px;
+  background: transparent;
+  color: #e4e4e7;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.menu-popup__item:hover:not(:disabled),
+.menu-popup__item:focus-visible {
+  outline: none;
+  background: #315a9c;
+}
+
+.menu-popup__item:disabled {
+  color: #71717a;
+  cursor: default;
+}
+
+.menu-popup__check {
+  color: #7db4ff;
+  font-size: 9px;
+  text-align: center;
+}
+
+.menu-popup__shortcut {
+  color: #a1a1aa;
+  padding-left: 18px;
 }
 
 /* ---------- dockview shell ---------- */
@@ -189,4 +254,226 @@
   margin-top: 4px;
   color: #a1a1aa;
   white-space: nowrap;
+}
+
+/* ---------- Console drawer ---------- */
+
+.console-drawer {
+  flex: 0 0 auto;
+  min-height: 120px;
+  max-height: 65vh;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  z-index: 1100;
+  color: #d4d4d8;
+  background: #17171b;
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+  font-size: 11px;
+}
+
+.console-drawer__resize-handle {
+  position: absolute;
+  z-index: 1;
+  top: -3px;
+  right: 0;
+  left: 0;
+  height: 7px;
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.console-drawer__resize-handle:hover {
+  background: rgba(90, 154, 255, 0.42);
+}
+
+.console-drawer__header,
+.console-drawer__title,
+.console-drawer__controls {
+  display: flex;
+  align-items: center;
+}
+
+.console-drawer__header {
+  flex: 0 0 34px;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 10px;
+  background: #202026;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.console-drawer__title {
+  gap: 7px;
+  color: #f4f4f5;
+  font-weight: 600;
+}
+
+.console-drawer__title-icon {
+  color: #7db4ff;
+  font-family: Consolas, monospace;
+}
+
+.console-drawer__count {
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 9px;
+  color: #a1a1aa;
+  background: rgba(255, 255, 255, 0.08);
+  text-align: center;
+  font-weight: 400;
+}
+
+.console-drawer__controls {
+  gap: 6px;
+}
+
+.console-drawer__filter {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #a1a1aa;
+}
+
+.console-drawer select,
+.console-drawer__button {
+  height: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 3px;
+  color: #d4d4d8;
+  background: #2a2a31;
+  font: inherit;
+}
+
+.console-drawer__button {
+  padding: 0 8px;
+  cursor: pointer;
+}
+
+.console-drawer__button:hover,
+.console-drawer__button--autoscroll.is-active {
+  border-color: rgba(125, 180, 255, 0.6);
+  background: #315a9c;
+}
+
+.console-drawer__entries {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 3px 0;
+  overflow: auto;
+  user-select: text;
+  font-family: "SF Mono", Consolas, monospace;
+  list-style: none;
+}
+
+.console-drawer__entry {
+  display: grid;
+  grid-template-columns: 190px 48px 70px minmax(0, 1fr);
+  gap: 8px;
+  min-height: 24px;
+  align-items: center;
+  padding: 2px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.035);
+}
+
+.console-drawer__entry--warn {
+  background: rgba(245, 158, 11, 0.08);
+}
+
+.console-drawer__entry--error {
+  background: rgba(244, 63, 94, 0.1);
+}
+
+.console-drawer__entry--warn .console-drawer__level { color: #fbbf24; }
+.console-drawer__entry--error .console-drawer__level { color: #fb7185; }
+.console-drawer__timestamp,
+.console-drawer__source { color: #8b8b96; }
+.console-drawer__message { overflow-wrap: anywhere; }
+.console-drawer__empty { padding: 12px; color: #71717a; }
+
+/* ---------- Settings modal ---------- */
+
+.settings-modal__backdrop {
+  position: fixed;
+  z-index: 3000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.58);
+}
+
+.settings-modal {
+  width: min(440px, calc(100vw - 32px));
+  color: #e4e4e7;
+  background: #242429;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 7px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.58);
+  user-select: text;
+}
+
+.settings-modal__header,
+.settings-modal__footer {
+  display: flex;
+  align-items: center;
+  padding: 12px 16px;
+}
+
+.settings-modal__header {
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+.settings-modal__title,
+.settings-modal__section-title {
+  margin: 0;
+}
+
+.settings-modal__title { font-size: 16px; }
+.settings-modal__section-title { font-size: 12px; color: #aebfe2; }
+.settings-modal__close {
+  border: 0;
+  color: #a1a1aa;
+  background: transparent;
+  font-size: 22px;
+  cursor: pointer;
+}
+
+.settings-modal__body { padding: 4px 16px 8px; }
+.settings-modal__section { padding: 14px 0; }
+.settings-modal__section + .settings-modal__section { border-top: 1px solid rgba(255, 255, 255, 0.07); }
+.settings-modal__field,
+.settings-modal__checkbox-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 12px;
+  font-size: 12px;
+}
+
+.settings-modal__checkbox-row { justify-content: flex-start; }
+.settings-modal__select {
+  min-width: 130px;
+  height: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+  color: #e4e4e7;
+  background: #17171b;
+}
+
+.settings-modal__footer {
+  justify-content: flex-end;
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+.settings-modal__button {
+  height: 28px;
+  padding: 0 14px;
+  border: 1px solid #5284ca;
+  border-radius: 3px;
+  color: white;
+  background: #315a9c;
+  cursor: pointer;
 }

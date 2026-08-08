@@ -66,6 +66,7 @@ async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>): Promi
 
 interface ViewportHostProps {
   mode: ViewportMode;
+  showDebugOverlay?: boolean;
 }
 
 /**
@@ -75,7 +76,7 @@ interface ViewportHostProps {
  * on-screen rectangle. In "canvas" mode a three.js canvas is mounted in its
  * place instead (see canvasBackend.ts), driven by its own OrbitControls.
  */
-export function ViewportHost({ mode }: ViewportHostProps) {
+export function ViewportHost({ mode, showDebugOverlay = true }: ViewportHostProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const rafIdRef = useRef<number | null>(null);
   const [lastRect, setLastRect] = useState<ViewportRect | null>(null);
@@ -101,6 +102,11 @@ export function ViewportHost({ mode }: ViewportHostProps) {
         scaleFactor: window.devicePixelRatio,
       };
       setLastRect(rect);
+      window.dispatchEvent(
+        new CustomEvent("tauri3d:viewport-rect", {
+          detail: rect,
+        }),
+      );
       void sendViewportRect(rect);
     });
   }, []);
@@ -208,7 +214,7 @@ export function ViewportHost({ mode }: ViewportHostProps) {
 
   return (
     <div ref={hostRef} className="viewport-host">
-      <div className="viewport-host__overlay">
+      {showDebugOverlay && <div className="viewport-host__overlay">
         <div className="viewport-host__label">
           {mode === "native" ? "Backend: native wgpu" : "Backend: canvas (three.js)"}
         </div>
@@ -224,7 +230,7 @@ export function ViewportHost({ mode }: ViewportHostProps) {
             ? "Drag: orbit · Shift+Drag: pan · Wheel: zoom"
             : "Drag: orbit · Right-drag: pan · Wheel: zoom"}
         </div>
-      </div>
+      </div>}
     </div>
   );
 }

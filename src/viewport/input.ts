@@ -214,4 +214,33 @@ export function maybeRunViewportInputSelfTest(el: HTMLElement): void {
       }, i * 100);
     }
   }, 4500);
+
+  // ~6.0s: Shift+left-drag pan, +80px x / -40px y over ~0.8s.
+  setTimeout(() => {
+    const steps = 24;
+    const durationMs = 800;
+    const shift = 1;
+    void sendViewportInput({ type: "pointerDown", x: cx, y: cy, button: 0, modifiers: shift });
+    for (let i = 1; i <= steps; i++) {
+      setTimeout(() => {
+        const t = i / steps;
+        void sendViewportInput({
+          type: "pointerMove",
+          x: cx + 80 * t,
+          y: cy - 40 * t,
+          buttons: 1,
+          modifiers: shift,
+        });
+        if (i === steps) {
+          void sendViewportInput({
+            type: "pointerUp",
+            x: cx + 80,
+            y: cy - 40,
+            button: 0,
+            modifiers: shift,
+          });
+        }
+      }, (durationMs * i) / steps);
+    }
+  }, 6000);
 }

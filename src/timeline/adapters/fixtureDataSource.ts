@@ -224,6 +224,7 @@ export const fixtureTimelineDataSource: TimelineDataSource = {
   subscribe: () => () => undefined,
   getRevision: () => 1,
   getDomain: () => ({ kind: "seconds" }),
+  getRange: () => ({ start: 0, end: 12 }),
   getGroups: () => groups,
   getBindings: () => bindings,
   getRows: ({ start, count }) => rows.slice(start, start + count),

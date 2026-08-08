@@ -1,9 +1,12 @@
 mod camera;
 mod protocol;
 mod renderer;
+pub mod scene;
 mod scene_projection;
+mod timeline;
 
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
@@ -139,6 +142,45 @@ fn dispatch_scene_command(
     state.request_command(command)
 }
 
+#[tauri::command]
+fn get_timeline_projection(
+    state: tauri::State<timeline::TimelineProjection>,
+) -> timeline::TimelineProjection {
+    state.inner().clone()
+}
+
+fn scene_camera_state(document: &scene::Scene) -> Result<CameraState, String> {
+    let Some(camera) = document.camera.as_ref() else {
+        return Ok(OrbitCamera::default().state());
+    };
+
+    let cast = |value: f64, field: &str| {
+        let value = value as f32;
+        if value.is_finite() {
+            Ok(value)
+        } else {
+            Err(format!("Scene camera {field} overflows f32"))
+        }
+    };
+
+    let state = CameraState {
+        target: [
+            cast(camera.target[0], "target[0]")?,
+            cast(camera.target[1], "target[1]")?,
+            cast(camera.target[2], "target[2]")?,
+        ],
+        yaw: cast(camera.yaw, "yaw")?,
+        pitch: cast(camera.pitch, "pitch")?,
+        distance: cast(camera.distance, "distance")?,
+    };
+    if state.distance <= 0.0 {
+        return Err(
+            "Scene camera distance must remain greater than zero after f32 conversion".into(),
+        );
+    }
+    Ok(state)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -152,23 +194,91 @@ pub fn run() {
             set_camera,
             get_scene_projection,
             select_scene_node,
-            dispatch_scene_command
+            dispatch_scene_command,
+            get_timeline_projection
         ])
         .setup(|app| {
             let window = app.get_webview_window("main").expect("no main window");
             let size = window.inner_size()?;
 
-            let renderer = Renderer::new(window, (size.width, size.height));
+            let configured_scene = std::env::var_os("TAURI3D_SCENE");
+            let (renderer, initial_camera, timeline_projection) = match configured_scene {
+                None => {
+                    let renderer = Renderer::new(window, (size.width, size.height));
+                    (
+                        renderer,
+                        OrbitCamera::default().state(),
+                        timeline::TimelineProjection::default(),
+                    )
+                }
+                Some(scene_path) => {
+                    let scene_path = PathBuf::from(scene_path);
+                    let document = scene::Scene::load(&scene_path).map_err(|error| {
+                        format!(
+                            "TAURI3D_SCENE '{}' failed before renderer startup: {error}",
+                            scene_path.display()
+                        )
+                    })?;
+                    // Scene::load performs the existence check.  Resolve again here to retain
+                    // the absolute paths needed by the native runtime builder.
+                    let resolved_assets =
+                        document.resolve_asset_paths(&scene_path).map_err(|error| {
+                            format!(
+                                "TAURI3D_SCENE '{}' path resolution failed: {error}",
+                                scene_path.display()
+                            )
+                        })?;
+                    let initial_camera = scene_camera_state(&document).map_err(|error| {
+                        format!(
+                            "TAURI3D_SCENE '{}' camera initialization failed: {error}",
+                            scene_path.display()
+                        )
+                    })?;
+                    let renderer = Renderer::new_from_scene(
+                        window,
+                        (size.width, size.height),
+                        &document,
+                        &resolved_assets,
+                    )
+                    .map_err(|error| {
+                        format!(
+                            "TAURI3D_SCENE '{}' native runtime construction failed: {error}",
+                            scene_path.display()
+                        )
+                    })?;
+                    let timeline_projection =
+                        timeline::load_scene_timeline(&document, &resolved_assets).map_err(
+                            |error| {
+                                format!(
+                                    "TAURI3D_SCENE '{}' animation metadata failed: {error}",
+                                    scene_path.display()
+                                )
+                            },
+                        )?;
+                    (renderer, initial_camera, timeline_projection)
+                }
+            };
+            let runtime_clip_count = renderer.animation_clip_count();
+            if runtime_clip_count != timeline_projection.clips.len() {
+                return Err(format!(
+                    "animation metadata/runtime mismatch: projection has {} clips but native loader retained {runtime_clip_count}",
+                    timeline_projection.clips.len()
+                )
+                .into());
+            }
             let projection_store = SceneProjectionStore::default();
-            projection_store.publish(renderer.scene_projection(Some(renderer::CUBE_ID)));
+            projection_store.publish(renderer.scene_projection(Some(renderer.default_node_id())));
             NATIVE_RENDERER.with(|slot| {
                 *slot.borrow_mut() = Some(renderer);
             });
-            app.manage(Mutex::new(OrbitCamera::default()));
+            let mut camera = OrbitCamera::default();
+            camera.set_state(initial_camera);
+            app.manage(Mutex::new(camera));
             app.manage(RendererActive(AtomicBool::new(true)));
             app.manage(RendererControl::default());
             app.manage(ViewportRectLog::default());
             app.manage(projection_store);
+            app.manage(timeline_projection);
 
             // tauri-runtime-wry hard-resets tao's ControlFlow to `Wait` on every
             // loop iteration (it never lets user code switch to `Poll`), so
@@ -239,7 +349,8 @@ pub fn run() {
                         let selected_id = selected_id
                             .as_deref()
                             .filter(|id| renderer.has_node(id))
-                            .or(Some(renderer::CUBE_ID));
+                            .map(ToOwned::to_owned)
+                            .unwrap_or_else(|| renderer.default_node_id().to_string());
                         if active {
                             if let Some(rect) = viewport_rect {
                                 renderer::apply_viewport_rect(renderer, rect);
@@ -247,10 +358,54 @@ pub fn run() {
                             renderer.set_camera_state(camera);
                             renderer.render();
                         }
-                        projection_store.publish(renderer.scene_projection(selected_id));
+                        projection_store.publish(renderer.scene_projection(Some(&selected_id)));
                     }
                 });
             }
             _ => {}
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scene::{Scene, SceneCamera};
+
+    fn document(camera: SceneCamera) -> Scene {
+        Scene {
+            version: 1,
+            name: None,
+            assets: Vec::new(),
+            instances: Vec::new(),
+            camera: Some(camera),
+        }
+    }
+
+    #[test]
+    fn scene_camera_state_converts_and_preserves_values() {
+        let state = scene_camera_state(&document(SceneCamera {
+            target: [1.0, 2.0, 3.0],
+            yaw: -0.8,
+            pitch: 0.4,
+            distance: 3.5,
+        }))
+        .unwrap();
+        assert_eq!(state.target, [1.0, 2.0, 3.0]);
+        assert_eq!(state.yaw, -0.8);
+        assert_eq!(state.pitch, 0.4);
+        assert_eq!(state.distance, 3.5);
+    }
+
+    #[test]
+    fn scene_camera_state_rejects_f32_overflow() {
+        let error = scene_camera_state(&document(SceneCamera {
+            target: [f64::MAX, 0.0, 0.0],
+            yaw: 0.0,
+            pitch: 0.0,
+            distance: 1.0,
+        }))
+        .unwrap_err();
+        assert!(error.contains("target[0]"));
+        assert!(error.contains("overflows f32"));
+    }
 }

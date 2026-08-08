@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "name": "BrainStem Timeline Scene",
+  "assets": [
+    {
+      "id": "brainstem",
+      "kind": "gltf",
+      "path": "../../glTF-Sample-Assets/Models/BrainStem/glTF/BrainStem.gltf"
+    }
+  ],
+  "instances": [
+    {
+      "id": "brainstem-instance",
+      "asset": "brainstem",
+      "translation": [0.0, -1.0, 0.0],
+      "rotation": [0.0, 0.0, 0.0, 1.0],
+      "scale": [1.0, 1.0, 1.0],
+      "visible": true
+    }
+  ],
+  "camera": {
+    "target": [0.0, 1.0, 0.0],
+    "yaw": -0.7,
+    "pitch": 0.2,
+    "distance": 8.0
+  }
+}

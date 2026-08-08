@@ -5470,6 +5470,7 @@ name = "tauri3d"
 version = "0.1.0"
 dependencies = [
  "glam",
+ "gltf",
  "kiss3d",
  "pollster 1.0.1",
  "serde",
