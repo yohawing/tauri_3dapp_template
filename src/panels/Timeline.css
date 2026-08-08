@@ -450,3 +450,114 @@
     display: none;
   }
 }
+
+/* Timeline controls use the same compact primitive metrics as Inspector. */
+.timeline-tool,
+.timeline-transport,
+.timeline-panel__tab {
+  border-radius: var(--control-radius);
+}
+
+.timeline-tool,
+.timeline-transport {
+  border-color: transparent;
+}
+
+.timeline-tool:hover:not(:disabled),
+.timeline-transport:hover:not(:disabled) {
+  color: var(--text-strong);
+  border-color: var(--control-border);
+  background: var(--control-bg-hover);
+}
+
+.timeline-tool--active,
+.timeline-transport--play {
+  color: var(--text-strong);
+  border-color: rgba(90, 143, 224, 0.45);
+  background: var(--accent-soft);
+}
+
+.timeline-tool:focus-visible,
+.timeline-transport:focus-visible,
+.timeline-panel__tab:focus-visible,
+.timeline-panel__range-field input:focus-visible,
+.timeline-panel__zoom input:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.timeline-tool:disabled,
+.timeline-transport:disabled,
+.timeline-panel__range-field input:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.timeline-panel__zoom input,
+.timeline-panel__range-field input {
+  appearance: none;
+  outline: none;
+  border: 1px solid var(--control-border);
+  border-radius: var(--control-radius);
+  color: var(--text);
+  background: var(--control-bg);
+}
+
+.timeline-panel__zoom input {
+  width: 76px;
+  height: var(--control-height-sm);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  accent-color: var(--accent-strong);
+  cursor: ew-resize;
+}
+
+.timeline-panel__zoom input::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--slider-track);
+}
+
+.timeline-panel__zoom input::-webkit-slider-thumb {
+  appearance: none;
+  width: 9px;
+  height: 9px;
+  margin-top: -2px;
+  border: 1px solid var(--accent-strong);
+  border-radius: 50%;
+  background: var(--slider-thumb);
+}
+
+.timeline-panel__zoom input::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--slider-track);
+}
+
+.timeline-panel__zoom input::-moz-range-progress {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--slider-fill);
+}
+
+.timeline-panel__zoom input::-moz-range-thumb {
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--accent-strong);
+  border-radius: 50%;
+  background: var(--slider-thumb);
+}
+
+.timeline-panel__range-field input {
+  width: 40px;
+  height: var(--control-height-sm);
+  padding: 0 4px;
+  font-family: var(--font-mono);
+  font-size: 8px;
+}
+
+.timeline-panel__range-field input:hover:not(:disabled) {
+  border-color: var(--control-border-hover);
+  background: var(--control-bg-hover);
+}

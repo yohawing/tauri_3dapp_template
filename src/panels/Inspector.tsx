@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { CheckboxInput, CompactSelect, RangeInput } from "../components/controls/CompactControls";
 import {
   dispatchSceneCommand,
   useSceneProjection,
@@ -106,9 +107,9 @@ function RenderingSection() {
   return (
     <section className="inspector-section">
       <div className="inspector-section__title"><span>▾</span>Rendering</div>
-      <label className="inspector-field"><span className="inspector-field__label">Shading</span><select defaultValue="Smooth"><option>Smooth</option><option>Flat</option></select></label>
-      <label className="inspector-field"><span className="inspector-field__label">Cast shadows</span><input type="checkbox" defaultChecked /></label>
-      <label className="inspector-field"><span className="inspector-field__label">Layer</span><select defaultValue="Default"><option>Default</option></select></label>
+      <label className="inspector-field"><span className="inspector-field__label">Shading</span><CompactSelect defaultValue="Smooth"><option>Smooth</option><option>Flat</option></CompactSelect></label>
+      <label className="inspector-field"><span className="inspector-field__label">Cast shadows</span><CheckboxInput defaultChecked /></label>
+      <label className="inspector-field"><span className="inspector-field__label">Layer</span><CompactSelect defaultValue="Default"><option>Default</option></CompactSelect></label>
     </section>
   );
 }
@@ -118,10 +119,9 @@ function MaterialSlider({ label, value, onChange }: { label: string; value: numb
     <label className="inspector-field">
       <span className="inspector-field__label">{label}</span>
       <span className="inspector-slider-editor">
-        <input
+        <RangeInput
           aria-label={label}
           className="inspector-slider"
-          type="range"
           min="0"
           max="1"
           step="0.01"

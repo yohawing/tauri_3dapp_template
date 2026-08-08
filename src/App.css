@@ -776,3 +776,136 @@
     padding: 0 5px;
   }
 }
+
+/* Shared compact control language. Components keep their own layout rules;
+ * this block only standardizes interaction states and chrome primitives. */
+.app-shell button,
+.app-shell select,
+.app-shell input {
+  font-family: var(--font-ui);
+}
+
+.app-shell button:focus-visible,
+.app-shell select:focus-visible,
+.app-shell input:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.menu-bar__trigger:disabled,
+.menu-bar__renderer-button:disabled,
+.menu-popup__item:disabled,
+.console-drawer__button:disabled,
+.console-drawer__filter-button:disabled,
+.settings-modal__button:disabled {
+  color: var(--text-dim);
+  opacity: 0.55;
+  cursor: default;
+}
+
+.console-drawer select,
+.console-drawer__button,
+.console-drawer__search,
+.settings-modal__select,
+.settings-modal__button {
+  min-height: var(--control-height-sm);
+  border: 1px solid var(--control-border);
+  border-radius: var(--control-radius);
+  color: var(--text);
+  background: var(--control-bg);
+  font-size: 9px;
+}
+
+.console-drawer select:hover,
+.console-drawer__button:hover:not(:disabled),
+.console-drawer__search:hover,
+.settings-modal__select:hover,
+.settings-modal__button:hover:not(:disabled) {
+  border-color: var(--control-border-hover);
+  background: var(--control-bg-hover);
+}
+
+.console-drawer__button,
+.settings-modal__button {
+  height: var(--control-height);
+  padding: 0 8px;
+  cursor: pointer;
+}
+
+.console-drawer__button--autoscroll.is-active,
+.settings-modal__button {
+  border-color: var(--accent-strong);
+  color: var(--text-strong);
+  background: var(--accent);
+}
+
+.console-drawer__button--autoscroll.is-active:hover,
+.settings-modal__button:hover:not(:disabled) {
+  background: #477aca;
+}
+
+.console-drawer__search {
+  height: var(--control-height-sm);
+  padding: 0 7px;
+  outline: none;
+}
+
+.console-drawer__search::placeholder,
+.outliner-panel__search input::placeholder {
+  color: var(--text-dim);
+  opacity: 1;
+}
+
+.settings-modal__select {
+  min-width: 130px;
+  height: var(--control-height);
+  padding: 0 6px;
+  outline: none;
+}
+
+.settings-modal__checkbox,
+.inspector-field input[type="checkbox"] {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--accent-strong);
+}
+
+.settings-modal__checkbox:focus-visible,
+.inspector-field input[type="checkbox"]:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.settings-modal__close {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: var(--control-radius);
+}
+
+.settings-modal__close:hover {
+  color: var(--text-strong);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.outliner-panel__tab:focus-visible,
+.timeline-panel__tab:focus-visible,
+.console-drawer__tab:focus-visible {
+  outline: none;
+  box-shadow: inset 0 2px 0 var(--accent), var(--focus-ring);
+}
+
+.outliner-panel__search input {
+  height: var(--control-height-sm);
+  border-color: var(--control-border);
+  border-radius: var(--control-radius);
+  outline: none;
+  color: var(--text);
+  background: var(--control-bg);
+}
+
+.outliner-panel__search input:hover {
+  border-color: var(--control-border-hover);
+  background: var(--control-bg-hover);
+}

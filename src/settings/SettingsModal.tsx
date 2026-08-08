@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { CheckboxInput, CompactSelect } from "../components/controls/CompactControls";
 import { CONSOLE_LEVELS, type ConsoleLevel, type Settings } from "./model";
 
 export interface SettingsModalProps {
@@ -96,8 +97,7 @@ export function SettingsModal({ open, settings, onChange, onClose }: SettingsMod
               Viewport
             </h3>
             <label className="settings-modal__checkbox-row">
-              <input
-                type="checkbox"
+              <CheckboxInput
                 className="settings-modal__checkbox"
                 checked={settings.viewport.debugOverlay}
                 onChange={(event) => setDebugOverlay(event.currentTarget.checked)}
@@ -112,7 +112,7 @@ export function SettingsModal({ open, settings, onChange, onClose }: SettingsMod
             </h3>
             <label className="settings-modal__field">
               <span className="settings-modal__label">Minimum level</span>
-              <select
+              <CompactSelect
                 className="settings-modal__select"
                 value={settings.console.minimumLevel}
                 onChange={(event) => setMinimumLevel(event.currentTarget.value as ConsoleLevel)}
@@ -122,11 +122,10 @@ export function SettingsModal({ open, settings, onChange, onClose }: SettingsMod
                     {level[0].toUpperCase() + level.slice(1)}
                   </option>
                 ))}
-              </select>
+              </CompactSelect>
             </label>
             <label className="settings-modal__checkbox-row">
-              <input
-                type="checkbox"
+              <CheckboxInput
                 className="settings-modal__checkbox"
                 checked={settings.console.autoScroll}
                 onChange={(event) => setAutoScroll(event.currentTarget.checked)}

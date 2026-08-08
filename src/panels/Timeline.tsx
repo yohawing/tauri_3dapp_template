@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { CompactNumberInput, RangeInput } from "../components/controls/CompactControls";
 import { runtimeTimelineDataSource } from "../timeline/adapters/gltfProjectionDataSource";
 import {
   createViewTransform,
@@ -469,9 +470,8 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
             <span className="timeline-panel__fps">24 fps</span>
             <label className="timeline-panel__zoom">
               Zoom
-              <input
+              <RangeInput
                 aria-label="Timeline zoom"
-                type="range"
                 min="12"
                 max="180"
                 value={pixelsPerSecond}
@@ -480,9 +480,8 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
             </label>
             <label className="timeline-panel__range-field">
               <span>Range</span>
-              <input
+              <CompactNumberInput
                 aria-label="Range start"
-                type="number"
                 min="0"
                 max={rangeEnd}
                 step="0.1"
@@ -491,9 +490,8 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
                 onChange={(event) => setRangeStart(Math.max(0, Math.min(rangeEnd - 0.1, event.currentTarget.valueAsNumber || 0)))}
               />
               <span>–</span>
-              <input
+              <CompactNumberInput
                 aria-label="Range end"
-                type="number"
                 min={rangeStart + 0.1}
                 max={timeEnd}
                 step="0.1"

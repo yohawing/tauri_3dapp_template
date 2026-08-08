@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import type { EditorAction } from "../actions/editorActions";
+import { CheckboxInput, CompactNumberInput, CompactSelect, RangeInput } from "../components/controls/CompactControls";
 import { ConsoleDrawer } from "../console/ConsoleDrawer";
 import { createConsoleStore } from "../console/state";
 import { Inspector } from "../panels/Inspector";
@@ -54,6 +55,7 @@ function Story({
 
 const storyLinks = [
   ["menu-bar", "MenuBar"],
+  ["controls", "Controls"],
   ["outliner", "Outliner"],
   ["inspector", "Inspector"],
   ["viewport", "ViewportHost"],
@@ -96,6 +98,17 @@ export function ShellComponentsPage() {
 
         <Story id="menu-bar" title="MenuBar" note="menus, renderer segmented control, disabled command" className="component-story--menubar">
           <MenuBar actions={actions} backendLabel="Native wgpu" documentLabel="Built-in Scene" isMac={false} />
+        </Story>
+
+        <Story id="controls" title="Compact controls" note="shared production range, checkbox, select, number and state variants" className="component-story--controls">
+          <div className="controls-preview">
+            <label><span>Material</span><RangeInput aria-label="Material preview" min={0} max={1} step={0.01} value={0.62} readOnly /><output>0.62</output></label>
+            <label><span>Zoom</span><RangeInput aria-label="Zoom preview" min={12} max={180} value={88} readOnly /><output>88</output></label>
+            <label><CheckboxInput defaultChecked /><span>Cast shadows</span></label>
+            <label><span>Shading</span><CompactSelect defaultValue="Smooth"><option>Smooth</option><option>Flat</option></CompactSelect></label>
+            <label><span>Range</span><CompactNumberInput value={2} readOnly /><span>–</span><CompactNumberInput value={9.5} readOnly /></label>
+            <label><span>Disabled</span><RangeInput aria-label="Disabled preview" value={35} disabled readOnly /><CheckboxInput disabled /></label>
+          </div>
         </Story>
 
         <div className="components-page__panel-grid">

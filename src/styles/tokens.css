@@ -25,4 +25,15 @@
   --panel-header-height: 20px;
   --toolbar-height: 24px;
   --row-height: 18px;
+  --control-height: 18px;
+  --control-height-sm: 16px;
+  --control-radius: 3px;
+  --control-bg: #131316;
+  --control-bg-hover: #1c1c21;
+  --control-border: rgba(255, 255, 255, 0.12);
+  --control-border-hover: rgba(255, 255, 255, 0.22);
+  --focus-ring: 0 0 0 1px var(--accent-strong);
+  --slider-track: #3a3a44;
+  --slider-fill: var(--accent);
+  --slider-thumb: #b7cdf5;
 }

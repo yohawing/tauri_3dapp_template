@@ -198,3 +198,101 @@
   font-size: 11px;
   line-height: 1.35;
 }
+
+/* Atomic inspector controls: square, dense, and keyboard-visible. */
+.inspector-field select,
+.inspector-color-input,
+.inspector-slider,
+.inspector-value,
+.inspector-readonly {
+  border-color: var(--control-border);
+}
+
+.inspector-field select,
+.inspector-color-input {
+  outline: none;
+  border-radius: var(--control-radius);
+  color: var(--text);
+  background: var(--control-bg);
+}
+
+.inspector-field select:hover,
+.inspector-color-input:hover {
+  border-color: var(--control-border-hover);
+  background: var(--control-bg-hover);
+}
+
+.inspector-field select:focus-visible,
+.inspector-color-input:focus-visible,
+.inspector-slider:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.inspector-color-input {
+  width: 30px;
+  height: var(--control-height);
+  padding: 1px;
+  cursor: pointer;
+}
+
+.inspector-slider {
+  appearance: none;
+  width: 90px;
+  height: var(--control-height);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  accent-color: var(--accent-strong);
+  cursor: ew-resize;
+}
+
+.inspector-slider::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--slider-track);
+}
+
+.inspector-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 10px;
+  height: 10px;
+  margin-top: -3px;
+  border: 1px solid var(--accent-strong);
+  border-radius: 50%;
+  background: var(--slider-thumb);
+  box-shadow: 0 0 0 1px rgba(14, 14, 17, 0.65);
+}
+
+.inspector-slider:hover::-webkit-slider-thumb {
+  background: #d5e2ff;
+}
+
+.inspector-slider::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--slider-track);
+}
+
+.inspector-slider::-moz-range-progress {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--slider-fill);
+}
+
+.inspector-slider::-moz-range-thumb {
+  width: 9px;
+  height: 9px;
+  border: 1px solid var(--accent-strong);
+  border-radius: 50%;
+  background: var(--slider-thumb);
+}
+
+.inspector-slider:disabled,
+.inspector-color-input:disabled,
+.inspector-field select:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
