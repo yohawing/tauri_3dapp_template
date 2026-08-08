@@ -21,7 +21,7 @@ export interface Settings {
  */
 export const DEFAULT_SETTINGS: Settings = {
   viewport: {
-    debugOverlay: true,
+    debugOverlay: false,
   },
   console: {
     minimumLevel: "info",

@@ -22,7 +22,7 @@ class MemoryStorage {
 describe("settings persistence", () => {
   it("returns independent defaults when no persisted value exists", () => {
     const first = loadSettings(null);
-    first.viewport.debugOverlay = false;
+    first.viewport.debugOverlay = true;
 
     expect(loadSettings(null)).toEqual(DEFAULT_SETTINGS);
     expect(first).not.toBe(DEFAULT_SETTINGS);
