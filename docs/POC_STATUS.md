@@ -24,7 +24,8 @@
 | Material command ack／reject | implemented / previously verified | partial | self-test値`#2DC8FF / 0.80 / 0.20`の反映はpass。rejectは未確認 |
 | Native障害時の自動fallback | implemented / verified (fault injection) | pass (2026-08-09 screenshot) | 構築直後のunavailable注入でCanvas自動切替。実際の初期化例外／Device Lostは未接続 |
 | Device Lost検出／fallback | implemented / verified | pass (2026-08-09 screenshot) | wgpu callbackを`RendererStatus`へ接続。再作成せずCanvasへfail-closed |
-| Surface Lost／Outdated／Timeout／OutOfMemory取得 | blocked by vendor contract | unverified | Kiss3D内部でretry後`Option::None`へ集約され、app層では最小化frame skipと区別不能 |
+| Surface Lost／Outdated／Timeout／Occluded／Validation取得 | designed / blocked by vendor contract | unverified | contract案は`docs/SURFACE_ERROR_CONTRACT.md`。Kiss3D内部でretry後`Option::None`へ集約され、app層では正常skipとfatalを区別不能 |
+| GPU OutOfMemory検出 | unimplemented | unverified | wgpu 30ではsurface取得variantではなくDevice error。Surface contractと分離する |
 | fallback理由／復旧状態のUI表示 | implemented / verified | pass (2026-08-09 screenshot) | Viewport banner、Console、disabled Native action、再起動による再試行案内を確認 |
 | CanvasのScene同期 | intentionally deferred | not applicable | Camera＋Safe Modeを最低保証とする |
 | 1080p 60fps | implemented / verified | pass (2026-08-09 host log) | 物理1920x1080、60-frame warm-up＋180 samples。Native 59.971 FPS、Canvas 60.000 FPS |
