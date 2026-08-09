@@ -8,7 +8,8 @@ use kiss3d::color::Color;
 use kiss3d::post_processing::Tonemap;
 use kiss3d::prelude::{
     AnimationPlayer, Camera3d, CanvasSetup, Light, NumSamples, OrbitCamera3d, Projection, Quat,
-    RenderViewport, SceneNode3d, Vec3, Window, ORANGE,
+    RenderFrameStatus, RenderViewport, SceneNode3d, SurfaceSkipReason, SurfaceUnavailableReason,
+    Vec3, Window, ORANGE,
 };
 
 use crate::performance::{target_from_env, PerformanceSampler};
@@ -37,6 +38,38 @@ const Y_AXIS_COLOR: Color = Color::new(0.20, 0.85, 0.30, 1.0);
 const Z_AXIS_COLOR: Color = Color::new(0.25, 0.45, 1.00, 1.0);
 const BONE_COLOR: Color = Color::new(1.0, 0.65, 0.15, 1.0);
 const BONE_OVERLAY_DEPTH_BIAS: f32 = 0.995;
+
+const SURFACE_STATUS_SELF_TEST_ENV: &str = "TAURI3D_SURFACE_STATUS_SELF_TEST";
+
+fn surface_status_self_test_from_env() -> Option<RenderFrameStatus> {
+    std::env::var(SURFACE_STATUS_SELF_TEST_ENV)
+        .ok()
+        .and_then(|value| parse_surface_status_self_test(&value))
+}
+
+fn parse_surface_status_self_test(value: &str) -> Option<RenderFrameStatus> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "timeout" => Some(RenderFrameStatus::Skipped(SurfaceSkipReason::Timeout)),
+        "occluded" => Some(RenderFrameStatus::Skipped(SurfaceSkipReason::Occluded)),
+        "outdated" | "outdated-after-reconfigure" => Some(RenderFrameStatus::Skipped(
+            SurfaceSkipReason::OutdatedAfterReconfigure,
+        )),
+        "zero-sized" | "zero-sized-surface" => Some(RenderFrameStatus::Skipped(
+            SurfaceSkipReason::ZeroSizedSurface,
+        )),
+        "lost" => Some(RenderFrameStatus::SurfaceUnavailable(
+            SurfaceUnavailableReason::Lost,
+        )),
+        "validation" => Some(RenderFrameStatus::SurfaceUnavailable(
+            SurfaceUnavailableReason::Validation,
+        )),
+        "missing" | "missing-surface" => Some(RenderFrameStatus::SurfaceUnavailable(
+            SurfaceUnavailableReason::MissingSurface,
+        )),
+        "closed" => Some(RenderFrameStatus::Closed),
+        _ => None,
+    }
+}
 
 #[derive(Debug)]
 pub enum RendererError {
@@ -136,6 +169,7 @@ pub struct Renderer {
     performance_target: Option<(u32, u32)>,
     performance_sampler: Option<PerformanceSampler>,
     animation_clock: Instant,
+    surface_status_injection: Option<RenderFrameStatus>,
 }
 
 impl Renderer {
@@ -174,6 +208,7 @@ impl Renderer {
             performance_target,
             performance_sampler: PerformanceSampler::from_env(),
             animation_clock: Instant::now(),
+            surface_status_injection: surface_status_self_test_from_env(),
         }
     }
 
@@ -213,6 +248,7 @@ impl Renderer {
             performance_target,
             performance_sampler: PerformanceSampler::from_env(),
             animation_clock: Instant::now(),
+            surface_status_injection: surface_status_self_test_from_env(),
         })
     }
 
@@ -383,7 +419,10 @@ impl Renderer {
         }
     }
 
-    pub fn render(&mut self) {
+    pub fn render(&mut self) -> RenderFrameStatus {
+        if let Some(status) = self.surface_status_injection.take() {
+            return status;
+        }
         let now = Instant::now();
         let animation_dt = now
             .duration_since(self.animation_clock)
@@ -402,13 +441,17 @@ impl Renderer {
         if self.display.show_bones {
             draw_bone_edges(&mut self.window, &self.instances);
         }
-        let _ = pollster::block_on(self.window.render_3d(&mut self.scene, &mut self.camera));
+        let status = pollster::block_on(
+            self.window
+                .render_3d_status(&mut self.scene, &mut self.camera),
+        );
         if let (Some(sampler), Some(timings)) = (
             self.performance_sampler.as_mut(),
             self.window.render_timings(),
         ) {
             sampler.observe(timings, self.performance_target);
         }
+        status
     }
 
     pub fn has_node(&self, node_id: &str) -> bool {
@@ -1002,6 +1045,38 @@ mod tests {
             }),
             RenderViewport::new(0, 0, 0, 0)
         );
+    }
+
+    #[test]
+    fn surface_status_fault_injection_is_opt_in_and_excludes_oom() {
+        assert_eq!(
+            parse_surface_status_self_test("timeout"),
+            Some(RenderFrameStatus::Skipped(SurfaceSkipReason::Timeout))
+        );
+        assert_eq!(
+            parse_surface_status_self_test("occluded"),
+            Some(RenderFrameStatus::Skipped(SurfaceSkipReason::Occluded))
+        );
+        assert_eq!(
+            parse_surface_status_self_test("lost"),
+            Some(RenderFrameStatus::SurfaceUnavailable(
+                SurfaceUnavailableReason::Lost
+            ))
+        );
+        assert_eq!(
+            parse_surface_status_self_test("validation"),
+            Some(RenderFrameStatus::SurfaceUnavailable(
+                SurfaceUnavailableReason::Validation
+            ))
+        );
+        assert_eq!(
+            parse_surface_status_self_test("missing-surface"),
+            Some(RenderFrameStatus::SurfaceUnavailable(
+                SurfaceUnavailableReason::MissingSurface
+            ))
+        );
+        assert_eq!(parse_surface_status_self_test("oom"), None);
+        assert_eq!(parse_surface_status_self_test(""), None);
     }
 }
 

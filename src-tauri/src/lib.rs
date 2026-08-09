@@ -503,11 +503,14 @@ pub fn run() {
                     .state::<RendererActive>()
                     .0
                     .store(false, Ordering::Relaxed);
-                let status = device_lost_handle
-                    .state::<renderer_status::RendererStatusStore>()
-                    .mark_unavailable(detail);
-                if let Err(error) = device_lost_handle.emit("renderer-status-changed", status) {
-                    eprintln!("failed to emit renderer status after Device Lost: {error}");
+                let status_store = device_lost_handle
+                    .state::<renderer_status::RendererStatusStore>();
+                if let Some(status) = status_store.mark_unavailable_once(detail) {
+                    if let Err(error) =
+                        device_lost_handle.emit("renderer-status-changed", status)
+                    {
+                        eprintln!("failed to emit renderer status after Device Lost: {error}");
+                    }
                 }
             });
             if std::env::var("TAURI3D_FORCE_DEVICE_LOST")
@@ -642,7 +645,32 @@ pub fn run() {
                                 viewport_environment.0,
                                 viewport_environment.1.as_deref().map(Vec::as_slice),
                             );
-                            renderer.render();
+                            let frame_status = renderer.render();
+                            if let Some(reason) =
+                                renderer_status::frame_fallback_reason(frame_status)
+                            {
+                                // Swap first so repeated statuses or a concurrent
+                                // Device Lost callback cannot render or emit twice.
+                                let was_active = app_handle
+                                    .state::<RendererActive>()
+                                    .0
+                                    .swap(false, Ordering::AcqRel);
+                                if was_active {
+                                    let status_store = app_handle
+                                        .state::<renderer_status::RendererStatusStore>();
+                                    if let Some(status) =
+                                        status_store.mark_unavailable_once(reason)
+                                    {
+                                        if let Err(error) = app_handle
+                                            .emit("renderer-status-changed", status)
+                                        {
+                                            eprintln!(
+                                                "failed to emit renderer status after SurfaceUnavailable: {error}"
+                                            );
+                                        }
+                                    }
+                                }
+                            }
                         }
                         projection_store.publish(renderer.scene_projection(Some(&selected_id)));
                         playback_store.publish(renderer.timeline_playback_snapshot());

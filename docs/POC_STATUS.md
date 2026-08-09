@@ -31,7 +31,7 @@
 | Material command ack／reject | implemented / previously verified | partial | self-test値`#2DC8FF / 0.80 / 0.20`の反映はpass。rejectは未確認 |
 | Native障害時の自動fallback | implemented / verified (fault injection) | pass (2026-08-09 screenshot) | 構築直後のunavailable注入でCanvas自動切替。実際の初期化例外／Device Lostは未接続 |
 | Device Lost検出／fallback | implemented / verified | pass (2026-08-09 screenshot) | wgpu callbackを`RendererStatus`へ接続。再作成せずCanvasへfail-closed |
-| Surface Lost／Outdated／Timeout／Occluded／Validation取得 | designed / blocked by vendor contract | unverified | contract案は`docs/SURFACE_ERROR_CONTRACT.md`。Kiss3D内部でretry後`Option::None`へ集約され、app層では正常skipとfatalを区別不能 |
+| Surface Lost／Outdated／Timeout／Occluded／Validation取得 | implemented / verified (focused fault tests) | pass (2026-08-09 focused test) | vendorがwgpu 30結果を保持し、Timeout／Occluded／OutdatedAfterReconfigure／ZeroSizedSurfaceはskip、Lost／Validation／MissingSurfaceはNative unavailableへ分類。実app fault envのGUI証跡と実機のSurface Lost発生自体は未取得 |
 | GPU OutOfMemory検出 | unimplemented | unverified | wgpu 30ではsurface取得variantではなくDevice error。Surface contractと分離する |
 | fallback理由／復旧状態のUI表示 | implemented / verified | pass (2026-08-09 screenshot) | Viewport banner、Console、disabled Native action、再起動による再試行案内を確認 |
 | CanvasのScene同期 | intentionally deferred | not applicable | Camera＋Safe Modeを最低保証とする |
@@ -49,7 +49,7 @@
 
 ## 現時点の判断
 
-Windows上の現行スライスは継続可。Native raster viewportの部分描画、Scene JSON v1のNew／Open／Save lifecycle、BrainStem read-only Timeline、Menu／Console／Settings、構築後unavailable注入と実Device Lost callbackからのCanvas fallback、最小Sceneの1080p nominal 60 Hzまで成立した。ただし、PoC全体を完了扱いにはしない。実際のNative初期化例外、Surface acquisition error、4K、macOSが未決着である。vendorのraytrace経路は部分viewport compositeへ未接続だが、現アプリはraster `render_3d`のみを使用する。
+Windows上の現行スライスは継続可。Native raster viewportの部分描画、Scene JSON v1のNew／Open／Save lifecycle、BrainStem read-only Timeline、Menu／Console／Settings、構築後unavailable注入、Surface statusのfault injection、実Device Lost callbackからのCanvas fallback、最小Sceneの1080p nominal 60 Hzまで成立した。ただし、PoC全体を完了扱いにはしない。実際のNative初期化例外、実Surface Lost発生、4K、macOSが未決着である。vendorのraytrace経路は部分viewport compositeへ未接続だが、現アプリはraster `render_3d_status`のみを使用する。
 
 ## 2026-08-09 1080p性能baseline
 
@@ -174,7 +174,8 @@ Windows上の現行スライスは継続可。Native raster viewportの部分描
 - pass: `TAURI3D_FORCE_DEVICE_LOST=1`でwgpu deviceを実際にdestroyし、`DeviceLostReason::Destroyed` callbackを取得。
 - pass: callbackがNative描画をfail-closedで停止し、Tauri event経由でCanvasへ自動切替。Viewport bannerとConsoleに`wgpu device lost (Destroyed)`を表示。
 - pass: 環境変数なしの再起動でNative cube、Grid、Timeline、Viewport rectが復旧。
-- blocked: Surface `Lost／Outdated`はvendor内で再configure＋1回retryされ、その後の全surface acquisition errorは`Option::None`へ集約される。`render_3d`の`bool`はwindow継続だけを表すためroot appでは分類不能。
+- pass (focused tests): vendor `RenderFrameStatus`をroot `Renderer::render`へ接続。`Skipped(Timeout／Occluded)`はfallback reasonなし、`SurfaceUnavailable(Lost／Validation／MissingSurface)`はreason付きfallback対象、反復unavailable transitionは一度だけとなることを検証した。OOMはSurface statusへ追加していない。
+- limitation: `TAURI3D_SURFACE_STATUS_SELF_TEST=timeout|occluded|lost|validation|missing-surface`は分類経路の注入確認であり、実Surface Lost発生・OS復旧を証明しない。
 - GUI経路: 実Device Lost注入、Tauri event、`screenshot-ui`のみ。Computer Useは未使用。
 
 ## 2026-08-09 Renderer fallback証拠

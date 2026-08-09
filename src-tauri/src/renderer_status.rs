@@ -1,5 +1,7 @@
 use std::sync::Mutex;
 
+use kiss3d::prelude::{RenderFrameStatus, SurfaceSkipReason, SurfaceUnavailableReason};
+
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RendererStatus {
@@ -59,10 +61,37 @@ impl RendererStatusStore {
         Ok(status.clone())
     }
 
-    pub fn mark_unavailable(&self, reason: impl Into<String>) -> RendererStatus {
+    /// Marks Native unavailable once. Repeated frame statuses do not produce
+    /// duplicate state transitions or frontend events.
+    pub fn mark_unavailable_once(&self, reason: impl Into<String>) -> Option<RendererStatus> {
         let mut status = self.0.lock().unwrap();
+        if !status.native_available && !status.native_active {
+            return None;
+        }
         *status = RendererStatus::unavailable(reason);
-        status.clone()
+        Some(status.clone())
+    }
+}
+
+/// Returns a stable fallback reason only for fatal Native surface outcomes.
+/// Surface skips and Closed remain non-fatal to the renderer lifecycle.
+pub fn frame_fallback_reason(status: RenderFrameStatus) -> Option<&'static str> {
+    match status {
+        RenderFrameStatus::SurfaceUnavailable(SurfaceUnavailableReason::Lost) => {
+            Some("Native surface unavailable: Lost")
+        }
+        RenderFrameStatus::SurfaceUnavailable(SurfaceUnavailableReason::Validation) => {
+            Some("Native surface unavailable: Validation")
+        }
+        RenderFrameStatus::SurfaceUnavailable(SurfaceUnavailableReason::MissingSurface) => {
+            Some("Native surface unavailable: MissingSurface")
+        }
+        RenderFrameStatus::Presented { .. }
+        | RenderFrameStatus::Skipped(SurfaceSkipReason::Timeout)
+        | RenderFrameStatus::Skipped(SurfaceSkipReason::Occluded)
+        | RenderFrameStatus::Skipped(SurfaceSkipReason::OutdatedAfterReconfigure)
+        | RenderFrameStatus::Skipped(SurfaceSkipReason::ZeroSizedSurface)
+        | RenderFrameStatus::Closed => None,
     }
 }
 
@@ -96,11 +125,62 @@ mod tests {
     fn runtime_failure_replaces_active_status_fail_closed() {
         let store = RendererStatusStore::new(RendererStatus::available());
 
-        let status = store.mark_unavailable("wgpu device lost");
+        let status = store
+            .mark_unavailable_once("wgpu device lost")
+            .expect("first runtime failure must transition");
 
         assert!(!status.native_available);
         assert!(!status.native_active);
         assert_eq!(status.fallback_reason.as_deref(), Some("wgpu device lost"));
         assert!(store.set_active(true).is_err());
+    }
+
+    #[test]
+    fn only_unavailable_surface_statuses_request_fallback() {
+        assert_eq!(
+            frame_fallback_reason(RenderFrameStatus::Presented { suboptimal: false }),
+            None
+        );
+        for reason in [
+            SurfaceSkipReason::Timeout,
+            SurfaceSkipReason::Occluded,
+            SurfaceSkipReason::OutdatedAfterReconfigure,
+            SurfaceSkipReason::ZeroSizedSurface,
+        ] {
+            assert_eq!(
+                frame_fallback_reason(RenderFrameStatus::Skipped(reason)),
+                None
+            );
+        }
+        assert_eq!(frame_fallback_reason(RenderFrameStatus::Closed), None);
+        assert_eq!(
+            frame_fallback_reason(RenderFrameStatus::SurfaceUnavailable(
+                SurfaceUnavailableReason::Lost,
+            )),
+            Some("Native surface unavailable: Lost")
+        );
+        assert_eq!(
+            frame_fallback_reason(RenderFrameStatus::SurfaceUnavailable(
+                SurfaceUnavailableReason::Validation,
+            )),
+            Some("Native surface unavailable: Validation")
+        );
+        assert_eq!(
+            frame_fallback_reason(RenderFrameStatus::SurfaceUnavailable(
+                SurfaceUnavailableReason::MissingSurface,
+            )),
+            Some("Native surface unavailable: MissingSurface")
+        );
+    }
+
+    #[test]
+    fn unavailable_transition_is_one_shot() {
+        let store = RendererStatusStore::new(RendererStatus::available());
+        assert!(store
+            .mark_unavailable_once("Native surface unavailable: Lost")
+            .is_some());
+        assert!(store
+            .mark_unavailable_once("Native surface unavailable: Lost")
+            .is_none());
     }
 }
