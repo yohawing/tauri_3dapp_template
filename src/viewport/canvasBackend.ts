@@ -140,10 +140,10 @@ export function mountCanvasBackend(
         )
       : null;
 
-  function render() {
+  function render(rafTimestamp?: number) {
     const startedAt = performance.now();
     renderer.render(scene, camera);
-    const summary = performanceSampler?.observe(startedAt, performance.now() - startedAt);
+    const summary = performanceSampler?.observe(startedAt, performance.now() - startedAt, rafTimestamp);
     if (summary) {
       console.info(`[perf] ${JSON.stringify(summary)}`);
       void invoke("report_performance_summary", { summary }).catch((error) =>
@@ -151,12 +151,13 @@ export function mountCanvasBackend(
       );
     }
   }
-  controls.addEventListener("change", render);
+  const renderOnControlChange = () => render();
+  controls.addEventListener("change", renderOnControlChange);
 
   let rafId: number | null = null;
-  function tick() {
+  function tick(rafTimestamp: number) {
     if (disposed) return;
-    render();
+    render(rafTimestamp);
     rafId = requestAnimationFrame(tick);
   }
   rafId = requestAnimationFrame(tick);
@@ -181,7 +182,7 @@ export function mountCanvasBackend(
       rafId = null;
     }
     resizeObserver.disconnect();
-    controls.removeEventListener("change", render);
+    controls.removeEventListener("change", renderOnControlChange);
     controls.dispose();
     materials.forEach((m) => m.dispose());
     cube.geometry.dispose();

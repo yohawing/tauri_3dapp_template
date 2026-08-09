@@ -51,4 +51,5 @@ Canvas fallbackはCanvasだけのisolated値ではない。再切替とTLS破棄
 - 推奨条件の1080p nominal 60 Hzは、このWindows機と最小Sceneでは両backendともpass。
 - NativeのCPU renderはpresent待ちに支配されるため、GPU p95との単純比較でCPU描画負荷とは判定しない。
 - CanvasのWebGL GPU timeは未取得。FPS判定はwall timeで成立するが、backend間のGPU cost比較は未検証。
+- Asset playback実FBXのCanvas回帰では、追加RAF計測（callback delay／browser timestamp interval）をreleaseへ導入したが、shell起動時のWebView2可視性・foreground条件を固定できず、3 cold startsの再測定は未成立。同期`WebGLRenderer.render` p95 0.2msの一方、非foreground試行はRAF samples未到達またはwall p95約1062msとなるため、製品側のframe pacing修正は追加していない。
 - このbaselineは複雑なasset、animation、4K、macOS、release buildの性能を保証しない。

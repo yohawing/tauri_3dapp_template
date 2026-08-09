@@ -162,6 +162,9 @@ Windows上の現行スライスは継続可。Native raster viewportの部分描
 - Native 1080p: pass。180 samples、average 60.644 FPS、wall p50／p95 16.410／17.297ms、GPU p95 0.053ms。
 - Canvas 1080p: fail。3 cold startsでaverage 56.993／56.793／57.196 FPS、wall p50 17.5〜17.6ms。59.0 FPS／p50 16.67ms gate未達。p95 18.1〜18.4msとCPU render p95 0.2msは範囲内。
 - idle playback unavailable eventを状態遷移時1回だけへ削減したがCanvas値は改善せず、原因ではなかった。
+- Canvas RAF diagnostic WIP: `CanvasPerformanceSampler`へRAF callback delayとbrowser RAF timestamp intervalのp50／p95／p99を追加し、同期`WebGLRenderer.render`時間と分離できるようにした。`set_renderer_active(false)`後のCanvas mount経路ではNative `renderer.render()`は呼ばれず、inactive backendのGPU描画は停止している。
+- current release reproduction attempt: `VITE_PERF_BACKEND=canvas`、実FBX Scene、1920x1080、60 warm-up＋180 samplesで4回試行。hidden／非foregroundの3回はWebView2 RAF throttleにより180 samples未到達でperf行なし。foregroundを一度確保できた1回はaverage 2.179 FPS、wall p50／p95 4.5／1062.4ms、CPU render p95 0.2ms（`artifacts/asset-gate/canvas-current-visible.stderr.log`）となり、render costではなくRAF scheduling／occlusion条件の無効runだった。既存の有効debug 3-run値（56.793〜57.196 FPS）は再現履歴として保持するが、今回のrelease 3-cold-start再測定は未成立。
+- blocked evidence: shellからのforeground維持がWebView2の可視性判定と一致せず、releaseで同一条件の3 cold startsを成立できなかった。閾値緩和やbusy-loopによるframe pacingは行わない。
 - unresolved: Canvas nominal 60Hz回帰の切り分けと、post-emit Tauri event queue／WebView listener scheduling遅延の内部寄与分離。したがって`ASSET-PLAYBACK-GATE-01`は完了扱いにしない。
 
 ## 2026-08-09 Device Lost callback証拠

@@ -31,3 +31,17 @@ it("reports once after warm-up with nearest-rank percentiles", () => {
   });
   expect(sampler.observe(100, 7)).toBeNull();
 });
+
+it("reports RAF callback delay separately from scheduled RAF intervals", () => {
+  const sampler = new CanvasPerformanceSampler(1920, 1080, 2, 1);
+  expect(sampler.observe(0, 1, 0)).toBeNull();
+  expect(sampler.observe(10, 1, 10)).toBeNull();
+  const summary = sampler.observe(30, 1, 30);
+  expect(summary).toMatchObject({
+    samples: 2,
+    rafCallbackDelayP50Ms: 0,
+    rafCallbackDelayP95Ms: 0,
+    rafTimestampP50Ms: 10,
+    rafTimestampP95Ms: 20,
+  });
+});
