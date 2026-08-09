@@ -10,6 +10,15 @@ import {
   type TimelineKeyColumn,
   type TimelineRow,
 } from "../timeline/core/contracts";
+import {
+  dispatchTimelinePlayback,
+  getTimelinePlayback,
+  projectTimelinePlaybackTime,
+  reportTimelineEventPerformance,
+  subscribeTimelinePlayback,
+  type TimelinePlaybackCommand,
+  type TimelinePlaybackSnapshot,
+} from "../timeline/playback";
 import "./Timeline.css";
 
 const ROW_HEIGHT = 26;
@@ -17,7 +26,9 @@ const MIN_PIXELS_PER_SECOND = 12;
 const MAX_PIXELS_PER_SECOND = 180;
 const ZOOM_NAVIGATOR_BASE = 30;
 const PLAYHEAD_TIME = 4.55;
+const NATIVE_PLAYBACK_EVENT_INTERVAL_MS = 250;
 let timelineSelfTestHasRun = false;
+let timelinePlaybackSelfTestHasRun = false;
 
 function pixelsPerSecondFromZoomRange(range: RangeViewportValue) {
   const width = Math.max(1, range.end - range.start) / 100;
@@ -303,6 +314,7 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
   const [playheadTime, setPlayheadTime] = useState(PLAYHEAD_TIME);
   const [isPlaying, setIsPlaying] = useState(false);
   const [loop, setLoop] = useState(false);
+  const [nativePlayback, setNativePlayback] = useState<TimelinePlaybackSnapshot | null>(null);
   const [rangeEnabled, setRangeEnabled] = useState(true);
   const [rangeStart, setRangeStart] = useState(2);
   const [rangeEnd, setRangeEnd] = useState(9.5);
@@ -343,7 +355,73 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
   }, [items, keyColumns, keys, pixelsPerSecond, rows, timeEnd, playheadTime, rangeEnabled, rangeStart, rangeEnd]);
 
   useEffect(() => {
-    if (!isPlaying) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    const deliveryAges: number[] = [];
+    const eventIntervals: number[] = [];
+    let previousReceivedAt: number | undefined;
+    let latestRevision = 0;
+    const measurementStartedAt = performance.now();
+    const sampleTarget = import.meta.env.VITE_TIMELINE_PLAYBACK_SYNC_SELF_TEST ? 100 : 0;
+    const applySnapshot = (snapshot: TimelinePlaybackSnapshot, measure: boolean) => {
+      if (disposed || !snapshot.available || snapshot.revision < latestRevision) return;
+      latestRevision = snapshot.revision;
+      setNativePlayback(snapshot);
+      setPlayheadTime(projectTimelinePlaybackTime(snapshot));
+      setIsPlaying(snapshot.playing);
+      setLoop(snapshot.looping);
+      setRangeEnabled(false);
+      if (!measure || sampleTarget === 0 || deliveryAges.length >= sampleTarget) return;
+      const receivedAt = performance.now();
+      deliveryAges.push(Math.max(0, Date.now() - snapshot.sampledAtUnixMs));
+      if (previousReceivedAt !== undefined) eventIntervals.push(receivedAt - previousReceivedAt);
+      previousReceivedAt = receivedAt;
+      if (deliveryAges.length !== sampleTarget) return;
+      const orderedAges = [...deliveryAges].sort((left, right) => left - right);
+      const p95Index = Math.min(orderedAges.length - 1, Math.ceil(orderedAges.length * 0.95) - 1);
+      const ageSum = orderedAges.reduce((total, age) => total + age, 0);
+      const intervalSum = eventIntervals.reduce((total, interval) => total + interval, 0);
+      void reportTimelineEventPerformance({
+        source: "timeline-event",
+        sampleCount: orderedAges.length,
+        targetIntervalMs: NATIVE_PLAYBACK_EVENT_INTERVAL_MS,
+        elapsedMs: performance.now() - measurementStartedAt,
+        averageDeliveryAgeMs: ageSum / orderedAges.length,
+        p95DeliveryAgeMs: orderedAges[p95Index],
+        maxDeliveryAgeMs: orderedAges[orderedAges.length - 1],
+        averageEventIntervalMs: intervalSum / eventIntervals.length,
+        maxEventIntervalMs: Math.max(...eventIntervals),
+      }).catch((error) => console.warn("[Timeline] failed to report event performance", error));
+    };
+    void subscribeTimelinePlayback((snapshot) => applySnapshot(snapshot, true))
+      .then((stopListening) => {
+        if (disposed) stopListening();
+        else unlisten = stopListening;
+        return getTimelinePlayback();
+      })
+      .then((snapshot) => applySnapshot(snapshot, false))
+      .catch(() => {
+        // Browser-only design stories keep the local preview clock below.
+      });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!nativePlayback?.playing) return;
+    let animationFrame = 0;
+    const updateProjectedTime = () => {
+      setPlayheadTime(projectTimelinePlaybackTime(nativePlayback));
+      animationFrame = window.requestAnimationFrame(updateProjectedTime);
+    };
+    animationFrame = window.requestAnimationFrame(updateProjectedTime);
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [nativePlayback]);
+
+  useEffect(() => {
+    if (nativePlayback || !isPlaying) return;
     const timer = window.setInterval(() => {
       setPlayheadTime((current) => {
         const next = current + 1 / 24;
@@ -358,7 +436,7 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
       });
     }, 1000 / 24);
     return () => window.clearInterval(timer);
-  }, [isPlaying, loop, rangeEnabled, rangeStart, rangeEnd, timeEnd]);
+  }, [nativePlayback, isPlaying, loop, rangeEnabled, rangeStart, rangeEnd, timeEnd]);
 
   useEffect(() => {
     const viewport = canvasViewportRef.current;
@@ -392,6 +470,67 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
     };
   }, []);
 
+  useEffect(() => {
+    if (
+      timelinePlaybackSelfTestHasRun ||
+      !import.meta.env.VITE_TIMELINE_PLAYBACK_SELF_TEST ||
+      !nativePlayback?.available ||
+      !nativePlayback.instanceId ||
+      nativePlayback.clipIndex === null
+    ) return;
+    timelinePlaybackSelfTestHasRun = true;
+    const target = {
+      instanceId: nativePlayback.instanceId,
+      clipIndex: nativePlayback.clipIndex,
+    };
+    const delay = (milliseconds: number) =>
+      new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
+    void (async () => {
+      try {
+        await dispatchTimelinePlayback({ type: "pause", ...target });
+        await delay(150);
+        const pausedA = await getTimelinePlayback();
+        await delay(250);
+        const pausedB = await getTimelinePlayback();
+        const seekTime = nativePlayback.duration * 0.5;
+        await dispatchTimelinePlayback({ type: "seek", ...target, time: seekTime });
+        await delay(150);
+        const sought = await getTimelinePlayback();
+        await dispatchTimelinePlayback({ type: "play", ...target });
+        await delay(300);
+        const resumed = await getTimelinePlayback();
+        await dispatchTimelinePlayback({ type: "pause", ...target });
+        await delay(150);
+        const final = await getTimelinePlayback();
+        const passed =
+          !pausedA.playing &&
+          !pausedB.playing &&
+          Math.abs(pausedB.time - pausedA.time) < 0.02 &&
+          !sought.playing &&
+          Math.abs(sought.time - seekTime) < 0.05 &&
+          resumed.playing &&
+          resumed.time > sought.time + 0.1 &&
+          !final.playing &&
+          final.time >= resumed.time;
+        window.dispatchEvent(new CustomEvent("tauri3d:diagnostic", {
+          detail: {
+            level: passed ? "info" : "error",
+            source: "timeline",
+            message: `${passed ? "PASS" : "FAIL"} Native Timeline pause/seek/play self-test: ${final.time.toFixed(2)}s`,
+          },
+        }));
+      } catch (error) {
+        window.dispatchEvent(new CustomEvent("tauri3d:diagnostic", {
+          detail: {
+            level: "error",
+            source: "timeline",
+            message: `FAIL Native Timeline playback self-test: ${String(error)}`,
+          },
+        }));
+      }
+    })();
+  }, [nativePlayback]);
+
   const handleScroll = (event: React.UIEvent<HTMLDivElement>) => {
     const target = event.currentTarget;
     if (treeRowsRef.current) {
@@ -409,12 +548,33 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
   const tickStep = pixelsPerSecond < 18 ? 5 : 1;
   const ticks = Array.from({ length: Math.floor(timeEnd / tickStep) + 1 }, (_, index) => index * tickStep);
   const canvasWidth = timeEnd * pixelsPerSecond;
+  const sendNative = (command: "play" | "pause" | "seek" | "setLooping", value?: number | boolean) => {
+    if (!nativePlayback?.instanceId || nativePlayback.clipIndex === null) return false;
+    const target = {
+      instanceId: nativePlayback.instanceId,
+      clipIndex: nativePlayback.clipIndex,
+    };
+    const payload: TimelinePlaybackCommand = command === "seek"
+      ? { type: command, ...target, time: value as number }
+      : command === "setLooping"
+        ? { type: command, ...target, looping: value as boolean }
+        : { type: command, ...target };
+    void dispatchTimelinePlayback(payload).catch((error) =>
+      console.warn("[Timeline] native playback command failed", error),
+    );
+    return true;
+  };
+  const seekTo = (time: number) => {
+    const clamped = Math.min(timeEnd, Math.max(0, time));
+    setPlayheadTime(clamped);
+    sendNative("seek", clamped);
+  };
   const nudgePlayhead = (delta: number) => {
     const min = rangeEnabled ? rangeStart : 0;
     const max = rangeEnabled ? rangeEnd : timeEnd;
-    setPlayheadTime((current) => Math.min(max, Math.max(min, current + delta)));
+    seekTo(Math.min(max, Math.max(min, playheadTime + delta)));
   };
-  const jumpTo = (time: number) => setPlayheadTime(Math.min(timeEnd, Math.max(0, time)));
+  const jumpTo = (time: number) => seekTo(time);
   const jumpToPreviousKey = () => jumpTo(Math.max(0, Math.ceil(playheadTime) - 1));
   const jumpToNextKey = () => jumpTo(Math.min(timeEnd, Math.floor(playheadTime) + 1));
 
@@ -446,7 +606,11 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
             type="button"
             aria-label={isPlaying ? "Pause" : "Play"}
             aria-pressed={isPlaying}
-            onClick={() => setIsPlaying((playing) => !playing)}
+            onClick={() => {
+              const next = !isPlaying;
+              setIsPlaying(next);
+              sendNative(next ? "play" : "pause");
+            }}
           >
             {isPlaying ? "Ⅱ" : "▶"}
           </button>
@@ -458,7 +622,11 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
             type="button"
             aria-label="Loop"
             aria-pressed={loop}
-            onClick={() => setLoop((enabled) => !enabled)}
+            onClick={() => {
+              const next = !loop;
+              setLoop(next);
+              sendNative("setLooping", next);
+            }}
           >↔</button>
           <span className="timeline-panel__frame">{String(Math.round(playheadTime * 24)).padStart(4, "0")} / {String(Math.round(timeEnd * 24)).padStart(4, "0")}</span>
           <span className="timeline-panel__divider" />
@@ -468,6 +636,8 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
             className={`timeline-tool timeline-tool--range${rangeEnabled ? " timeline-tool--active" : ""}`}
             type="button"
             aria-pressed={rangeEnabled}
+            disabled={nativePlayback !== null}
+            title={nativePlayback ? "Range playback is not connected to the Native player yet" : undefined}
             onClick={() => setRangeEnabled((enabled) => !enabled)}
           >
             Range

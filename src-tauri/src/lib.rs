@@ -7,6 +7,7 @@ pub mod scene;
 mod scene_file;
 mod scene_projection;
 mod timeline;
+mod timeline_playback;
 
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -166,6 +167,21 @@ fn get_timeline_projection(
 }
 
 #[tauri::command]
+fn get_timeline_playback(
+    state: tauri::State<timeline_playback::TimelinePlaybackStore>,
+) -> timeline_playback::TimelinePlaybackSnapshot {
+    state.snapshot()
+}
+
+#[tauri::command]
+fn dispatch_timeline_playback(
+    state: tauri::State<timeline_playback::TimelinePlaybackStore>,
+    command: timeline_playback::TimelinePlaybackCommand,
+) -> Result<(), String> {
+    state.request(command)
+}
+
+#[tauri::command]
 fn report_performance_summary(summary: serde_json::Value) {
     eprintln!("[perf] {summary}");
 }
@@ -187,6 +203,8 @@ pub fn run() {
             select_scene_node,
             dispatch_scene_command,
             get_timeline_projection,
+            get_timeline_playback,
+            dispatch_timeline_playback,
             report_performance_summary,
             scene_file::get_scene_file_status,
             scene_file::new_scene_file,
@@ -287,6 +305,7 @@ pub fn run() {
             // the event-loop thread. Even an unavailable renderer remains parked in
             // this slot; RendererActive prevents drawing and RendererStatus rejects
             // reactivation until the process is restarted without the fault.
+            let initial_playback = renderer.timeline_playback_snapshot();
             NATIVE_RENDERER.with(|slot| {
                 *slot.borrow_mut() = Some(renderer);
             });
@@ -328,6 +347,9 @@ pub fn run() {
             app.manage(ViewportRectLog::default());
             app.manage(projection_store);
             app.manage(timeline::TimelineProjectionStore::new(timeline_projection));
+            let playback_store = timeline_playback::TimelinePlaybackStore::default();
+            playback_store.publish(initial_playback);
+            app.manage(playback_store);
             let scene_file_state = scene_file::SceneFileState::default();
             if let Some((document, path)) = opened_scene {
                 scene_file_state.set_document(document, Some(path));
@@ -380,7 +402,10 @@ pub fn run() {
                     .0
                     .load(Ordering::Relaxed);
                 let projection_store = app_handle.state::<SceneProjectionStore>();
+                let playback_store =
+                    app_handle.state::<timeline_playback::TimelinePlaybackStore>();
                 let commands = projection_store.take_commands();
+                let playback_commands = playback_store.take_commands();
                 let current_selection = projection_store.projection().selected_node_id;
                 let requested_selection = projection_store.take_selection();
                 let selected_id = requested_selection.or(current_selection);
@@ -400,6 +425,11 @@ pub fn run() {
                                 error: result.err(),
                             });
                         }
+                        for command in playback_commands {
+                            if let Err(error) = renderer.apply_timeline_playback_command(command) {
+                                eprintln!("timeline playback command rejected: {error}");
+                            }
+                        }
                         let selected_id = selected_id
                             .as_deref()
                             .filter(|id| renderer.has_node(id))
@@ -413,6 +443,13 @@ pub fn run() {
                             renderer.render();
                         }
                         projection_store.publish(renderer.scene_projection(Some(&selected_id)));
+                        playback_store.publish(renderer.timeline_playback_snapshot());
+                        if let Some(snapshot) = playback_store.take_event_snapshot(250) {
+                            if let Err(error) = app_handle.emit("timeline-playback-changed", snapshot)
+                            {
+                                eprintln!("failed to emit timeline playback snapshot: {error}");
+                            }
+                        }
                     }
                 });
             }

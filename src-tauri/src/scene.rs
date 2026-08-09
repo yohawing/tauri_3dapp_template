@@ -346,7 +346,7 @@ impl Scene {
                     asset_id: asset.id.clone(),
                 });
             }
-            if asset.kind != "gltf" {
+            if !matches!(asset.kind.as_str(), "gltf" | "fbx") {
                 return Err(SceneValidationError::UnsupportedAssetKind {
                     asset_id: asset.id.clone(),
                     kind: asset.kind.clone(),
@@ -520,6 +520,14 @@ mod tests {
 
     fn valid_scene() -> Scene {
         Scene::parse_json(VALID_JSON).expect("valid fixture")
+    }
+
+    #[test]
+    fn accepts_static_fbx_asset_kind() {
+        let mut scene = valid_scene();
+        scene.assets[0].kind = "fbx".to_string();
+        scene.assets[0].path = "./assets/prop.fbx".to_string();
+        scene.validate().unwrap();
     }
 
     fn temp_path(label: &str) -> PathBuf {

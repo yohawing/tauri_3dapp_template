@@ -61,6 +61,11 @@ experiments/
 }
 ```
 
+`assets[].kind` は `gltf`（glTF/GLB）または `fbx`。FBXは三角形メッシュ、ノード階層、
+4-weight linear skin、UV0、法線、base color／metallic／roughnessのスカラー値を読み込む。
+FBX transform animationはsource FPS（上限60 fps）でlinear keyへbakeし、最初のclipを自動loop再生する。
+モーフアニメーション、テクスチャ、NURBS、FBX固有の補間曲線は未対応。
+
 ## Rust永続型の方向
 
 永続型の名前は用途どおり単に`Scene`とする。

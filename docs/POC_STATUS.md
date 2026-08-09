@@ -18,6 +18,7 @@
 | Rust Scene Projection／Selection | implemented / verified | pass (2026-08-08 screenshot) | built-in CubeとScene由来`box-instance`のID／label／Transformを確認 |
 | Scene File New／Open／Save lifecycle | implemented / verified | pass (2026-08-09 test＋screenshot) | Save As後の失敗Openで現Sceneを保持し、通常Save、Newまで確認。relative asset rebaseもfocused test済み |
 | BrainStem read-only Timeline | implemented / verified | pass (2026-08-08 test＋screenshot) | 1 clip、約34.88秒、57 channels、74613 keys、LINEARを検証。visible range＋pixel density描画 |
+| FBX skin animation／Native Timeline playback | implemented / verified | pass (2026-08-09 test＋screenshot) | 実FBX 1 clip、約24.83秒、76 animated nodes、228 channels。Play／Pause／Seek／Loopとtimestamp付きevent同期を確認 |
 | DOM Menu／Shortcut | implemented / verified | pass (2026-08-08 test＋self-test) | menuとshortcutは同一Action。input／modal中の抑止をunit test済み |
 | Bounded Console drawer | implemented / verified | pass (2026-08-08 test＋screenshot) | scene／renderer／viewport／frontend、filter／Clear／Copy All／Auto-scroll、500 entry上限 |
 | Settings modal | implemented / verified | pass (2026-08-08 test＋screenshot) | overlay、Console level／Auto-scrollを即時反映し、version付きlocalStorageへ保存 |
@@ -52,6 +53,17 @@ Windows上の現行スライスは継続可。Native raster viewportの部分描
 - pass: Canvas 60.000 FPS、wall p50／p95 16.700／16.800 ms、同期CPU render p95 0.200 ms。
 - memoryは`tauri3d.exe`＋全WebView2子processを合算。Native Working Set平均861.3 MiB／Dedicated GPU平均1178.9 MiB、Canvas fallback 827.7 MiB／1020.4 MiB。
 - 制約: Canvas WebGL GPU timestampは未取得。Canvas値はNative rendererを保持したままinactiveにする実fallback構成。複雑Scene、4K、macOS、release buildは未評価。
+
+## 2026-08-09 FBX animation／Timeline playback証拠
+
+- Asset: local `F:\3dcg\kokoronaki4\KimonoNaki\kimono_animation.fbx`。外部binaryと絶対pathはtracked fixture／Sceneへ追加していない。
+- Screenshot: `C:\Users\yohaw\AppData\Local\Temp\tauri3d-timeline-event-a.png` と `tauri3d-timeline-event-b.png`。2秒差で同一SHA-256、15.23秒のPause pose／playheadが固定。
+- pass: FBX mesh／4-weight skin／node transform animation、source duration約24.83秒、1 clip、76 animated nodes、228 channelsをNative ViewportとTimelineへ投影。
+- pass: 環境self-testでPause→50% Seek→Play→Pauseを通し、Play／Pause／Seek／Loop境界をfocused testで固定。
+- performance finding: 50ms invoke pollingは100 responsesで平均86.9ms、p95 126.2ms、overlap skip 102。250ms pollingでもp95 1805.3msだったため廃止。
+- current sync: Nativeがcanonical stateと採取timestampを保持し、250ms throttled Tauri eventをFrontendへpush。Frontendはsnapshot間の表示時刻だけを補間する。
+- event gate: 100 eventsで平均間隔278.9ms、snapshot delivery age平均164.0ms／p95 811ms、最大event間隔2207.3ms。poll backlogは解消したが、debug＋実FBX描画中のevent-loop stallは未解消。
+- GUI経路: `VITE_TIMELINE_PLAYBACK_SELF_TEST`、`VITE_TIMELINE_PLAYBACK_SYNC_SELF_TEST`、ログ、`screenshot-ui`のみ。Computer Useは未使用。
 
 ## 2026-08-09 Device Lost callback証拠
 

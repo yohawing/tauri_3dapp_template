@@ -2643,6 +2643,7 @@ dependencies = [
  "pollster 0.4.0",
  "rgb",
  "rusttype",
+ "ufbx",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
@@ -6013,6 +6014,15 @@ dependencies = [
  "memoffset",
  "tempfile",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "ufbx"
+version = "0.11.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "163c9b35d1322b7bab8f5eeda14428ad1b139cbcf5f1e04f659a2469378b66f2"
+dependencies = [
+ "cc",
 ]
 
 [[package]]

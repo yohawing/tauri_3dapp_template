@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::Path;
+use std::time::Instant;
 
 use kiss3d::color::Color;
 use kiss3d::prelude::{
@@ -16,6 +17,7 @@ use crate::scene_projection::{
     SceneCommand, SceneMaterial, SceneNodeSummary, SceneProjection, SceneTransform,
     SelectedSceneNode,
 };
+use crate::timeline_playback::{TimelinePlaybackCommand, TimelinePlaybackSnapshot};
 
 pub const SCENE_ID: &str = "scene";
 pub const KEY_LIGHT_ID: &str = "key-light";
@@ -110,6 +112,7 @@ pub struct Renderer {
     camera: OrbitCamera3d,
     performance_target: Option<(u32, u32)>,
     performance_sampler: Option<PerformanceSampler>,
+    animation_clock: Instant,
 }
 
 impl Renderer {
@@ -143,6 +146,7 @@ impl Renderer {
             camera,
             performance_target,
             performance_sampler: PerformanceSampler::from_env(),
+            animation_clock: Instant::now(),
         }
     }
 
@@ -177,6 +181,7 @@ impl Renderer {
             camera: OrbitCamera3d::new(Vec3::new(3.0, 1.5, -3.0), Vec3::ZERO),
             performance_target,
             performance_sampler: PerformanceSampler::from_env(),
+            animation_clock: Instant::now(),
         })
     }
 
@@ -194,6 +199,7 @@ impl Renderer {
         self.instances = runtime.instances;
         self.scene_label = runtime.scene_label;
         self.default_node_id = runtime.default_node_id;
+        self.animation_clock = Instant::now();
         Ok(())
     }
 
@@ -221,6 +227,15 @@ impl Renderer {
     }
 
     pub fn render(&mut self) {
+        let now = Instant::now();
+        let animation_dt = now
+            .duration_since(self.animation_clock)
+            .as_secs_f32()
+            .min(0.1);
+        self.animation_clock = now;
+        for instance in &mut self.instances {
+            instance.player.update(animation_dt);
+        }
         if let Some(cube) = self.cube.as_mut() {
             cube.rotate(Quat::from_axis_angle(Vec3::Y, 0.006));
         }
@@ -250,6 +265,61 @@ impl Renderer {
             .iter()
             .map(|instance| instance.player.clip_count())
             .sum()
+    }
+
+    pub fn apply_timeline_playback_command(
+        &mut self,
+        command: TimelinePlaybackCommand,
+    ) -> Result<(), String> {
+        let (instance_id, clip_index) = command.target();
+        let instance = self
+            .instances
+            .iter_mut()
+            .find(|instance| instance.id == instance_id)
+            .ok_or_else(|| format!("timeline instance '{instance_id}' is not loaded"))?;
+        if instance.player.clip_duration(clip_index).is_none() {
+            return Err(format!(
+                "timeline instance '{instance_id}' has no clip {clip_index}"
+            ));
+        }
+        if instance.player.current_clip_index() != Some(clip_index) {
+            instance.player.play_index(clip_index);
+            instance.player.stop();
+        }
+        match command {
+            TimelinePlaybackCommand::Play { .. } => instance.player.resume(),
+            TimelinePlaybackCommand::Pause { .. } => instance.player.stop(),
+            TimelinePlaybackCommand::Seek { time, .. } => {
+                let duration = instance.player.clip_duration(clip_index).unwrap_or(0.0);
+                instance.player.seek(time.clamp(0.0, duration));
+            }
+            TimelinePlaybackCommand::SetLooping { looping, .. } => {
+                instance.player.set_looping(looping)
+            }
+        }
+        Ok(())
+    }
+
+    pub fn timeline_playback_snapshot(&self) -> TimelinePlaybackSnapshot {
+        let Some(instance) = self
+            .instances
+            .iter()
+            .find(|instance| instance.player.clip_count() > 0)
+        else {
+            return TimelinePlaybackSnapshot::default();
+        };
+        let clip_index = instance.player.current_clip_index().unwrap_or(0);
+        TimelinePlaybackSnapshot {
+            revision: 0,
+            sampled_at_unix_ms: 0,
+            available: true,
+            instance_id: Some(instance.id.clone()),
+            clip_index: Some(clip_index),
+            time: instance.player.time(),
+            duration: instance.player.clip_duration(clip_index).unwrap_or(0.0),
+            playing: instance.player.is_playing(),
+            looping: instance.player.is_looping(),
+        }
     }
 
     pub fn apply_scene_command(&mut self, command: SceneCommand) -> Result<(), String> {
@@ -423,21 +493,53 @@ fn build_runtime_scene(
         })?;
         let (translation, rotation, scale) = instance_runtime_transform(instance)?;
 
-        let loaded = catch_unwind(AssertUnwindSafe(|| kiss3d::loader::gltf::load(path)))
-            .map_err(|_| RendererError::AssetLoad {
-                instance_id: instance.id.clone(),
-                asset_id: asset.id.clone(),
-                path: path.display().to_string(),
-                message: "vendor glTF loader panicked".to_string(),
-            })?
-            .map_err(|error| RendererError::AssetLoad {
-                instance_id: instance.id.clone(),
-                asset_id: asset.id.clone(),
-                path: path.display().to_string(),
-                message: error.to_string(),
-            })?;
+        let (mut root, player) = match asset.kind.as_str() {
+            "gltf" => {
+                let loaded = catch_unwind(AssertUnwindSafe(|| kiss3d::loader::gltf::load(path)))
+                    .map_err(|_| RendererError::AssetLoad {
+                        instance_id: instance.id.clone(),
+                        asset_id: asset.id.clone(),
+                        path: path.display().to_string(),
+                        message: "vendor glTF loader panicked".to_string(),
+                    })?
+                    .map_err(|error| RendererError::AssetLoad {
+                        instance_id: instance.id.clone(),
+                        asset_id: asset.id.clone(),
+                        path: path.display().to_string(),
+                        message: error.to_string(),
+                    })?;
+                (loaded.root, loaded.player)
+            }
+            "fbx" => {
+                let loaded = catch_unwind(AssertUnwindSafe(|| kiss3d::loader::fbx::load(path)))
+                    .map_err(|_| RendererError::AssetLoad {
+                        instance_id: instance.id.clone(),
+                        asset_id: asset.id.clone(),
+                        path: path.display().to_string(),
+                        message: "vendor FBX loader panicked".to_string(),
+                    })?
+                    .map_err(|message| RendererError::AssetLoad {
+                        instance_id: instance.id.clone(),
+                        asset_id: asset.id.clone(),
+                        path: path.display().to_string(),
+                        message,
+                    })?;
+                let mut player = loaded.player;
+                if player.clip_count() > 0 {
+                    player.play_index(0);
+                }
+                (loaded.root, player)
+            }
+            kind => {
+                return Err(RendererError::AssetLoad {
+                    instance_id: instance.id.clone(),
+                    asset_id: asset.id.clone(),
+                    path: path.display().to_string(),
+                    message: format!("unsupported asset kind '{kind}'"),
+                });
+            }
+        };
 
-        let mut root = loaded.root;
         root.set_position(translation);
         root.set_rotation(rotation);
         root.set_local_scale(scale.x, scale.y, scale.z);
@@ -446,7 +548,7 @@ fn build_runtime_scene(
         instances.push(RuntimeInstance {
             id: instance.id.clone(),
             root,
-            player: loaded.player,
+            player,
         });
     }
 

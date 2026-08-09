@@ -140,12 +140,60 @@ pub fn load_gltf_timeline(path: &Path, instance_id: &str) -> Result<TimelineProj
     Ok(TimelineProjection { revision: 1, clips })
 }
 
+pub fn load_fbx_timeline(path: &Path, instance_id: &str) -> Result<TimelineProjection, String> {
+    let metadata = kiss3d::loader::fbx::animation_metadata(path).map_err(|error| {
+        format!(
+            "FBX animation metadata import failed at {}: {error}",
+            path.display()
+        )
+    })?;
+    let mut clips = Vec::with_capacity(metadata.clips.len());
+    for (clip_index, clip) in metadata.clips.into_iter().enumerate() {
+        let mut channels = Vec::with_capacity(clip.tracks.len() * 3);
+        for track in clip.tracks {
+            for property in [
+                TimelineProperty::Translation,
+                TimelineProperty::Rotation,
+                TimelineProperty::Scale,
+            ] {
+                let channel_index = channels.len();
+                channels.push(TimelineChannelProjection {
+                    id: format!("{instance_id}:animation-{clip_index}:channel-{channel_index}"),
+                    node_index: track.node_index,
+                    node_label: track.node_label.clone(),
+                    property,
+                    interpolation: TimelineInterpolation::Linear,
+                    key_times: track.key_times.clone(),
+                });
+            }
+        }
+        clips.push(TimelineClipProjection {
+            instance_id: instance_id.to_string(),
+            clip_index,
+            label: clip.label,
+            duration: clip.duration,
+            channels,
+        });
+    }
+    Ok(TimelineProjection { revision: 1, clips })
+}
+
 pub fn load_scene_timeline(
     scene: &Scene,
     resolved_assets: &[ResolvedAssetPath],
 ) -> Result<TimelineProjection, String> {
     let mut projection = TimelineProjection::default();
     for instance in &scene.instances {
+        let asset = scene
+            .assets
+            .iter()
+            .find(|asset| asset.id == instance.asset)
+            .ok_or_else(|| {
+                format!(
+                    "animation metadata asset missing for instance '{}' asset '{}'",
+                    instance.id, instance.asset
+                )
+            })?;
         let path = resolved_assets
             .iter()
             .find(|asset| asset.asset_id == instance.asset)
@@ -155,8 +203,17 @@ pub fn load_scene_timeline(
                     instance.id, instance.asset
                 )
             })?;
-        let instance_projection = load_gltf_timeline(&path.resolved_path, &instance.id)?;
-        projection.clips.extend(instance_projection.clips);
+        match asset.kind.as_str() {
+            "gltf" => {
+                let instance_projection = load_gltf_timeline(&path.resolved_path, &instance.id)?;
+                projection.clips.extend(instance_projection.clips);
+            }
+            "fbx" => {
+                let instance_projection = load_fbx_timeline(&path.resolved_path, &instance.id)?;
+                projection.clips.extend(instance_projection.clips);
+            }
+            _ => return Err(format!("unsupported asset kind '{}'", asset.kind)),
+        }
     }
     projection.revision = 1;
     Ok(projection)
@@ -173,6 +230,52 @@ mod tests {
     fn brainstem_path() -> std::path::PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../glTF-Sample-Assets/Models/BrainStem/glTF/BrainStem.gltf")
+    }
+
+    #[test]
+    fn static_fbx_scene_has_empty_timeline() {
+        let fixture = br#"; FBX 7.4.0 project file
+FBXHeaderExtension: { FBXHeaderVersion: 1003 FBXVersion: 7400 }
+GlobalSettings: { Version: 1000 }
+Documents: { Count: 1 Document: 1, "", "Scene" { RootNode: 0 } }
+Definitions: { Version: 100 Count: 1 ObjectType: "Model" { Count: 1 } }
+Objects: { Model: 100, "Model::Root", "Null" { Version: 232 } }
+Connections: { C: "OO",100,0 }
+"#;
+        let fixture_path = std::env::temp_dir().join(format!(
+            "tauri3d-static-timeline-{}.fbx",
+            std::process::id()
+        ));
+        std::fs::write(&fixture_path, fixture).unwrap();
+        let scene = Scene {
+            version: 1,
+            name: Some("FBX".to_string()),
+            assets: vec![crate::scene::SceneAsset {
+                id: "prop".to_string(),
+                kind: "fbx".to_string(),
+                path: "prop.fbx".to_string(),
+            }],
+            instances: vec![crate::scene::SceneInstance {
+                id: "prop-1".to_string(),
+                asset: "prop".to_string(),
+                transform: crate::scene::SceneTransform {
+                    translation: [0.0, 0.0, 0.0],
+                    rotation: [0.0, 0.0, 0.0, 1.0],
+                    scale: [1.0, 1.0, 1.0],
+                },
+                visible: true,
+            }],
+            camera: None,
+        };
+        let resolved = vec![ResolvedAssetPath {
+            asset_id: "prop".to_string(),
+            stored_path: Path::new("prop.fbx").to_path_buf(),
+            resolved_path: fixture_path.clone(),
+            kind: crate::scene::AssetPathKind::PortableRelative,
+        }];
+        let projection = load_scene_timeline(&scene, &resolved).unwrap();
+        assert!(projection.clips.is_empty());
+        std::fs::remove_file(fixture_path).unwrap();
     }
 
     #[test]
