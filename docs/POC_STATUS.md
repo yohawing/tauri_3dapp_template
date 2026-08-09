@@ -74,7 +74,10 @@ Windows上の現行スライスは継続可。Native raster viewportの部分描
 - release raw log: `artifacts/asset-gate/release-fbx-playback.stderr.log`（local／ignored）。
 - instrumented release remeasurement: Rust event payloadへUnix-msの`sampledAtUnixMs`／`emittedAtUnixMs`とprocess-local `eventSequence`を追加し、同じ1920x1080／60 warm-up＋180 samples／100 eventsを最終差分で再測定。Native frameは平均59.991 FPS、wall p50／p95／p99 16.671／17.215／17.540 ms、CPU render p95 16.903 ms、GPU timestamp p95 0.102 msでnominal 60 Hzをpassした。sample→emit ageは平均／p95／最大すべて0 ms（Unix-ms分解能）、emit→listener ageは平均146.02 ms／p95 738 ms／最大980 ms、event interval平均249.20 ms／最大976.9 ms、event sequence gap 0、revision gap 1440だった。
 - instrumented raw log: `artifacts/asset-gate/release-fbx-playback-instrumented-final-2.stderr.log`（local／ignored）。sample→emitが計測分解能内で0 ms、sequence gapも0のままemit後だけ遅延したため、今回のrelease計測でrenderer frame stallおよびRust snapshot採取／emit処理を原因から除外し、post-emit Tauri event queue／WebView listener scheduling遅延として切り分けた（両者の内部寄与は未分離）。
-- next action: Canvas nominal 60 Hz回帰と、post-emit Tauri event queue／WebView scheduling遅延の内部寄与を追加計測する。現時点でrenderer側の変更は行わない。
+- Timeline UI refactor: root `58cac66`で再生playheadを静的CanvasからDOM overlayへ分離し、RAFごとのReact state更新、全Timeline render、Canvas backing store再初期化を除去。root `7ba6ef8`でCanvas backing storeとtrack treeを可視Viewportへvirtualizeし、key-column queryも可視rowだけへ限定した。
+- refactored release result: 同じ実FBX／1920x1080／60 warm-up＋180 frame／100 eventsでNative 60.000 FPS、wall p50／p95／p99 16.641／17.242／17.501 ms、CPU render p95 16.962 ms、GPU timestamp p95 0.112 ms。sample→emitは0 ms、emit→listenerは平均0.46 ms／p95 1 ms／最大1 ms、event interval平均259.27 ms／最大267.5 ms、sequence gap 0。旧instrumented releaseのp95 738 msから解消した。
+- refactored release evidence: `artifacts/timeline-ui-refactor-release.stderr.log`（local／ignored）と`C:\Users\yohaw\AppData\Local\Temp\tauri3d-timeline-refactor-release.png`。`VITE_TIMELINE_SELF_TEST`のzoom＋横1800 px／縦680 px scroll後もruler、lowerLegL／R track、keys、playheadの整列を確認した。
+- next action: post-emit scheduling遅延は完了。残件はinteractive desktop compositor条件を固定したCanvas nominal 60 Hz再測定で、renderer側の変更は行わない。
 - GUI経路: `VITE_TIMELINE_PLAYBACK_SELF_TEST`、`VITE_TIMELINE_PLAYBACK_SYNC_SELF_TEST`、ログ、`screenshot-ui`のみ。Computer Useは未使用。
 
 ## 2026-08-09 Asset Import UI証拠
