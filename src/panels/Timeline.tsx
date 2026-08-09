@@ -16,6 +16,8 @@ import {
   projectTimelinePlaybackTime,
   reportTimelineEventPerformance,
   subscribeTimelinePlayback,
+  timelineEventAges,
+  timelineSequenceGap,
   type TimelinePlaybackCommand,
   type TimelinePlaybackSnapshot,
 } from "../timeline/playback";
@@ -358,28 +360,51 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
     let disposed = false;
     let unlisten: (() => void) | undefined;
     const deliveryAges: number[] = [];
+    const sampleToEmitAges: number[] = [];
+    const emitToListenerAges: number[] = [];
     const eventIntervals: number[] = [];
     let previousReceivedAt: number | undefined;
+    let previousEventSequence: number | undefined;
+    let previousSnapshotRevision: number | undefined;
+    let eventSequenceGaps = 0;
+    let revisionGaps = 0;
     let latestRevision = 0;
     const measurementStartedAt = performance.now();
     const sampleTarget = import.meta.env.VITE_TIMELINE_PLAYBACK_SYNC_SELF_TEST ? 100 : 0;
     const applySnapshot = (snapshot: TimelinePlaybackSnapshot, measure: boolean) => {
-      if (disposed || !snapshot.available || snapshot.revision < latestRevision) return;
+      if (disposed) return;
+      const measureEvent = measure && sampleTarget > 0 && deliveryAges.length < sampleTarget;
+      // Count sequence continuity for every event received by the listener, including a
+      // stale revision that is intentionally ignored for playback state application.
+      if (measureEvent) {
+        eventSequenceGaps += timelineSequenceGap(previousEventSequence, snapshot.eventSequence);
+        previousEventSequence = snapshot.eventSequence;
+      }
+      if (!snapshot.available || snapshot.revision < latestRevision) return;
       latestRevision = snapshot.revision;
       setNativePlayback(snapshot);
       setPlayheadTime(projectTimelinePlaybackTime(snapshot));
       setIsPlaying(snapshot.playing);
       setLoop(snapshot.looping);
       setRangeEnabled(false);
-      if (!measure || sampleTarget === 0 || deliveryAges.length >= sampleTarget) return;
+      if (!measureEvent) return;
       const receivedAt = performance.now();
-      deliveryAges.push(Math.max(0, Date.now() - snapshot.sampledAtUnixMs));
+      const ages = timelineEventAges(snapshot);
+      deliveryAges.push(ages.totalDeliveryAgeMs);
+      sampleToEmitAges.push(ages.sampleToEmitAgeMs);
+      emitToListenerAges.push(ages.emitToListenerAgeMs);
+      revisionGaps += timelineSequenceGap(previousSnapshotRevision, snapshot.revision);
+      previousSnapshotRevision = snapshot.revision;
       if (previousReceivedAt !== undefined) eventIntervals.push(receivedAt - previousReceivedAt);
       previousReceivedAt = receivedAt;
       if (deliveryAges.length !== sampleTarget) return;
       const orderedAges = [...deliveryAges].sort((left, right) => left - right);
       const p95Index = Math.min(orderedAges.length - 1, Math.ceil(orderedAges.length * 0.95) - 1);
       const ageSum = orderedAges.reduce((total, age) => total + age, 0);
+      const orderedSampleToEmitAges = [...sampleToEmitAges].sort((left, right) => left - right);
+      const orderedEmitToListenerAges = [...emitToListenerAges].sort((left, right) => left - right);
+      const sampleToEmitSum = orderedSampleToEmitAges.reduce((total, age) => total + age, 0);
+      const emitToListenerSum = orderedEmitToListenerAges.reduce((total, age) => total + age, 0);
       const intervalSum = eventIntervals.reduce((total, interval) => total + interval, 0);
       void reportTimelineEventPerformance({
         source: "timeline-event",
@@ -389,6 +414,14 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
         averageDeliveryAgeMs: ageSum / orderedAges.length,
         p95DeliveryAgeMs: orderedAges[p95Index],
         maxDeliveryAgeMs: orderedAges[orderedAges.length - 1],
+        averageSampleToEmitAgeMs: sampleToEmitSum / orderedSampleToEmitAges.length,
+        p95SampleToEmitAgeMs: orderedSampleToEmitAges[p95Index],
+        maxSampleToEmitAgeMs: orderedSampleToEmitAges[orderedSampleToEmitAges.length - 1],
+        averageEmitToListenerAgeMs: emitToListenerSum / orderedEmitToListenerAges.length,
+        p95EmitToListenerAgeMs: orderedEmitToListenerAges[p95Index],
+        maxEmitToListenerAgeMs: orderedEmitToListenerAges[orderedEmitToListenerAges.length - 1],
+        eventSequenceGaps,
+        revisionGaps,
         averageEventIntervalMs: intervalSum / eventIntervals.length,
         maxEventIntervalMs: Math.max(...eventIntervals),
       }).catch((error) => console.warn("[Timeline] failed to report event performance", error));

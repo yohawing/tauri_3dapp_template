@@ -72,7 +72,9 @@ Windows上の現行スライスは継続可。Native raster viewportの部分描
 - release remeasurement: `src-tauri/target/release/tauri3d.exe` を `TAURI3D_SCENE=artifacts/absolute-path-gate/runtime-absolute.scene.json`、物理 `1920x1080`、60-frame warm-up＋180 samplesで起動。Native frameは平均60.087 FPS、wall p50／p95／p99 16.599／17.494／18.038 ms、CPU render p95 17.044 ms、GPU timestamp p95 0.118 msでnominal 60 Hzをpassした。
 - release event result: 同一実FBX playbackで100 event、平均interval 238.6 ms／最大interval 1102.8 ms、snapshot delivery age平均196.7 ms／p95 837 ms／最大2125 ms。frame wall／CPU／GPUに大きなstallはなく、releaseでも遅延が再現したためrenderer frame stallではなくTauri/WebView event delivery scheduling側の未解決問題と判定する。
 - release raw log: `artifacts/asset-gate/release-fbx-playback.stderr.log`（local／ignored）。
-- next action: Rustのevent emit時刻／sequenceとWebView listener受信時刻を別々に記録し、Tauri event queue遅延とWebView scheduling遅延を分離する。現時点でrenderer側の変更は行わない。
+- instrumented release remeasurement: Rust event payloadへUnix-msの`sampledAtUnixMs`／`emittedAtUnixMs`とprocess-local `eventSequence`を追加し、同じ1920x1080／60 warm-up＋180 samples／100 eventsを最終差分で再測定。Native frameは平均59.991 FPS、wall p50／p95／p99 16.671／17.215／17.540 ms、CPU render p95 16.903 ms、GPU timestamp p95 0.102 msでnominal 60 Hzをpassした。sample→emit ageは平均／p95／最大すべて0 ms（Unix-ms分解能）、emit→listener ageは平均146.02 ms／p95 738 ms／最大980 ms、event interval平均249.20 ms／最大976.9 ms、event sequence gap 0、revision gap 1440だった。
+- instrumented raw log: `artifacts/asset-gate/release-fbx-playback-instrumented-final-2.stderr.log`（local／ignored）。sample→emitが計測分解能内で0 ms、sequence gapも0のままemit後だけ遅延したため、今回のrelease計測でrenderer frame stallおよびRust snapshot採取／emit処理を原因から除外し、post-emit Tauri event queue／WebView listener scheduling遅延として切り分けた（両者の内部寄与は未分離）。
+- next action: Canvas nominal 60 Hz回帰と、post-emit Tauri event queue／WebView scheduling遅延の内部寄与を追加計測する。現時点でrenderer側の変更は行わない。
 - GUI経路: `VITE_TIMELINE_PLAYBACK_SELF_TEST`、`VITE_TIMELINE_PLAYBACK_SYNC_SELF_TEST`、ログ、`screenshot-ui`のみ。Computer Useは未使用。
 
 ## 2026-08-09 Asset Import UI証拠
@@ -160,7 +162,7 @@ Windows上の現行スライスは継続可。Native raster viewportの部分描
 - Native 1080p: pass。180 samples、average 60.644 FPS、wall p50／p95 16.410／17.297ms、GPU p95 0.053ms。
 - Canvas 1080p: fail。3 cold startsでaverage 56.993／56.793／57.196 FPS、wall p50 17.5〜17.6ms。59.0 FPS／p50 16.67ms gate未達。p95 18.1〜18.4msとCPU render p95 0.2msは範囲内。
 - idle playback unavailable eventを状態遷移時1回だけへ削減したがCanvas値は改善せず、原因ではなかった。
-- unresolved: Canvas nominal 60Hz回帰の切り分けと、release実FBXで再現したTauri event queue／WebView scheduling遅延の内訳分離。したがって`ASSET-PLAYBACK-GATE-01`は完了扱いにしない。
+- unresolved: Canvas nominal 60Hz回帰の切り分けと、post-emit Tauri event queue／WebView listener scheduling遅延の内部寄与分離。したがって`ASSET-PLAYBACK-GATE-01`は完了扱いにしない。
 
 ## 2026-08-09 Device Lost callback証拠
 

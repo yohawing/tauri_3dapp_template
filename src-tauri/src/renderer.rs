@@ -474,6 +474,8 @@ impl Renderer {
         TimelinePlaybackSnapshot {
             revision: 0,
             sampled_at_unix_ms: 0,
+            emitted_at_unix_ms: 0,
+            event_sequence: 0,
             available: true,
             instance_id: Some(instance.id.clone()),
             clip_index: Some(clip_index),

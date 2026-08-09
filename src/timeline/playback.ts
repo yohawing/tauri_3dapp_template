@@ -4,6 +4,10 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 export interface TimelinePlaybackSnapshot {
   revision: number;
   sampledAtUnixMs: number;
+  /** Rust wall-clock timestamp captured immediately before event emission. */
+  emittedAtUnixMs: number;
+  /** Monotonic process-local event sequence; gaps indicate dropped/out-of-order events. */
+  eventSequence: number;
   available: boolean;
   instanceId: string | null;
   clipIndex: number | null;
@@ -11,6 +15,36 @@ export interface TimelinePlaybackSnapshot {
   duration: number;
   playing: boolean;
   looping: boolean;
+}
+
+export interface TimelineEventAges {
+  sampleToEmitAgeMs: number;
+  emitToListenerAgeMs: number;
+  totalDeliveryAgeMs: number;
+}
+
+/**
+ * Split event latency using the shared Unix-ms clock. Negative values are clamped so
+ * small wall-clock adjustments cannot produce misleading negative ages.
+ */
+export function timelineEventAges(
+  snapshot: TimelinePlaybackSnapshot,
+  receivedAtUnixMs = Date.now(),
+): TimelineEventAges {
+  const sampleToEmitAgeMs = Math.max(0, snapshot.emittedAtUnixMs - snapshot.sampledAtUnixMs);
+  const emitToListenerAgeMs = Math.max(0, receivedAtUnixMs - snapshot.emittedAtUnixMs);
+  return {
+    sampleToEmitAgeMs,
+    emitToListenerAgeMs,
+    totalDeliveryAgeMs: sampleToEmitAgeMs + emitToListenerAgeMs,
+  };
+}
+
+/** Count missing or out-of-order values in a monotonic sequence. */
+export function timelineSequenceGap(previous: number | undefined, current: number): number {
+  if (previous === undefined) return 0;
+  const delta = current - previous;
+  return delta > 1 ? delta - 1 : delta < 1 ? 1 : 0;
 }
 
 export type TimelinePlaybackCommand =
@@ -54,6 +88,14 @@ export interface TimelineEventPerformanceSummary {
   averageDeliveryAgeMs: number;
   p95DeliveryAgeMs: number;
   maxDeliveryAgeMs: number;
+  averageSampleToEmitAgeMs: number;
+  p95SampleToEmitAgeMs: number;
+  maxSampleToEmitAgeMs: number;
+  averageEmitToListenerAgeMs: number;
+  p95EmitToListenerAgeMs: number;
+  maxEmitToListenerAgeMs: number;
+  eventSequenceGaps: number;
+  revisionGaps: number;
   averageEventIntervalMs: number;
   maxEventIntervalMs: number;
 }
