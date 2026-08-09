@@ -216,8 +216,15 @@
   background: #1b1d23;
 }
 
-.timeline-panel__tree-viewport > div {
+.timeline-panel__tree-content {
+  position: relative;
   will-change: transform;
+}
+
+.timeline-panel__tree-window {
+  position: absolute;
+  right: 0;
+  left: 0;
 }
 
 .timeline-row {
@@ -231,7 +238,7 @@
   font-size: 10px;
 }
 
-.timeline-row:nth-child(odd) {
+.timeline-row--alternate {
   background: rgba(255, 255, 255, 0.012);
 }
 
@@ -299,6 +306,9 @@
 }
 
 .timeline-panel__canvas-viewport canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
   display: block;
 }
 
