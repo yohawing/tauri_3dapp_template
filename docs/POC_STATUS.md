@@ -164,7 +164,8 @@ Windows上の現行スライスは継続可。Native raster viewportの部分描
 - idle playback unavailable eventを状態遷移時1回だけへ削減したがCanvas値は改善せず、原因ではなかった。
 - Canvas RAF diagnostic WIP: `CanvasPerformanceSampler`へRAF callback delayとbrowser RAF timestamp intervalのp50／p95／p99を追加し、同期`WebGLRenderer.render`時間と分離できるようにした。`set_renderer_active(false)`後のCanvas mount経路ではNative `renderer.render()`は呼ばれず、inactive backendのGPU描画は停止している。
 - current release reproduction attempt: `VITE_PERF_BACKEND=canvas`、実FBX Scene、1920x1080、60 warm-up＋180 samplesで4回試行。hidden／非foregroundの3回はWebView2 RAF throttleにより180 samples未到達でperf行なし。foregroundを一度確保できた1回はaverage 2.179 FPS、wall p50／p95 4.5／1062.4ms、CPU render p95 0.2ms（`artifacts/asset-gate/canvas-current-visible.stderr.log`）となり、render costではなくRAF scheduling／occlusion条件の無効runだった。既存の有効debug 3-run値（56.793〜57.196 FPS）は再現履歴として保持するが、今回のrelease 3-cold-start再測定は未成立。
-- blocked evidence: shellからのforeground維持がWebView2の可視性判定と一致せず、releaseで同一条件の3 cold startsを成立できなかった。閾値緩和やbusy-loopによるframe pacingは行わない。
+- foreground handle probe: perf envを埋めたreleaseをvisible起動し、Win32 `GetForegroundWindow()`がapp handleと一致する状態を維持して再測定したが、average 2.241 FPS、wall p95 1018.4 ms、RAF timestamp interval p95 1000.1 ms、RAF callback delay p95 1013.1 ms、同期render p95 0.2 msだった（`artifacts/asset-gate/canvas-release-valid-1.stderr.log`）。OS foreground handleだけではWebView2 compositorの可視性判定を満たせず、runはnominal性能証拠に採用しない。
+- blocked evidence: shell／Win32 foreground維持がWebView2の可視性判定と一致せず、releaseで同一条件の3 cold startsを成立できなかった。閾値緩和やbusy-loopによるframe pacingは行わない。
 - unresolved: Canvas nominal 60Hz回帰の切り分けと、post-emit Tauri event queue／WebView listener scheduling遅延の内部寄与分離。したがって`ASSET-PLAYBACK-GATE-01`は完了扱いにしない。
 
 ## 2026-08-09 Device Lost callback証拠
