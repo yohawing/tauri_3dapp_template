@@ -31,7 +31,7 @@
 | GPU OutOfMemory検出 | unimplemented | unverified | wgpu 30ではsurface取得variantではなくDevice error。Surface contractと分離する |
 | fallback理由／復旧状態のUI表示 | implemented / verified | pass (2026-08-09 screenshot) | Viewport banner、Console、disabled Native action、再起動による再試行案内を確認 |
 | CanvasのScene同期 | intentionally deferred | not applicable | Camera＋Safe Modeを最低保証とする |
-| 1080p 60fps | implemented / verified | pass (2026-08-09 host log) | 物理1920x1080、60-frame warm-up＋180 samples。Native 59.971 FPS、Canvas 60.000 FPS |
+| 1080p 60fps | implemented / regression under investigation | Native pass／Canvas fail (2026-08-09 asset-gate rerun) | 現行HEAD Native 60.644 FPS。Canvasは3 cold startsで56.793〜57.196 FPSとなり59.0 gate未達。旧baselineは60.000 FPS |
 | 4K操作品質／合成コスト | external evidence waiting | blocked on hardware | 最終採否前に必要 |
 | macOS透明合成／入力／切替 | external evidence waiting | blocked on hardware | 最終採否前に必要 |
 
@@ -86,6 +86,16 @@ Windows上の現行スライスは継続可。Native raster viewportの部分描
 - pass: app processを停止して再起動し、保存SceneをOpen。Outliner／Inspector／Native Viewport、FBX animation、1 clip／228 channels Timelineを復元。
 - diagnostics: missing／parse／unsupported assetはpath付きerrorとしてOpen／Importをfail-closedにし、成功済みSceneと保存先を置換しない。
 - GUI経路: `VITE_ASSET_IMPORT_SAVE_SELF_TEST`、`VITE_ASSET_ROUNDTRIP_OPEN_SELF_TEST`、`screenshot-ui`のみ。Computer Useは未使用。
+
+## 2026-08-09 Asset playback vertical gate（partial）
+
+- FBX: Import／表示／Play／Pause／Seek／Loop／Save／process再起動／Openがpass。証拠は上記FBX／Import／round-trip節。
+- glTF: BrainStem Import／表示／Save／process再起動／Open／Timeline playbackがpass。1 clip、約34.88秒、57 channelsを復元。
+- glTF screenshots: `C:\Users\yohaw\AppData\Local\Temp\tauri3d-gltf-import-saved.png`、`tauri3d-gltf-roundtrip-playback-a.png`、`-b.png`。Playback後18.38秒でPauseし、2秒差の2枚は同一SHA-256。
+- Native 1080p: pass。180 samples、average 60.644 FPS、wall p50／p95 16.410／17.297ms、GPU p95 0.053ms。
+- Canvas 1080p: fail。3 cold startsでaverage 56.993／56.793／57.196 FPS、wall p50 17.5〜17.6ms。59.0 FPS／p50 16.67ms gate未達。p95 18.1〜18.4msとCPU render p95 0.2msは範囲内。
+- idle playback unavailable eventを状態遷移時1回だけへ削減したがCanvas値は改善せず、原因ではなかった。
+- unresolved: Canvas nominal 60Hz回帰の切り分け、release buildでの実FBX event-loop stall再測定。したがって`ASSET-PLAYBACK-GATE-01`は完了扱いにしない。
 
 ## 2026-08-09 Device Lost callback証拠
 

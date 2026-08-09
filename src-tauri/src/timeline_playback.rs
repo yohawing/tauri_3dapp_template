@@ -93,6 +93,7 @@ pub struct TimelinePlaybackStore {
     pending: Mutex<VecDeque<TimelinePlaybackCommand>>,
     snapshot: Mutex<TimelinePlaybackSnapshot>,
     last_event_at: Mutex<Option<Instant>>,
+    last_event_target: Mutex<Option<(bool, Option<String>, Option<usize>)>>,
 }
 
 impl TimelinePlaybackStore {
@@ -128,13 +129,26 @@ impl TimelinePlaybackStore {
     ) -> Option<TimelinePlaybackSnapshot> {
         let snapshot = self.snapshot();
         let now = Instant::now();
+        let target = (
+            snapshot.available,
+            snapshot.instance_id.clone(),
+            snapshot.clip_index,
+        );
+        let mut last_target = self.last_event_target.lock().unwrap();
+        let target_changed = last_target.as_ref() != Some(&target);
+        if !snapshot.available && !target_changed {
+            return None;
+        }
         let mut last_event = self.last_event_at.lock().unwrap();
-        if last_event.is_some_and(|previous| {
-            now.duration_since(previous) < Duration::from_millis(minimum_interval_ms)
-        }) {
+        if !target_changed
+            && last_event.is_some_and(|previous| {
+                now.duration_since(previous) < Duration::from_millis(minimum_interval_ms)
+            })
+        {
             return None;
         }
         *last_event = Some(now);
+        *last_target = Some(target);
         Some(snapshot)
     }
 }
@@ -200,5 +214,24 @@ mod tests {
         store.publish(TimelinePlaybackSnapshot::default());
         assert!(store.take_event_snapshot(250).is_some());
         assert!(store.take_event_snapshot(250).is_none());
+    }
+
+    #[test]
+    fn unavailable_snapshot_is_only_emitted_on_target_transition() {
+        let store = TimelinePlaybackStore::default();
+        store.publish(TimelinePlaybackSnapshot::default());
+        assert!(store.take_event_snapshot(0).is_some());
+        store.publish(TimelinePlaybackSnapshot::default());
+        assert!(store.take_event_snapshot(0).is_none());
+
+        store.publish(TimelinePlaybackSnapshot {
+            available: true,
+            instance_id: Some("model".into()),
+            clip_index: Some(0),
+            ..Default::default()
+        });
+        assert!(store.take_event_snapshot(250).is_some());
+        store.publish(TimelinePlaybackSnapshot::default());
+        assert!(store.take_event_snapshot(250).is_some());
     }
 }
