@@ -38,7 +38,15 @@ Native mode:
 - Shift + Drag: Pan
 - Wheel: Zoom
 
-ToolbarのbackendボタンでNative／Canvasを切り替えます。Canvas modeではThree.jsのOrbitControlsが入力を処理します。
+RendererメニューでNative／Canvasを切り替えます。Canvas modeではThree.jsのOrbitControlsが入力を処理します。
+
+Scene file:
+
+- サンプル: `examples/box.scene.json`、`examples/brainstem.scene.json`
+- File > New: 空の`Untitled` Sceneを作成
+- File > Open…: `.scene.json`を検証して現在のNative Sceneへ読み込み
+- File > Save／Save As…: 現在のCameraを含めて保存
+- Shortcuts: `Ctrl+N`、`Ctrl+O`、`Ctrl+S`、`Ctrl+Shift+S`（macOSはCommand）
 
 ## 検証
 
@@ -57,6 +65,7 @@ $env:TAURI3D_LOG_VIEWPORT_RECT = "1"
 $env:VITE_INPUT_SELF_TEST = "1"
 $env:VITE_BACKEND_SELF_TEST = "1"
 $env:VITE_DOCK_SELF_TEST = "1"
+$env:TAURI3D_FORCE_NATIVE_FAILURE = "1"
 npm run tauri dev
 ```
 
@@ -66,6 +75,7 @@ npm run tauri dev
 | `VITE_INPUT_SELF_TEST` | Pointer／Wheelのscripted入力を一度実行 |
 | `VITE_BACKEND_SELF_TEST` | Native→Canvas→Native切替を一度実行 |
 | `VITE_DOCK_SELF_TEST` | panel move、Inspector非表示、layout resetを順に実行 |
+| `TAURI3D_FORCE_NATIVE_FAILURE` | Native renderer構築直後にunavailableを注入し、自動Canvas fallbackと復旧案内を検証 |
 
 通常起動へ戻す場合はPowerShell sessionを閉じるか、設定した環境変数を削除してください。
 

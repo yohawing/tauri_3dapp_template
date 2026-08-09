@@ -20,6 +20,14 @@ pub const SCENE_ID: &str = "scene";
 pub const KEY_LIGHT_ID: &str = "key-light";
 pub const CUBE_ID: &str = "cube";
 
+const GRID_HALF_EXTENT: i32 = 10;
+const AXIS_LENGTH: f32 = 2.5;
+const GRID_MINOR_COLOR: Color = Color::new(0.16, 0.18, 0.22, 1.0);
+const GRID_MAJOR_COLOR: Color = Color::new(0.28, 0.31, 0.37, 1.0);
+const X_AXIS_COLOR: Color = Color::new(0.95, 0.20, 0.20, 1.0);
+const Y_AXIS_COLOR: Color = Color::new(0.20, 0.85, 0.30, 1.0);
+const Z_AXIS_COLOR: Color = Color::new(0.25, 0.45, 1.00, 1.0);
+
 #[derive(Debug)]
 pub enum RendererError {
     MissingResolvedAsset {
@@ -74,6 +82,15 @@ struct RuntimeInstance {
     id: String,
     root: SceneNode3d,
     player: AnimationPlayer,
+}
+
+struct RuntimeScene {
+    scene: SceneNode3d,
+    key_light: SceneNode3d,
+    cube: Option<SceneNode3d>,
+    instances: Vec<RuntimeInstance>,
+    scene_label: String,
+    default_node_id: String,
 }
 
 /// Kiss3d scene hosted by the Tauri-owned native window.
@@ -140,81 +157,35 @@ impl Renderer {
             pollster::block_on(Window::new_embedded(window, width, height, setup));
         kiss_window.set_background_color(BLACK);
 
-        let mut scene = SceneNode3d::empty();
-        let mut key_light = scene.add_light(Light::point(100.0));
-        key_light.set_position(Vec3::new(2.5, 3.0, -2.0));
-
-        let paths_by_id: HashMap<&str, &Path> = resolved_assets
-            .iter()
-            .map(|resolved| (resolved.asset_id.as_str(), resolved.resolved_path.as_path()))
-            .collect();
-        let mut instances = Vec::with_capacity(scene_document.instances.len());
-
-        for instance in &scene_document.instances {
-            let Some(asset) = scene_document
-                .assets
-                .iter()
-                .find(|asset| asset.id == instance.asset)
-            else {
-                return Err(RendererError::MissingResolvedAsset {
-                    asset_id: instance.asset.clone(),
-                    instance_id: instance.id.clone(),
-                });
-            };
-            let path = paths_by_id.get(asset.id.as_str()).ok_or_else(|| {
-                RendererError::MissingResolvedAsset {
-                    asset_id: asset.id.clone(),
-                    instance_id: instance.id.clone(),
-                }
-            })?;
-            let (translation, rotation, scale) = instance_runtime_transform(instance)?;
-
-            let loaded = catch_unwind(AssertUnwindSafe(|| kiss3d::loader::gltf::load(path)))
-                .map_err(|_| RendererError::AssetLoad {
-                    instance_id: instance.id.clone(),
-                    asset_id: asset.id.clone(),
-                    path: path.display().to_string(),
-                    message: "vendor glTF loader panicked".to_string(),
-                })?
-                .map_err(|error| RendererError::AssetLoad {
-                    instance_id: instance.id.clone(),
-                    asset_id: asset.id.clone(),
-                    path: path.display().to_string(),
-                    message: error.to_string(),
-                })?;
-
-            let mut root = loaded.root;
-            root.set_position(translation);
-            root.set_rotation(rotation);
-            root.set_local_scale(scale.x, scale.y, scale.z);
-            root.set_visible(instance.visible);
-            scene.add_child(root.clone());
-            instances.push(RuntimeInstance {
-                id: instance.id.clone(),
-                root,
-                player: loaded.player,
-            });
-        }
-
-        let default_node_id = scene_document
-            .instances
-            .first()
-            .map(|instance| instance.id.clone())
-            .unwrap_or_else(|| SCENE_ID.to_string());
+        let runtime = build_runtime_scene(scene_document, resolved_assets)?;
 
         Ok(Renderer {
             window: kiss_window,
-            scene,
-            key_light,
-            cube: None,
-            instances,
-            scene_label: scene_document
-                .name
-                .clone()
-                .unwrap_or_else(|| "Scene".to_string()),
-            default_node_id,
+            scene: runtime.scene,
+            key_light: runtime.key_light,
+            cube: runtime.cube,
+            instances: runtime.instances,
+            scene_label: runtime.scene_label,
+            default_node_id: runtime.default_node_id,
             camera: OrbitCamera3d::new(Vec3::new(3.0, 1.5, -3.0), Vec3::ZERO),
         })
+    }
+
+    /// Build a replacement scene completely before swapping it into the live
+    /// renderer, so a failed File > Open leaves the current scene intact.
+    pub fn replace_with_scene(
+        &mut self,
+        scene_document: &Scene,
+        resolved_assets: &[ResolvedAssetPath],
+    ) -> Result<(), RendererError> {
+        let runtime = build_runtime_scene(scene_document, resolved_assets)?;
+        self.scene = runtime.scene;
+        self.key_light = runtime.key_light;
+        self.cube = runtime.cube;
+        self.instances = runtime.instances;
+        self.scene_label = runtime.scene_label;
+        self.default_node_id = runtime.default_node_id;
+        Ok(())
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -241,6 +212,7 @@ impl Renderer {
         if let Some(cube) = self.cube.as_mut() {
             cube.rotate(Quat::from_axis_angle(Vec3::Y, 0.006));
         }
+        draw_reference_grid_and_axes(&mut self.window);
         let _ = pollster::block_on(self.window.render_3d(&mut self.scene, &mut self.camera));
     }
 
@@ -398,6 +370,115 @@ impl Renderer {
             material,
         })
     }
+}
+
+fn build_runtime_scene(
+    scene_document: &Scene,
+    resolved_assets: &[ResolvedAssetPath],
+) -> Result<RuntimeScene, RendererError> {
+    let mut scene = SceneNode3d::empty();
+    let mut key_light = scene.add_light(Light::point(100.0));
+    key_light.set_position(Vec3::new(2.5, 3.0, -2.0));
+
+    let paths_by_id: HashMap<&str, &Path> = resolved_assets
+        .iter()
+        .map(|resolved| (resolved.asset_id.as_str(), resolved.resolved_path.as_path()))
+        .collect();
+    let mut instances = Vec::with_capacity(scene_document.instances.len());
+
+    for instance in &scene_document.instances {
+        let Some(asset) = scene_document
+            .assets
+            .iter()
+            .find(|asset| asset.id == instance.asset)
+        else {
+            return Err(RendererError::MissingResolvedAsset {
+                asset_id: instance.asset.clone(),
+                instance_id: instance.id.clone(),
+            });
+        };
+        let path = paths_by_id.get(asset.id.as_str()).ok_or_else(|| {
+            RendererError::MissingResolvedAsset {
+                asset_id: asset.id.clone(),
+                instance_id: instance.id.clone(),
+            }
+        })?;
+        let (translation, rotation, scale) = instance_runtime_transform(instance)?;
+
+        let loaded = catch_unwind(AssertUnwindSafe(|| kiss3d::loader::gltf::load(path)))
+            .map_err(|_| RendererError::AssetLoad {
+                instance_id: instance.id.clone(),
+                asset_id: asset.id.clone(),
+                path: path.display().to_string(),
+                message: "vendor glTF loader panicked".to_string(),
+            })?
+            .map_err(|error| RendererError::AssetLoad {
+                instance_id: instance.id.clone(),
+                asset_id: asset.id.clone(),
+                path: path.display().to_string(),
+                message: error.to_string(),
+            })?;
+
+        let mut root = loaded.root;
+        root.set_position(translation);
+        root.set_rotation(rotation);
+        root.set_local_scale(scale.x, scale.y, scale.z);
+        root.set_visible(instance.visible);
+        scene.add_child(root.clone());
+        instances.push(RuntimeInstance {
+            id: instance.id.clone(),
+            root,
+            player: loaded.player,
+        });
+    }
+
+    Ok(RuntimeScene {
+        scene,
+        key_light,
+        cube: None,
+        instances,
+        scene_label: scene_document
+            .name
+            .clone()
+            .unwrap_or_else(|| "Scene".to_string()),
+        default_node_id: scene_document
+            .instances
+            .first()
+            .map(|instance| instance.id.clone())
+            .unwrap_or_else(|| SCENE_ID.to_string()),
+    })
+}
+
+/// Queues a Y-up editor reference grid on the XZ plane and the positive XYZ axes.
+/// Kiss3d debug lines are frame-local, so this must run immediately before each render.
+fn draw_reference_grid_and_axes(window: &mut Window) {
+    let extent = GRID_HALF_EXTENT as f32;
+    for index in -GRID_HALF_EXTENT..=GRID_HALF_EXTENT {
+        let coordinate = index as f32;
+        let color = if index % 5 == 0 {
+            GRID_MAJOR_COLOR
+        } else {
+            GRID_MINOR_COLOR
+        };
+        window.draw_line(
+            Vec3::new(coordinate, 0.0, -extent),
+            Vec3::new(coordinate, 0.0, extent),
+            color,
+            1.0,
+            false,
+        );
+        window.draw_line(
+            Vec3::new(-extent, 0.0, coordinate),
+            Vec3::new(extent, 0.0, coordinate),
+            color,
+            1.0,
+            false,
+        );
+    }
+
+    window.draw_line(Vec3::ZERO, Vec3::X * AXIS_LENGTH, X_AXIS_COLOR, 2.5, false);
+    window.draw_line(Vec3::ZERO, Vec3::Y * AXIS_LENGTH, Y_AXIS_COLOR, 2.5, false);
+    window.draw_line(Vec3::ZERO, Vec3::Z * AXIS_LENGTH, Z_AXIS_COLOR, 2.5, false);
 }
 
 fn viewport_rect_to_physical(rect: ViewportRect) -> RenderViewport {

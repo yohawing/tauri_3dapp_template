@@ -245,6 +245,17 @@ impl fmt::Display for SceneError {
 impl std::error::Error for SceneError {}
 
 impl Scene {
+    /// Construct an empty, valid Scene document suitable for File > New.
+    pub fn empty(name: impl Into<String>) -> Self {
+        Self {
+            version: SCENE_VERSION,
+            name: Some(name.into()),
+            assets: Vec::new(),
+            instances: Vec::new(),
+            camera: None,
+        }
+    }
+
     /// Parse and semantically validate a JSON Scene document.
     pub fn parse_json(input: &str) -> Result<Self, SceneError> {
         let scene = serde_json::from_str::<Self>(input).map_err(|error| SceneError::Json {
@@ -270,6 +281,46 @@ impl Scene {
         let scene = Self::parse_json(&input)?;
         scene.check_resolved_assets(path)?;
         Ok(scene)
+    }
+
+    /// Validate and write a stable, human-readable Scene JSON document.
+    pub fn save(&self, path: impl AsRef<Path>) -> Result<(), SceneError> {
+        self.validate().map_err(SceneError::Validation)?;
+        let path = path.as_ref();
+        let mut encoded = serde_json::to_string_pretty(self).map_err(|error| SceneError::Json {
+            kind: SceneJsonErrorKind::Schema,
+            message: format!("scene serialization failed: {error}"),
+        })?;
+        encoded.push('\n');
+        fs::write(path, encoded).map_err(|error| SceneError::FileIo {
+            path: path.to_path_buf(),
+            kind: error.kind(),
+            message: error.to_string(),
+        })
+    }
+
+    /// Clone this document for a new Scene-file location while preserving the
+    /// resolved asset targets of portable relative paths.
+    pub fn rebased_for_save(
+        &self,
+        source_scene_file: Option<&Path>,
+        target_scene_file: &Path,
+    ) -> Result<Self, SceneError> {
+        let Some(source_scene_file) = source_scene_file else {
+            return Ok(self.clone());
+        };
+        let resolved = self.resolve_asset_paths(source_scene_file)?;
+        let target_file = absolute_path(target_scene_file)?;
+        let target_parent = target_file.parent().unwrap_or_else(|| Path::new("."));
+        let mut rebased = self.clone();
+        for (asset, resolved) in rebased.assets.iter_mut().zip(resolved) {
+            asset.path = pathdiff::diff_paths(&resolved.resolved_path, target_parent)
+                .unwrap_or(resolved.resolved_path)
+                .to_string_lossy()
+                .into_owned();
+        }
+        rebased.validate().map_err(SceneError::Validation)?;
+        Ok(rebased)
     }
 
     /// Validate the version, IDs, references, numeric values, and asset kind.
@@ -422,6 +473,19 @@ impl Scene {
         }
         Ok(resolved)
     }
+}
+
+fn absolute_path(path: &Path) -> Result<PathBuf, SceneError> {
+    if path.is_absolute() {
+        return Ok(path.to_path_buf());
+    }
+    std::env::current_dir()
+        .map(|current| current.join(path))
+        .map_err(|error| SceneError::FileIo {
+            path: path.to_path_buf(),
+            kind: error.kind(),
+            message: error.to_string(),
+        })
 }
 
 fn validate_finite<const N: usize>(
@@ -626,5 +690,31 @@ mod tests {
         let missing = temp_path("missing-scene").join("example.scene.json");
         let error = Scene::load(missing).expect_err("missing scene");
         assert!(matches!(error, SceneError::FileIo { .. }));
+    }
+
+    #[test]
+    fn empty_scene_is_valid_and_round_trips_through_save() {
+        let root = temp_path("save-empty");
+        fs::create_dir_all(&root).expect("create temp directory");
+        let path = root.join("untitled.scene.json");
+        let scene = Scene::empty("Untitled");
+        scene.save(&path).expect("save empty scene");
+        assert_eq!(Scene::load(&path).expect("reload empty scene"), scene);
+        fs::remove_dir_all(root).expect("remove temp directory");
+    }
+
+    #[test]
+    fn save_as_rebases_relative_assets_to_the_new_parent() {
+        let root = temp_path("save-as");
+        let source = root.join("source").join("sample.scene.json");
+        let target = root.join("saved").join("copy.scene.json");
+        let scene = valid_scene();
+        let rebased = scene
+            .rebased_for_save(Some(&source), &target)
+            .expect("rebase asset paths");
+        assert_eq!(
+            PathBuf::from(&rebased.assets[0].path),
+            PathBuf::from("..").join("source/assets/character.glb")
+        );
     }
 }

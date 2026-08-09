@@ -1,6 +1,6 @@
 # Scene file format
 
-Status: Scene v1 schema／pure Rust validation／Kiss3D起動接続を実装し、Windows実機でbuilt-in・sample・invalid Sceneを検証済み。
+Status: Scene v1 schema／pure Rust validation／Kiss3D runtime差し替え／FileメニューのNew・Open・Save・Save Asを実装し、Windows実機で検証済み。
 
 ## 目的
 
@@ -9,7 +9,7 @@ Status: Scene v1 schema／pure Rust validation／Kiss3D起動接続を実装し�
 ## 非目標
 
 - 完成版DCC／game engine scene format
-- UI authoring、Save／Save As、autosave
+- Scene graph authoring、autosave、dirty-state確認dialog
 - Undo／Redo、Transaction、collaboration
 - component system、reflection、plugin schema
 - Asset database、import pipeline、cache
@@ -75,7 +75,7 @@ struct Scene {
 }
 ```
 
-永続型にはTauri、Kiss3D、wgpu、Three.jsの型やruntime handleを入れない。Kiss3D runtime Sceneは読み込んだ`Scene`から起動時に構築する。
+永続型にはTauri、Kiss3D、wgpu、Three.jsの型やruntime handleを入れない。Kiss3D runtime Sceneは読み込んだ`Scene`から起動時またはFile > Open時に構築する。
 
 ## Path規則
 
@@ -83,7 +83,7 @@ struct Scene {
 - 絶対pathはローカルPoC用途として許可する。
 - 保存値を起動時のcurrent working directory基準にしない。
 - path解決後のfile不存在は、Scene schema errorと区別して報告する。
-- 正規化した絶対pathをScene JSONへ勝手に書き戻さない。
+- Save Asでは元のresolved assetを維持するよう保存先からの相対pathへrebaseする。Windowsでdriveが異なり相対化できない場合だけ絶対pathへfallbackする。
 
 ## Validation
 
@@ -99,20 +99,20 @@ v1では最低限、次をfail closedで検証する。
 
 未知fieldと未知versionは受理せず、v1 schemaをfail closedで検証する。
 
-## 起動選択
+## Open／起動選択
 
-初版は環境変数を使用する。
+通常操作はFile > Openを使用する。開発時に起動直後から固定Sceneを読みたい場合は環境変数も使用できる。
 
 ```powershell
 $env:TAURI3D_SCENE = "experiments/gltf-lighting.scene.json"
 npm run tauri dev
 ```
 
-未指定時は既存Cube相当のbuilt-in Sceneを使う。File Picker、Recent Files、last-opened Sceneの永続化は今回作らない。
+未指定時は既存Cube相当のbuilt-in Sceneを使う。File Pickerは実装済み。Recent Filesとlast-opened Sceneの永続化は今回作らない。
 
 ## 保存の範囲
 
-v1ではSerdeのdeserialize／serialize round-tripを保証する。UIからのファイル書き込みは実装しない。将来Saveが必要になった時点で、atomic write、dirty state、error recoveryを別スライスとして設計する。
+v1ではSerdeのdeserialize／serialize round-tripに加え、File > Save／Save AsでCameraの現在値とScene documentを書き込む。Newはassetを持たない`Untitled` Sceneを作る。built-in CubeはScene v1の永続型ではないため、built-in状態ではSave／Save Asを無効化し、先にNewまたはOpenを要求する。atomic replace、dirty state、終了時確認は後続スライスとする。
 
 ## Canvas境界
 

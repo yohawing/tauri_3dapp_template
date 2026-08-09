@@ -9,10 +9,18 @@ import {
 interface MenuBarProps {
   actions: readonly EditorAction[];
   backendLabel: string;
+  documentLabel: string;
   isMac: boolean;
 }
 
-type OpenMenu = "view" | "renderer" | null;
+type OpenMenu = "file" | "view" | "renderer" | null;
+
+const FILE_ACTIONS: readonly EditorActionId[] = [
+  "file.new",
+  "file.open",
+  "file.save",
+  "file.saveAs",
+];
 
 const VIEW_ACTIONS: readonly EditorActionId[] = [
   "view.inspector.toggle",
@@ -22,9 +30,15 @@ const VIEW_ACTIONS: readonly EditorActionId[] = [
 ];
 const RENDERER_ACTIONS: readonly EditorActionId[] = ["renderer.native", "renderer.canvas"];
 
-export function MenuBar({ actions, backendLabel, isMac }: MenuBarProps) {
+export function MenuBar({ actions, backendLabel, documentLabel, isMac }: MenuBarProps) {
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
   const rootRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    if (!import.meta.env.VITE_FILE_MENU_SELF_TEST) return;
+    const timer = window.setTimeout(() => setOpenMenu("file"), 1200);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     if (!openMenu) return;
@@ -54,7 +68,7 @@ export function MenuBar({ actions, backendLabel, isMac }: MenuBarProps) {
         aria-expanded={openMenu === menu}
         onClick={() => setOpenMenu((current) => (current === menu ? null : menu))}
       >
-        {menu === "view" ? "View" : "Renderer"}
+        {menu === "file" ? "File" : menu === "view" ? "View" : "Renderer"}
       </button>
       {openMenu === menu && (
         <div className="menu-popup" role="menu">
@@ -89,7 +103,8 @@ export function MenuBar({ actions, backendLabel, isMac }: MenuBarProps) {
 
   return (
     <nav ref={rootRef} className="menu-bar" aria-label="Application menu">
-      <span className="menu-bar__title">Tauri3D</span>
+      <span className="menu-bar__title" title={documentLabel}>Tauri3D</span>
+      {renderMenu("file", FILE_ACTIONS)}
       {renderMenu("view", VIEW_ACTIONS)}
       {renderMenu("renderer", RENDERER_ACTIONS)}
       <div className="menu-bar__renderer-toggle" role="group" aria-label="Renderer backend">
@@ -110,7 +125,7 @@ export function MenuBar({ actions, backendLabel, isMac }: MenuBarProps) {
           );
         })}
       </div>
-      <span className="menu-bar__backend">Backend: {backendLabel}</span>
+      <span className="sr-only">Backend: {backendLabel}</span>
     </nav>
   );
 }

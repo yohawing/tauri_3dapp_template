@@ -67,6 +67,8 @@ async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>): Promi
 interface ViewportHostProps {
   mode: ViewportMode;
   showDebugOverlay?: boolean;
+  fallbackReason?: string | null;
+  recoveryHint?: string | null;
 }
 
 /**
@@ -76,7 +78,12 @@ interface ViewportHostProps {
  * on-screen rectangle. In "canvas" mode a three.js canvas is mounted in its
  * place instead (see canvasBackend.ts), driven by its own OrbitControls.
  */
-export function ViewportHost({ mode, showDebugOverlay = true }: ViewportHostProps) {
+export function ViewportHost({
+  mode,
+  showDebugOverlay = true,
+  fallbackReason = null,
+  recoveryHint = null,
+}: ViewportHostProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const rafIdRef = useRef<number | null>(null);
   const [lastRect, setLastRect] = useState<ViewportRect | null>(null);
@@ -217,6 +224,13 @@ export function ViewportHost({ mode, showDebugOverlay = true }: ViewportHostProp
   return (
     <div ref={hostRef} className={`viewport-host${browserNativePreview ? " viewport-host--browser-preview" : ""}`}>
       {browserNativePreview && <span className="viewport-host__preview-label">native wgpu surface (transparent DOM hole)</span>}
+      {mode === "canvas" && fallbackReason && (
+        <div className="viewport-host__fallback" role="status">
+          <strong>Canvas fallback</strong>
+          <span>{fallbackReason}</span>
+          {recoveryHint && <small>{recoveryHint}</small>}
+        </div>
+      )}
       {showDebugOverlay && <div className="viewport-host__overlay">
         <div className="viewport-host__label">
           {mode === "native" ? "Backend: native wgpu" : "Backend: canvas (three.js)"}

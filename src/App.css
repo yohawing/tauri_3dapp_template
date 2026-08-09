@@ -270,6 +270,41 @@
   letter-spacing: 0.08em;
 }
 
+.viewport-host__fallback {
+  position: absolute;
+  z-index: 4;
+  top: 12px;
+  left: 50%;
+  display: grid;
+  max-width: min(680px, calc(100% - 32px));
+  padding: 9px 14px;
+  color: #f3d9ad;
+  background: rgb(48 34 19 / 92%);
+  border: 1px solid rgb(216 148 58 / 72%);
+  border-radius: 4px;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 30%);
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+.viewport-host__fallback strong {
+  color: #ffbf66;
+  font-size: 12px;
+}
+
+.viewport-host__fallback span,
+.viewport-host__fallback small {
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viewport-host__fallback small {
+  color: #cbbfae;
+}
+
 /* ---------- Console drawer ---------- */
 
 .console-drawer {

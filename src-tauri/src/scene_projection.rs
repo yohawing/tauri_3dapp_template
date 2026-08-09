@@ -182,6 +182,15 @@ impl SceneProjectionStore {
         *current = projection;
     }
 
+    pub fn replace_scene(&self, mut projection: SceneProjection) {
+        self.pending_selection.lock().unwrap().take();
+        self.pending_commands.lock().unwrap().clear();
+        self.latest_command_sequences.lock().unwrap().clear();
+        let mut current = self.projection.lock().unwrap();
+        projection.revision = current.revision.saturating_add(1);
+        *current = projection;
+    }
+
     pub fn request_selection(&self, node_id: String) {
         *self.pending_selection.lock().unwrap() = Some(node_id);
     }
@@ -394,5 +403,40 @@ mod tests {
                 color: [0.1, 0.2, 0.3, 1.0],
             }
         );
+
+        let visibility: SceneCommand =
+            serde_json::from_str(r#"{"type":"setVisibility","nodeId":"cube","visible":false}"#)
+                .unwrap();
+        assert_eq!(
+            visibility,
+            SceneCommand::SetVisibility {
+                node_id: "cube".to_string(),
+                visible: false,
+            }
+        );
+    }
+
+    #[test]
+    fn replacing_scene_clears_requests_and_advances_projection_revision() {
+        let store = SceneProjectionStore::default();
+        store.request_selection("old-node".to_string());
+        store
+            .request_command(SceneCommandEnvelope {
+                sequence: 1,
+                command: SceneCommand::SetMetallic {
+                    node_id: "cube".to_string(),
+                    value: 0.5,
+                },
+            })
+            .unwrap();
+        store.replace_scene(SceneProjection {
+            selected_node_id: Some("new-node".to_string()),
+            ..SceneProjection::default()
+        });
+        assert_eq!(store.take_selection(), None);
+        assert!(store.take_commands().is_empty());
+        let projection = store.projection();
+        assert_eq!(projection.selected_node_id.as_deref(), Some("new-node"));
+        assert_eq!(projection.revision, 1);
     }
 }

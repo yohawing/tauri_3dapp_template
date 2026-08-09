@@ -180,15 +180,25 @@ class RuntimeTimelineDataSource implements TimelineDataSource {
   private current: TimelineDataSource = fixtureTimelineDataSource;
   private revision = 1;
   private readonly listeners = new Set<() => void>();
+  private readonly onSceneFileChanged = () => void this.load(true);
 
   constructor() {
     void this.load();
+    if (typeof window !== "undefined") {
+      window.addEventListener("tauri3d:scene-file-changed", this.onSceneFileChanged);
+    }
   }
 
-  private async load() {
+  dispose() {
+    if (typeof window !== "undefined") {
+      window.removeEventListener("tauri3d:scene-file-changed", this.onSceneFileChanged);
+    }
+  }
+
+  private async load(acceptEmpty = false) {
     try {
       const projection = await invoke<GltfTimelineProjection>("get_timeline_projection");
-      if (projection.clips.length === 0) return;
+      if (projection.clips.length === 0 && !acceptEmpty) return;
       this.current = createGltfTimelineDataSource(projection);
       this.revision += 1;
       this.listeners.forEach((listener) => listener());
@@ -235,3 +245,9 @@ class RuntimeTimelineDataSource implements TimelineDataSource {
 }
 
 export const runtimeTimelineDataSource: TimelineDataSource = new RuntimeTimelineDataSource();
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() =>
+    (runtimeTimelineDataSource as RuntimeTimelineDataSource).dispose(),
+  );
+}

@@ -111,7 +111,9 @@ export function mountCanvasBackend(
     ([r, g, b]) => new THREE.MeshBasicMaterial({ color: new THREE.Color(r, g, b) }),
   );
   const cube = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), materials);
-  scene.add(cube);
+  const grid = new THREE.GridHelper(20, 20, 0x474f5e, 0x292e38);
+  const axes = new THREE.AxesHelper(2.5);
+  scene.add(grid, axes, cube);
 
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.target.copy(target);
@@ -156,6 +158,18 @@ export function mountCanvasBackend(
     controls.dispose();
     materials.forEach((m) => m.dispose());
     cube.geometry.dispose();
+    grid.geometry.dispose();
+    if (Array.isArray(grid.material)) {
+      grid.material.forEach((material) => material.dispose());
+    } else {
+      grid.material.dispose();
+    }
+    axes.geometry.dispose();
+    if (Array.isArray(axes.material)) {
+      axes.material.forEach((material) => material.dispose());
+    } else {
+      axes.material.dispose();
+    }
     renderer.dispose();
     if (renderer.domElement.parentNode === host) {
       host.removeChild(renderer.domElement);

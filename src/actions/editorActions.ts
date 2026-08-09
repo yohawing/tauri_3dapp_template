@@ -1,4 +1,8 @@
 export type EditorActionId =
+  | "file.new"
+  | "file.open"
+  | "file.save"
+  | "file.saveAs"
   | "renderer.native"
   | "renderer.canvas"
   | "view.inspector.toggle"

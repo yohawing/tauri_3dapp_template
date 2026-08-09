@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::Mutex;
 
 use serde::Serialize;
 
@@ -9,6 +10,29 @@ use crate::scene::{ResolvedAssetPath, Scene};
 pub struct TimelineProjection {
     pub revision: u64,
     pub clips: Vec<TimelineClipProjection>,
+}
+
+#[derive(Default)]
+pub struct TimelineProjectionStore {
+    projection: Mutex<TimelineProjection>,
+}
+
+impl TimelineProjectionStore {
+    pub fn new(projection: TimelineProjection) -> Self {
+        Self {
+            projection: Mutex::new(projection),
+        }
+    }
+
+    pub fn projection(&self) -> TimelineProjection {
+        self.projection.lock().unwrap().clone()
+    }
+
+    pub fn replace(&self, mut projection: TimelineProjection) {
+        let mut current = self.projection.lock().unwrap();
+        projection.revision = current.revision.saturating_add(1);
+        *current = projection;
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -202,5 +226,15 @@ mod tests {
                 .count(),
             19
         );
+    }
+
+    #[test]
+    fn projection_store_advances_revision_when_scene_is_replaced() {
+        let store = TimelineProjectionStore::new(TimelineProjection {
+            revision: 7,
+            clips: Vec::new(),
+        });
+        store.replace(TimelineProjection::default());
+        assert_eq!(store.projection().revision, 8);
     }
 }

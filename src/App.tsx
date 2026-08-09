@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   DockviewReact,
   themeAbyss,
@@ -17,14 +17,20 @@ import {
   type EditorAction,
 } from "./actions/editorActions";
 import { MenuBar } from "./panels/MenuBar";
-import { ConsoleDrawer, createConsoleStore, type ConsoleEntry } from "./console";
+import { ConsoleDrawer, createConsoleStore, type ConsoleEntry, type ConsoleStore } from "./console";
 import { SettingsModal } from "./settings/SettingsModal";
 import { loadSettings, saveSettings, type Settings } from "./settings/model";
 import { Outliner } from "./panels/Outliner";
 import { Inspector } from "./panels/Inspector";
 import { Timeline } from "./panels/Timeline";
 import { ViewportHost, requestViewportRemeasure, type ViewportMode } from "./viewport/ViewportHost";
+import {
+  AVAILABLE_RENDERER_STATUS,
+  getRendererStatus,
+  type RendererStatus,
+} from "./viewport/rendererStatus";
 import { buildDefaultLayout } from "./shell/layout";
+import { useSceneFileController } from "./scene/useSceneFileController";
 
 let backendSelfTestHasRun = false;
 let dockSelfTestHasRun = false;
@@ -38,6 +44,16 @@ let shellSelfTestHasRun = false;
 // distinction has to be painted one level in, by us. Defined at module scope
 // so the object reference is stable — DockviewReact re-registers all panel
 // components whenever this prop's identity changes.
+const ConsoleStoreContext = createContext<ConsoleStore | null>(null);
+
+function BottomPanel(props: IDockviewPanelProps) {
+  const consoleStore = useContext(ConsoleStoreContext);
+  if (props.params.view === "console" && consoleStore) {
+    return <ConsoleDrawer store={consoleStore} className="console-drawer--embedded" />;
+  }
+  return <Timeline />;
+}
+
 const DOCK_COMPONENTS: Record<string, React.FunctionComponent<IDockviewPanelProps>> = {
   outliner: () => (
     <div className="dock-panel-content">
@@ -49,9 +65,9 @@ const DOCK_COMPONENTS: Record<string, React.FunctionComponent<IDockviewPanelProp
       <Inspector />
     </div>
   ),
-  timeline: () => (
+  timeline: (props) => (
     <div className="dock-panel-content">
-      <Timeline />
+      <BottomPanel {...props} />
     </div>
   ),
   viewport: (props) => (
@@ -59,6 +75,8 @@ const DOCK_COMPONENTS: Record<string, React.FunctionComponent<IDockviewPanelProp
       <ViewportHost
         mode={(props.params.mode as ViewportMode) ?? "native"}
         showDebugOverlay={(props.params.showDebugOverlay as boolean | undefined) ?? true}
+        fallbackReason={(props.params.fallbackReason as string | null | undefined) ?? null}
+        recoveryHint={(props.params.recoveryHint as string | null | undefined) ?? null}
       />
     </div>
   ),
@@ -70,6 +88,7 @@ function App() {
   const addGroupSubRef = useRef<DockviewIDisposable | null>(null);
   const [inspectorVisible, setInspectorVisible] = useState(true);
   const [viewportMode, setViewportMode] = useState<ViewportMode>("native");
+  const [rendererStatus, setRendererStatus] = useState<RendererStatus>(AVAILABLE_RENDERER_STATUS);
   const [consoleVisible, setConsoleVisible] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settings, setSettings] = useState<Settings>(() => loadSettings());
@@ -96,13 +115,47 @@ function App() {
   );
 
   const selectNativeRenderer = useCallback(() => {
+    if (!rendererStatus.nativeAvailable) {
+      appendDiagnostic(
+        "error",
+        "renderer",
+        rendererStatus.fallbackReason ?? "Native renderer is unavailable",
+      );
+      setConsoleVisible(true);
+      return;
+    }
     setViewportMode("native");
     appendDiagnostic("info", "renderer", "Backend selected: Native wgpu");
-  }, [appendDiagnostic]);
+  }, [appendDiagnostic, rendererStatus]);
   const selectCanvasRenderer = useCallback(() => {
     setViewportMode("canvas");
     appendDiagnostic("info", "renderer", "Backend selected: Canvas (three.js)");
   }, [appendDiagnostic]);
+  const activateNativeForScene = useCallback(() => {
+    if (rendererStatus.nativeAvailable) setViewportMode("native");
+  }, [rendererStatus.nativeAvailable]);
+  const revealConsole = useCallback(() => setConsoleVisible(true), []);
+  const {
+    status: sceneFileStatus,
+    busy: sceneFileBusy,
+    newScene: onNewScene,
+    openScene: onOpenScene,
+    saveScene: onSaveScene,
+    saveSceneAs: onSaveSceneAs,
+  } = useSceneFileController({
+    appendDiagnostic,
+    activateNativeRenderer: activateNativeForScene,
+    revealConsole,
+  });
+  const viewportPanelParams = useMemo(
+    () => ({
+      mode: viewportMode,
+      showDebugOverlay: settings.viewport.debugOverlay,
+      fallbackReason: rendererStatus.fallbackReason,
+      recoveryHint: rendererStatus.recoveryHint,
+    }),
+    [rendererStatus.fallbackReason, rendererStatus.recoveryHint, settings.viewport.debugOverlay, viewportMode],
+  );
 
   // Disposes the onDidLayoutChange subscription (created in onReady, below)
   // when App unmounts. DockviewReact owns creating/disposing the DockviewApi
@@ -149,12 +202,38 @@ function App() {
   }, [appendDiagnostic]);
 
   useEffect(() => {
+    let cancelled = false;
+    void getRendererStatus()
+      .then((status) => {
+        if (cancelled) return;
+        setRendererStatus(status);
+        if (!status.nativeAvailable) {
+          setViewportMode("canvas");
+          setConsoleVisible(true);
+          appendDiagnostic(
+            "error",
+            "renderer",
+            `Automatic Canvas fallback: ${status.fallbackReason ?? "Native renderer is unavailable"}`,
+          );
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          appendDiagnostic("warn", "renderer", `Renderer status unavailable: ${String(error)}`);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [appendDiagnostic]);
+
+  useEffect(() => {
     consoleStore.setFilter(settings.console.minimumLevel);
     consoleStore.setAutoScroll(settings.console.autoScroll);
     apiRef.current?.getPanel("viewport")?.update({
-      params: { mode: viewportMode, showDebugOverlay: settings.viewport.debugOverlay },
+      params: viewportPanelParams,
     });
-  }, [consoleStore, settings, viewportMode]);
+  }, [consoleStore, settings, viewportPanelParams]);
 
   const onSettingsChange = useCallback(
     (next: Settings) => {
@@ -194,22 +273,28 @@ function App() {
     });
     buildDefaultLayout(api, viewportMode);
     api.getPanel("viewport")?.update({
-      params: { mode: viewportMode, showDebugOverlay: settings.viewport.debugOverlay },
+      params: viewportPanelParams,
     });
     requestViewportRemeasure();
     layoutSubRef.current = api.onDidLayoutChange(() => {
       requestViewportRemeasure();
       setInspectorVisible(api.getPanel("inspector") != null);
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires once on mount; viewportMode changes are pushed via the effect below instead.
-  }, []);
+  }, [viewportMode, viewportPanelParams]);
 
   // Keeps the mounted viewport panel's mode in sync with renderer actions.
   useEffect(() => {
     apiRef.current?.getPanel("viewport")?.update({
-      params: { mode: viewportMode, showDebugOverlay: settings.viewport.debugOverlay },
+      params: viewportPanelParams,
     });
-  }, [settings.viewport.debugOverlay, viewportMode]);
+  }, [viewportPanelParams]);
+
+  useEffect(() => {
+    apiRef.current?.getPanel("timeline")?.update({
+      params: { view: consoleVisible ? "console" : "timeline" },
+    });
+    requestViewportRemeasure();
+  }, [consoleVisible]);
 
   const onToggleInspector = useCallback(() => {
     const api = apiRef.current;
@@ -236,19 +321,50 @@ function App() {
       return;
     }
     buildDefaultLayout(api, viewportMode);
+    api.getPanel("timeline")?.update({
+      params: { view: consoleVisible ? "console" : "timeline" },
+    });
     api.getPanel("viewport")?.update({
-      params: { mode: viewportMode, showDebugOverlay: settings.viewport.debugOverlay },
+      params: viewportPanelParams,
     });
     requestViewportRemeasure();
-  }, [settings.viewport.debugOverlay, viewportMode]);
+  }, [consoleVisible, viewportMode, viewportPanelParams]);
 
   const actions = useMemo<readonly EditorAction[]>(
     () => [
       {
+        id: "file.new",
+        label: "New",
+        shortcut: { code: "KeyN", primary: true },
+        enabled: !sceneFileBusy,
+        run: onNewScene,
+      },
+      {
+        id: "file.open",
+        label: "Open…",
+        shortcut: { code: "KeyO", primary: true },
+        enabled: !sceneFileBusy,
+        run: onOpenScene,
+      },
+      {
+        id: "file.save",
+        label: "Save",
+        shortcut: { code: "KeyS", primary: true },
+        enabled: !sceneFileBusy && sceneFileStatus.canSave,
+        run: onSaveScene,
+      },
+      {
+        id: "file.saveAs",
+        label: "Save As…",
+        shortcut: { code: "KeyS", primary: true, shift: true },
+        enabled: !sceneFileBusy && sceneFileStatus.hasDocument,
+        run: onSaveSceneAs,
+      },
+      {
         id: "renderer.native",
         label: "Native",
         shortcut: { code: "Digit1", primary: true },
-        enabled: true,
+        enabled: rendererStatus.nativeAvailable,
         checked: viewportMode === "native",
         run: selectNativeRenderer,
       },
@@ -293,8 +409,15 @@ function App() {
       inspectorVisible,
       consoleVisible,
       consoleErrorCount,
+      onNewScene,
+      onOpenScene,
       onResetLayout,
+      onSaveScene,
+      onSaveSceneAs,
       onToggleInspector,
+      sceneFileBusy,
+      sceneFileStatus,
+      rendererStatus,
       selectCanvasRenderer,
       selectNativeRenderer,
       viewportMode,
@@ -416,9 +539,17 @@ function App() {
     <div className="app-shell">
       <MenuBar
         actions={actions}
-        backendLabel={viewportMode === "native" ? "Native wgpu" : "Canvas (three.js)"}
+        backendLabel={
+          viewportMode === "native"
+            ? "Native wgpu"
+            : rendererStatus.nativeAvailable
+              ? "Canvas (three.js)"
+              : "Canvas fallback"
+        }
+        documentLabel={sceneFileStatus.displayName}
         isMac={isMac}
       />
+      <ConsoleStoreContext.Provider value={consoleStore}>
       <div className="dockview-shell">
         {/* themeAbyss is kept deliberately even though App.css nulls out its
             headline feature (`--dv-group-view-background-color`, painted on
@@ -450,7 +581,7 @@ function App() {
           disableDnd
         />
       </div>
-      {consoleVisible && <ConsoleDrawer store={consoleStore} />}
+      </ConsoleStoreContext.Provider>
       <SettingsModal
         open={settingsOpen}
         settings={settings}
