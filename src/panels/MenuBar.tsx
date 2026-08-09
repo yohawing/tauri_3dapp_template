@@ -18,6 +18,7 @@ type OpenMenu = "file" | "view" | "renderer" | null;
 const FILE_ACTIONS: readonly EditorActionId[] = [
   "file.new",
   "file.open",
+  "file.import",
   "file.save",
   "file.saveAs",
 ];

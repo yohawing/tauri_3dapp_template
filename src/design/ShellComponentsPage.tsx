@@ -20,6 +20,7 @@ function makeActions(): readonly EditorAction[] {
   return [
     { id: "file.new", label: "New Scene", shortcut: { code: "KeyN", primary: true }, enabled: true, run: noop },
     { id: "file.open", label: "Open…", shortcut: { code: "KeyO", primary: true }, enabled: true, run: noop },
+    { id: "file.import", label: "Import Asset…", enabled: true, run: noop },
     { id: "file.save", label: "Save", shortcut: { code: "KeyS", primary: true }, enabled: true, run: noop },
     { id: "file.saveAs", label: "Save As…", shortcut: { code: "KeyS", primary: true, shift: true }, enabled: false, run: noop },
     { id: "renderer.native", label: "Native wgpu", enabled: true, checked: true, run: noop },

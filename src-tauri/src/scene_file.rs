@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use serde::Serialize;
@@ -6,7 +6,9 @@ use tauri::{AppHandle, Manager};
 
 use crate::camera::OrbitCamera;
 use crate::protocol::CameraState;
-use crate::scene::{ResolvedAssetPath, Scene, SceneCamera};
+use crate::scene::{
+    ResolvedAssetPath, Scene, SceneAsset, SceneCamera, SceneInstance, SceneTransform,
+};
 use crate::scene_projection::SceneProjectionStore;
 use crate::{timeline, NATIVE_RENDERER};
 
@@ -47,6 +49,15 @@ impl SceneFileState {
 
     pub fn status(&self) -> SceneFileStatus {
         status_from_inner(&self.inner.lock().unwrap())
+    }
+
+    fn document_snapshot(&self) -> Option<(Scene, Option<PathBuf>)> {
+        self.inner
+            .lock()
+            .unwrap()
+            .current
+            .as_ref()
+            .map(|current| (current.document.clone(), current.path.clone()))
     }
 
     pub fn save(
@@ -148,6 +159,42 @@ pub(crate) async fn open_scene_file(
     .await
 }
 
+#[tauri::command]
+pub(crate) async fn import_scene_asset(
+    app: AppHandle,
+    path: String,
+) -> Result<SceneFileStatus, String> {
+    let asset_path = PathBuf::from(path);
+    let current = app.state::<SceneFileState>().document_snapshot();
+    let camera = app.state::<Mutex<OrbitCamera>>().lock().unwrap().state();
+    let (document, scene_path, resolved_assets, timeline_projection) =
+        tauri::async_runtime::spawn_blocking(move || {
+            let (document, scene_path) = append_imported_asset(current, &asset_path)?;
+            let resolution_base = scene_path.clone().unwrap_or_else(|| {
+                std::env::current_dir()
+                    .unwrap_or_else(|_| PathBuf::from("."))
+                    .join("untitled.scene.json")
+            });
+            let resolved_assets = document
+                .resolve_asset_paths(&resolution_base)
+                .map_err(|error| error.to_string())?;
+            let timeline_projection = timeline::load_scene_timeline(&document, &resolved_assets)?;
+            Ok::<_, String>((document, scene_path, resolved_assets, timeline_projection))
+        })
+        .await
+        .map_err(|error| format!("Asset import preparation task failed: {error}"))??;
+
+    replace_scene_on_main_thread(
+        app,
+        document,
+        scene_path,
+        resolved_assets,
+        timeline_projection,
+        camera,
+    )
+    .await
+}
+
 async fn replace_scene_on_main_thread(
     app: AppHandle,
     document: Scene,
@@ -165,13 +212,8 @@ async fn replace_scene_on_main_thread(
                 .as_mut()
                 .ok_or_else(|| "native renderer is not initialized".to_string())?;
             renderer
-                .replace_with_scene(&document, &resolved_assets)
+                .replace_with_scene(&document, &resolved_assets, timeline_projection.clips.len())
                 .map_err(|error| error.to_string())?;
-            if renderer.animation_clip_count() != timeline_projection.clips.len() {
-                return Err(
-                    "animation metadata/runtime mismatch after Scene replacement".to_string(),
-                );
-            }
 
             *main_handle.state::<Mutex<OrbitCamera>>().lock().unwrap() = {
                 let mut next = OrbitCamera::default();
@@ -199,6 +241,106 @@ async fn replace_scene_on_main_thread(
     })
     .await
     .map_err(|error| format!("Scene replacement wait failed: {error}"))?
+}
+
+fn append_imported_asset(
+    current: Option<(Scene, Option<PathBuf>)>,
+    asset_path: &Path,
+) -> Result<(Scene, Option<PathBuf>), String> {
+    let canonical_asset = asset_path.canonicalize().map_err(|error| {
+        format!(
+            "Asset '{}' failed to resolve: {error}",
+            asset_path.display()
+        )
+    })?;
+    let kind = match canonical_asset
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("gltf" | "glb") => "gltf",
+        Some("fbx") => "fbx",
+        _ => {
+            return Err(format!(
+                "Asset '{}' has an unsupported extension; expected .gltf, .glb, or .fbx",
+                asset_path.display()
+            ));
+        }
+    };
+    let (mut document, scene_path) = current.unwrap_or_else(|| (Scene::empty("Untitled"), None));
+    let stem = canonical_asset
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("asset");
+    let base_id = sanitize_id(stem);
+    let asset_id = unique_id(
+        &base_id,
+        document.assets.iter().map(|asset| asset.id.as_str()),
+    );
+    let instance_id = unique_id(
+        &format!("{asset_id}-1"),
+        document
+            .instances
+            .iter()
+            .map(|instance| instance.id.as_str()),
+    );
+    let stored_path = scene_path
+        .as_deref()
+        .and_then(Path::parent)
+        .and_then(|parent| parent.canonicalize().ok())
+        .and_then(|parent| pathdiff::diff_paths(&canonical_asset, parent))
+        .unwrap_or(canonical_asset);
+    document.assets.push(SceneAsset {
+        id: asset_id.clone(),
+        kind: kind.to_string(),
+        path: stored_path.to_string_lossy().into_owned(),
+    });
+    document.instances.push(SceneInstance {
+        id: instance_id,
+        asset: asset_id,
+        transform: SceneTransform {
+            translation: [0.0, 0.0, 0.0],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            scale: [1.0, 1.0, 1.0],
+        },
+        visible: true,
+    });
+    document
+        .validate()
+        .map_err(|error| crate::scene::SceneError::Validation(error).to_string())?;
+    Ok((document, scene_path))
+}
+
+fn sanitize_id(stem: &str) -> String {
+    let id = stem
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+                character.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_string();
+    if id.is_empty() {
+        "asset".to_string()
+    } else {
+        id
+    }
+}
+
+fn unique_id<'a>(base: &str, existing: impl Iterator<Item = &'a str>) -> String {
+    let existing = existing.collect::<std::collections::HashSet<_>>();
+    if !existing.contains(base) {
+        return base.to_string();
+    }
+    (2..)
+        .map(|suffix| format!("{base}-{suffix}"))
+        .find(|candidate| !existing.contains(candidate.as_str()))
+        .expect("unbounded suffix search finds an ID")
 }
 
 pub(crate) fn scene_camera_state(document: &Scene) -> Result<CameraState, String> {
@@ -421,6 +563,61 @@ mod tests {
             .canonicalize()
             .expect("canonicalize resolved asset");
         assert_eq!(resolved, asset.canonicalize().expect("canonicalize asset"));
+        fs::remove_dir_all(root).expect("remove temp directory");
+    }
+
+    #[test]
+    fn imported_asset_creates_unique_asset_and_instance_ids() {
+        let root = temp_path("import-ids");
+        fs::create_dir_all(&root).expect("create temp directory");
+        let scene_path = root.join("opened.scene.json");
+        let asset_path = root.join("Hero Model.fbx");
+        fs::write(&asset_path, b"fixture").expect("create asset fixture");
+        let mut scene = Scene::empty("Opened");
+        scene.assets.push(SceneAsset {
+            id: "hero-model".into(),
+            kind: "fbx".into(),
+            path: "existing.fbx".into(),
+        });
+        scene.instances.push(SceneInstance {
+            id: "hero-model-2-1".into(),
+            asset: "hero-model".into(),
+            transform: SceneTransform {
+                translation: [0.0; 3],
+                rotation: [0.0, 0.0, 0.0, 1.0],
+                scale: [1.0; 3],
+            },
+            visible: true,
+        });
+
+        let (imported, retained_path) =
+            append_imported_asset(Some((scene, Some(scene_path.clone()))), &asset_path)
+                .expect("append imported FBX");
+
+        assert_eq!(retained_path, Some(scene_path));
+        assert_eq!(imported.assets.last().unwrap().id, "hero-model-2");
+        assert_eq!(imported.assets.last().unwrap().path, "Hero Model.fbx");
+        assert_eq!(imported.instances.last().unwrap().id, "hero-model-2-1-2");
+        assert_eq!(imported.instances.last().unwrap().asset, "hero-model-2");
+        fs::remove_dir_all(root).expect("remove temp directory");
+    }
+
+    #[test]
+    fn rejected_import_does_not_mutate_file_state() {
+        let root = temp_path("import-reject");
+        fs::create_dir_all(&root).expect("create temp directory");
+        let asset_path = root.join("notes.txt");
+        fs::write(&asset_path, b"not an asset").expect("create rejected fixture");
+        let state = SceneFileState::default();
+        let before = state.set_document(Scene::empty("Current"), None);
+        let snapshot = state.document_snapshot();
+
+        let error = append_imported_asset(snapshot, &asset_path).unwrap_err();
+
+        assert!(error.contains(asset_path.to_string_lossy().as_ref()));
+        assert!(error.contains("unsupported extension"));
+        assert_eq!(state.status().revision, before.revision);
+        assert_eq!(state.status().display_name, "Current");
         fs::remove_dir_all(root).expect("remove temp directory");
     }
 

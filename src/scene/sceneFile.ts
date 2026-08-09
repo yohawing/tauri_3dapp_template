@@ -18,6 +18,7 @@ export const BUILTIN_SCENE_STATUS: SceneFileStatus = {
 };
 
 const SCENE_FILTER = [{ name: "Tauri3D Scene", extensions: ["json"] }];
+const ASSET_FILTER = [{ name: "3D Asset", extensions: ["gltf", "glb", "fbx"] }];
 
 export function getSceneFileStatus(): Promise<SceneFileStatus> {
   return invoke("get_scene_file_status");
@@ -35,6 +36,16 @@ export async function openSceneFile(): Promise<SceneFileStatus | null> {
 
 export function openSceneFileAtPath(path: string): Promise<SceneFileStatus> {
   return invoke("open_scene_file", { path });
+}
+
+export async function importSceneAsset(): Promise<SceneFileStatus | null> {
+  const path = await open({ multiple: false, directory: false, filters: ASSET_FILTER });
+  if (path === null) return null;
+  return importSceneAssetAtPath(path);
+}
+
+export function importSceneAssetAtPath(path: string): Promise<SceneFileStatus> {
+  return invoke("import_scene_asset", { path });
 }
 
 export async function saveSceneFile(

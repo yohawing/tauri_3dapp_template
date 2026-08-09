@@ -209,6 +209,7 @@ pub fn run() {
             scene_file::get_scene_file_status,
             scene_file::new_scene_file,
             scene_file::open_scene_file,
+            scene_file::import_scene_asset,
             scene_file::save_scene_file
         ])
         .setup(|app| {

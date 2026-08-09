@@ -47,6 +47,10 @@ pub enum RendererError {
         instance_id: String,
         message: String,
     },
+    AnimationMetadataMismatch {
+        metadata_clips: usize,
+        runtime_clips: usize,
+    },
 }
 
 impl fmt::Display for RendererError {
@@ -74,6 +78,13 @@ impl fmt::Display for RendererError {
             } => write!(
                 formatter,
                 "invalid transform for Scene instance '{instance_id}': {message}"
+            ),
+            Self::AnimationMetadataMismatch {
+                metadata_clips,
+                runtime_clips,
+            } => write!(
+                formatter,
+                "animation metadata/runtime mismatch: metadata has {metadata_clips} clips, runtime has {runtime_clips}"
             ),
         }
     }
@@ -191,8 +202,20 @@ impl Renderer {
         &mut self,
         scene_document: &Scene,
         resolved_assets: &[ResolvedAssetPath],
+        expected_animation_clip_count: usize,
     ) -> Result<(), RendererError> {
         let runtime = build_runtime_scene(scene_document, resolved_assets)?;
+        let runtime_clip_count = runtime
+            .instances
+            .iter()
+            .map(|instance| instance.player.clip_count())
+            .sum::<usize>();
+        if runtime_clip_count != expected_animation_clip_count {
+            return Err(RendererError::AnimationMetadataMismatch {
+                metadata_clips: expected_animation_clip_count,
+                runtime_clips: runtime_clip_count,
+            });
+        }
         self.scene = runtime.scene;
         self.key_light = runtime.key_light;
         self.cube = runtime.cube;

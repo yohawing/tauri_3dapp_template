@@ -3,6 +3,8 @@ import { requestViewportRemeasure } from "../viewport/ViewportHost";
 import {
   BUILTIN_SCENE_STATUS,
   getSceneFileStatus,
+  importSceneAsset,
+  importSceneAssetAtPath,
   newSceneFile,
   openSceneFile,
   openSceneFileAtPath,
@@ -29,11 +31,13 @@ export interface SceneFileController {
   busy: boolean;
   newScene: () => void;
   openScene: () => void;
+  importAsset: () => void;
   saveScene: () => void;
   saveSceneAs: () => void;
 }
 
 let fileSelfTestHasRun = false;
+let assetImportSelfTestHasRun = false;
 
 export function useSceneFileController({
   appendDiagnostic,
@@ -84,6 +88,9 @@ export function useSceneFileController({
   const openScene = useCallback(() => {
     void runOperation("Open Scene", true, openSceneFile);
   }, [runOperation]);
+  const importAsset = useCallback(() => {
+    void runOperation("Import Asset", true, importSceneAsset);
+  }, [runOperation]);
   const saveScene = useCallback(() => {
     void runOperation("Save Scene", false, () => saveSceneFile(status, false));
   }, [runOperation, status]);
@@ -130,5 +137,23 @@ export function useSceneFileController({
     }, 10500);
   }, [runOperation]);
 
-  return { status, busy, newScene, openScene, saveScene, saveSceneAs };
+  useEffect(() => {
+    const importPath = import.meta.env.VITE_ASSET_IMPORT_SELF_TEST;
+    const invalidImportPath = import.meta.env.VITE_ASSET_IMPORT_INVALID_SELF_TEST;
+    if (assetImportSelfTestHasRun || !importPath) return;
+    assetImportSelfTestHasRun = true;
+    appendDiagnostic("info", "scene", `Self-test Import scheduled: ${importPath}`);
+    window.setTimeout(() => {
+      void runOperation("Self-test Import Asset", true, () => importSceneAssetAtPath(importPath));
+    }, 2000);
+    if (invalidImportPath) {
+      window.setTimeout(() => {
+        void runOperation("Self-test Expected-failure Import Asset", false, () =>
+          importSceneAssetAtPath(invalidImportPath),
+        );
+      }, 20000);
+    }
+  }, [appendDiagnostic, runOperation]);
+
+  return { status, busy, newScene, openScene, importAsset, saveScene, saveSceneAs };
 }

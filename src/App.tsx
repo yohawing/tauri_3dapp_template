@@ -143,6 +143,7 @@ function App() {
     busy: sceneFileBusy,
     newScene: onNewScene,
     openScene: onOpenScene,
+    importAsset: onImportAsset,
     saveScene: onSaveScene,
     saveSceneAs: onSaveSceneAs,
   } = useSceneFileController({
@@ -353,6 +354,12 @@ function App() {
         run: onOpenScene,
       },
       {
+        id: "file.import",
+        label: "Import Asset…",
+        enabled: !sceneFileBusy,
+        run: onImportAsset,
+      },
+      {
         id: "file.save",
         label: "Save",
         shortcut: { code: "KeyS", primary: true },
@@ -417,6 +424,7 @@ function App() {
       consoleErrorCount,
       onNewScene,
       onOpenScene,
+      onImportAsset,
       onResetLayout,
       onSaveScene,
       onSaveSceneAs,

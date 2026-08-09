@@ -1,6 +1,7 @@
 export type EditorActionId =
   | "file.new"
   | "file.open"
+  | "file.import"
   | "file.save"
   | "file.saveAs"
   | "renderer.native"

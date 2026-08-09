@@ -19,6 +19,7 @@
 | Scene File New／Open／Save lifecycle | implemented / verified | pass (2026-08-09 test＋screenshot) | Save As後の失敗Openで現Sceneを保持し、通常Save、Newまで確認。relative asset rebaseもfocused test済み |
 | BrainStem read-only Timeline | implemented / verified | pass (2026-08-08 test＋screenshot) | 1 clip、約34.88秒、57 channels、74613 keys、LINEARを検証。visible range＋pixel density描画 |
 | FBX skin animation／Native Timeline playback | implemented / verified | pass (2026-08-09 test＋screenshot) | 実FBX 1 clip、約24.83秒、76 animated nodes、228 channels。Play／Pause／Seek／Loopとtimestamp付きevent同期を確認 |
+| File > Import Asset | implemented / verified | pass (2026-08-09 self-test＋screenshot) | JSON手編集なしでFBX／glTF／GLBを現在Sceneへ追加。失敗時はScene／選択／保存先を保持しpath付きConsole診断 |
 | DOM Menu／Shortcut | implemented / verified | pass (2026-08-08 test＋self-test) | menuとshortcutは同一Action。input／modal中の抑止をunit test済み |
 | Bounded Console drawer | implemented / verified | pass (2026-08-08 test＋screenshot) | scene／renderer／viewport／frontend、filter／Clear／Copy All／Auto-scroll、500 entry上限 |
 | Settings modal | implemented / verified | pass (2026-08-08 test＋screenshot) | overlay、Console level／Auto-scrollを即時反映し、version付きlocalStorageへ保存 |
@@ -64,6 +65,16 @@ Windows上の現行スライスは継続可。Native raster viewportの部分描
 - current sync: Nativeがcanonical stateと採取timestampを保持し、250ms throttled Tauri eventをFrontendへpush。Frontendはsnapshot間の表示時刻だけを補間する。
 - event gate: 100 eventsで平均間隔278.9ms、snapshot delivery age平均164.0ms／p95 811ms、最大event間隔2207.3ms。poll backlogは解消したが、debug＋実FBX描画中のevent-loop stallは未解消。
 - GUI経路: `VITE_TIMELINE_PLAYBACK_SELF_TEST`、`VITE_TIMELINE_PLAYBACK_SYNC_SELF_TEST`、ログ、`screenshot-ui`のみ。Computer Useは未使用。
+
+## 2026-08-09 Asset Import UI証拠
+
+- Success screenshot: `C:\Users\yohaw\AppData\Local\Temp\tauri3d-asset-import-fixed.png`。
+- Failure screenshot: `C:\Users\yohaw\AppData\Local\Temp\tauri3d-asset-import-failure.png`。
+- pass: Built-in SceneからJSON手編集なしで実FBXをImportし、`Untitled` document、Outliner `kimono_animation-1`、Inspector、Native Viewport、1 clip／228 channels Timelineを同一操作で更新。
+- pass: 壊れた`invalid-import.fbx`の期待失敗後も、実FBX表示、選択`kimono_animation-1`、`Untitled` documentを保持。Consoleへ失敗assetの絶対pathと`UnsupportedVersion`を記録。
+- atomicity: animation metadata／runtime clip数の整合検査をrenderer swap前へ移し、parse／load／metadata mismatchでは現在Sceneを置換しない。
+- tracked境界: 実FBXと壊れたfixtureはtracked対象へ追加していない。通常UIはFile > Import Assetのdialog filterで`.gltf`／`.glb`／`.fbx`だけを提示。
+- GUI経路: `VITE_ASSET_IMPORT_SELF_TEST`、`VITE_ASSET_IMPORT_INVALID_SELF_TEST`、Console、`screenshot-ui`のみ。Computer Useは未使用。
 
 ## 2026-08-09 Device Lost callback証拠
 
