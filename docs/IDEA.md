@@ -207,7 +207,7 @@ Native／CanvasでGPU Resourceは共有しない。
 
 PoCの起動条件を再現するため、ローカルAsset path、instance Transform、Camera初期値をversion付き`.scene.json`へ保存する。Rust側の永続型は`Scene`とし、Kiss3D／wgpu runtime handleやThree.js固有型を含めない。
 
-初版は起動時loadとSerde round-tripを対象とし、Scene Editor、Save UI、Undo／Redo、Asset database、Canvas Scene同期は対象外とする。
+初版は起動時loadとSerde round-tripを対象とし、Scene Editor、Save UI、Undo／Redo、Asset database、アプリ内Asset Browser、Canvas Scene同期は対象外とする。OSのファイルシステム／Explorer／FinderをAsset Browserとして使い、選択したassetは絶対pathからruntime loadする。
 
 ## 10. IPC設計
 

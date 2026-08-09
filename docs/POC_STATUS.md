@@ -20,7 +20,7 @@
 | BrainStem read-only Timeline | implemented / verified | pass (2026-08-08 test＋screenshot) | 1 clip、約34.88秒、57 channels、74613 keys、LINEARを検証。visible range＋pixel density描画 |
 | FBX skin animation／Native Timeline playback | implemented / verified | pass (2026-08-09 test＋screenshot) | 実FBX 1 clip、約24.83秒、76 animated nodes、228 channels。Play／Pause／Seek／Loopとtimestamp付きevent同期を確認 |
 | File > Import Asset | implemented / verified | pass (2026-08-09 self-test＋screenshot) | JSON手編集なしでFBX／glTF／GLBを現在Sceneへ追加。失敗時はScene／選択／保存先を保持しpath付きConsole診断 |
-| Imported Scene Save／restart／Open | implemented / verified | pass (2026-08-09 self-test＋screenshot) | first Save Asで外部assetを相対化し、再起動後にasset／transform／camera／Timeline metadataを復元 |
+| Imported Scene Save／restart／Open | implemented / verified | pass (2026-08-09 self-test＋screenshot) | 絶対asset pathを保持したまま再起動後にasset／transform／camera／Timeline metadataを復元 |
 | DOM Menu／Shortcut | implemented / verified | pass (2026-08-08 test＋self-test) | menuとshortcutは同一Action。input／modal中の抑止をunit test済み |
 | Bounded Console drawer | implemented / verified | pass (2026-08-08 test＋screenshot) | scene／renderer／viewport／frontend、filter／Clear／Copy All／Auto-scroll、500 entry上限 |
 | Settings modal | implemented / verified | pass (2026-08-08 test＋screenshot) | overlay、Console level／Auto-scrollを即時反映し、version付きlocalStorageへ保存 |
@@ -58,7 +58,7 @@ Windows上の現行スライスは継続可。Native raster viewportの部分描
 
 ## 2026-08-09 FBX animation／Timeline playback証拠
 
-- Asset: local `F:\3dcg\kokoronaki4\KimonoNaki\kimono_animation.fbx`。外部binaryと絶対pathはtracked fixture／Sceneへ追加していない。
+- Asset: local `F:\3dcg\kokoronaki4\KimonoNaki\kimono_animation.fbx`。外部binaryとローカルScene artifactはtracked fixtureへ追加していない。
 - Screenshot: `C:\Users\yohaw\AppData\Local\Temp\tauri3d-timeline-event-a.png` と `tauri3d-timeline-event-b.png`。2秒差で同一SHA-256、15.23秒のPause pose／playheadが固定。
 - pass: FBX mesh／4-weight skin／node transform animation、source duration約24.83秒、1 clip、76 animated nodes、228 channelsをNative ViewportとTimelineへ投影。
 - pass: 環境self-testでPause→50% Seek→Play→Pauseを通し、Play／Pause／Seek／Loop境界をfocused testで固定。
@@ -79,11 +79,11 @@ Windows上の現行スライスは継続可。Native raster viewportの部分描
 
 ## 2026-08-09 Imported Scene round-trip証拠
 
-- Saved screenshot: `C:\Users\yohaw\AppData\Local\Temp\tauri3d-asset-roundtrip-saved.png`。
-- Restart／Open screenshot: `C:\Users\yohaw\AppData\Local\Temp\tauri3d-asset-roundtrip-opened.png`。
-- local saved Scene: ignored `artifacts\fbx-smoke\roundtrip\imported.scene.json`。tracked fixtureには追加していない。
-- pass: Import直後のpathなし`Untitled`をSave Asし、canonical Windows `\\?\` path同士で差分化。保存JSONはFBXを相対pathで保持し、cameraとidentity instance transformを永続化。
-- pass: app processを停止して再起動し、保存SceneをOpen。Outliner／Inspector／Native Viewport、FBX animation、1 clip／228 channels Timelineを復元。
+- Saved screenshot: `C:\Users\yohaw\AppData\Local\Temp\tauri3d-runtime-absolute-save-normalized.png`。
+- Restart／Open screenshot: `C:\Users\yohaw\AppData\Local\Temp\tauri3d-runtime-absolute-reopen.png`。
+- local saved Scene: ignored `artifacts\absolute-path-gate\runtime-absolute.scene.json`。tracked fixtureには追加していない。
+- pass: Import直後のpathなし`Untitled`をSave Asし、canonical Windows絶対path、camera、identity instance transformを永続化。
+- pass: app processを停止して再起動し、絶対pathを保持した保存SceneをOpen。Outliner／Inspector／Native Viewport、FBX animation、1 clip／228 channels Timelineを復元。
 - diagnostics: missing／parse／unsupported assetはpath付きerrorとしてOpen／Importをfail-closedにし、成功済みSceneと保存先を置換しない。
 - GUI経路: `VITE_ASSET_IMPORT_SAVE_SELF_TEST`、`VITE_ASSET_ROUNDTRIP_OPEN_SELF_TEST`、`screenshot-ui`のみ。Computer Useは未使用。
 

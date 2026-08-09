@@ -12,7 +12,7 @@ Status: Scene v1 schema／pure Rust validation／Kiss3D runtime差し替え／Fi
 - Scene graph authoring、autosave、dirty-state確認dialog
 - Undo／Redo、Transaction、collaboration
 - component system、reflection、plugin schema
-- Asset database、import pipeline、cache
+- アプリ内Asset Browser、Asset database、project scan、import cache
 - Native／Canvas共通render graph
 - version migration framework
 
@@ -39,7 +39,7 @@ experiments/
     {
       "id": "character",
       "kind": "gltf",
-      "path": "./assets/character.glb"
+      "path": "F:\\3dcg\\characters\\character.glb"
     }
   ],
   "instances": [
@@ -84,11 +84,13 @@ struct Scene {
 
 ## Path規則
 
+- OSのファイルシステム／Explorer／FinderをAsset Browserとして扱う。アプリ内にasset一覧やproject databaseを持たない。
+- File > Import Assetで選んだfileはcanonicalな絶対pathとしてSceneへ保存し、実行時にその場所から直接loadする。
 - 相対pathは`.scene.json`の親directoryを基準に解決する。
-- 絶対pathはローカルPoC用途として許可する。
+- 既存Sceneとの互換性のため相対pathも読み込めるが、新規Importの標準形式にはしない。
 - 保存値を起動時のcurrent working directory基準にしない。
 - path解決後のfile不存在は、Scene schema errorと区別して報告する。
-- Save Asでは元のresolved assetを維持するよう保存先からの相対pathへrebaseする。Windowsでdriveが異なり相対化できない場合だけ絶対pathへfallbackする。
+- Save／Save Asは絶対pathを絶対pathのまま保持する。legacy relative pathだけはSave As先から同じassetを指すようrebaseする。
 
 ## Validation
 

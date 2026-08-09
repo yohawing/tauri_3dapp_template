@@ -253,6 +253,7 @@ fn append_imported_asset(
             asset_path.display()
         )
     })?;
+    let stored_asset_path = user_facing_absolute_path(canonical_asset.clone());
     let kind = match canonical_asset
         .extension()
         .and_then(|extension| extension.to_str())
@@ -285,16 +286,10 @@ fn append_imported_asset(
             .iter()
             .map(|instance| instance.id.as_str()),
     );
-    let stored_path = scene_path
-        .as_deref()
-        .and_then(Path::parent)
-        .and_then(|parent| parent.canonicalize().ok())
-        .and_then(|parent| pathdiff::diff_paths(&canonical_asset, parent))
-        .unwrap_or(canonical_asset);
     document.assets.push(SceneAsset {
         id: asset_id.clone(),
         kind: kind.to_string(),
-        path: stored_path.to_string_lossy().into_owned(),
+        path: stored_asset_path.to_string_lossy().into_owned(),
     });
     document.instances.push(SceneInstance {
         id: instance_id,
@@ -330,6 +325,20 @@ fn sanitize_id(stem: &str) -> String {
     } else {
         id
     }
+}
+
+fn user_facing_absolute_path(path: PathBuf) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let value = path.to_string_lossy();
+        if let Some(unc) = value.strip_prefix(r"\\?\UNC\") {
+            return PathBuf::from(format!(r"\\{unc}"));
+        }
+        if let Some(drive_path) = value.strip_prefix(r"\\?\") {
+            return PathBuf::from(drive_path);
+        }
+    }
+    path
 }
 
 fn unique_id<'a>(base: &str, existing: impl Iterator<Item = &'a str>) -> String {
@@ -596,7 +605,10 @@ mod tests {
 
         assert_eq!(retained_path, Some(scene_path));
         assert_eq!(imported.assets.last().unwrap().id, "hero-model-2");
-        assert_eq!(imported.assets.last().unwrap().path, "Hero Model.fbx");
+        assert_eq!(
+            PathBuf::from(&imported.assets.last().unwrap().path),
+            asset_path
+        );
         assert_eq!(imported.instances.last().unwrap().id, "hero-model-2-1-2");
         assert_eq!(imported.instances.last().unwrap().asset, "hero-model-2");
         fs::remove_dir_all(root).expect("remove temp directory");
