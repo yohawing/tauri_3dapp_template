@@ -1,6 +1,6 @@
 # Hybrid Viewport PoC Status
 
-最終更新: 2026-08-08
+最終更新: 2026-08-09
 
 この表は実装、設計、現行HEADでの検証、外部実機待ちを混同しないための台帳である。過去のgreenは参考情報であり、次スライス開始時に現行HEADで再確認する。
 
@@ -27,7 +27,7 @@
 | Surface Lost／Outdated／Timeout／OutOfMemory取得 | blocked by vendor contract | unverified | Kiss3D内部でretry後`Option::None`へ集約され、app層では最小化frame skipと区別不能 |
 | fallback理由／復旧状態のUI表示 | implemented / verified | pass (2026-08-09 screenshot) | Viewport banner、Console、disabled Native action、再起動による再試行案内を確認 |
 | CanvasのScene同期 | intentionally deferred | not applicable | Camera＋Safe Modeを最低保証とする |
-| 1080p 60fps | unverified | pending | 計測条件を固定する |
+| 1080p 60fps | implemented / verified | pass (2026-08-09 host log) | 物理1920x1080、60-frame warm-up＋180 samples。Native 59.971 FPS、Canvas 60.000 FPS |
 | 4K操作品質／合成コスト | external evidence waiting | blocked on hardware | 最終採否前に必要 |
 | macOS透明合成／入力／切替 | external evidence waiting | blocked on hardware | 最終採否前に必要 |
 
@@ -41,7 +41,16 @@
 
 ## 現時点の判断
 
-Windows上の現行スライスは継続可。Native raster viewportの部分描画、Scene JSON v1のNew／Open／Save lifecycle、BrainStem read-only Timeline、Menu／Console／Settings、構築後unavailable注入と実Device Lost callbackからのCanvas fallbackまで成立した。ただし、PoC全体を完了扱いにはしない。実際のNative初期化例外、Surface acquisition error、4K、macOSが未決着である。vendorのraytrace経路は部分viewport compositeへ未接続だが、現アプリはraster `render_3d`のみを使用する。
+Windows上の現行スライスは継続可。Native raster viewportの部分描画、Scene JSON v1のNew／Open／Save lifecycle、BrainStem read-only Timeline、Menu／Console／Settings、構築後unavailable注入と実Device Lost callbackからのCanvas fallback、最小Sceneの1080p nominal 60 Hzまで成立した。ただし、PoC全体を完了扱いにはしない。実際のNative初期化例外、Surface acquisition error、4K、macOSが未決着である。vendorのraytrace経路は部分viewport compositeへ未接続だが、現アプリはraster `render_3d`のみを使用する。
+
+## 2026-08-09 1080p性能baseline
+
+- 詳細条件と再現手順: `docs/PERFORMANCE_BASELINE.md`。
+- 共通条件: 物理1920x1080 target、最小Scene、debug build、60-frame warm-up後180 samples。
+- pass: Native 59.971 FPS、wall p50／p95 16.638／17.494 ms、CPU render p95 17.014 ms、GPU timestamp p95 0.049 ms。
+- pass: Canvas 60.000 FPS、wall p50／p95 16.700／16.800 ms、同期CPU render p95 0.200 ms。
+- memoryは`tauri3d.exe`＋全WebView2子processを合算。Native Working Set平均861.3 MiB／Dedicated GPU平均1178.9 MiB、Canvas fallback 827.7 MiB／1020.4 MiB。
+- 制約: Canvas WebGL GPU timestampは未取得。Canvas値はNative rendererを保持したままinactiveにする実fallback構成。複雑Scene、4K、macOS、release buildは未評価。
 
 ## 2026-08-09 Device Lost callback証拠
 
