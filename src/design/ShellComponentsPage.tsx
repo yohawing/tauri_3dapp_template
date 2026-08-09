@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import type { EditorAction } from "../actions/editorActions";
 import { CheckboxInput, CompactNumberInput, CompactSelect, RangeInput } from "../components/controls/CompactControls";
+import { RangeViewport, type RangeViewportValue } from "../components/controls/RangeViewport";
+import { ScalarBar } from "../components/controls/ScalarBar";
 import { ConsoleDrawer } from "../console/ConsoleDrawer";
 import { createConsoleStore } from "../console/state";
 import { Inspector } from "../panels/Inspector";
@@ -70,6 +72,8 @@ export function ShellComponentsPage() {
     viewport: { ...DEFAULT_SETTINGS.viewport },
     console: { ...DEFAULT_SETTINGS.console },
   }));
+  const [scalarPreview, setScalarPreview] = useState(0.62);
+  const [rangePreview, setRangePreview] = useState<RangeViewportValue>({ start: 12, end: 62 });
   const [consoleStore] = useState(() => {
     const store = createConsoleStore({ capacity: 20 });
     store.appendMany([
@@ -102,12 +106,12 @@ export function ShellComponentsPage() {
 
         <Story id="controls" title="Compact controls" note="shared production range, checkbox, select, number and state variants" className="component-story--controls">
           <div className="controls-preview">
-            <label><span>Material</span><RangeInput aria-label="Material preview" min={0} max={1} step={0.01} value={0.62} readOnly /><output>0.62</output></label>
-            <label><span>Zoom</span><RangeInput aria-label="Zoom preview" min={12} max={180} value={88} readOnly /><output>88</output></label>
-            <label><CheckboxInput defaultChecked /><span>Cast shadows</span></label>
-            <label><span>Shading</span><CompactSelect defaultValue="Smooth"><option>Smooth</option><option>Flat</option></CompactSelect></label>
-            <label><span>Range</span><CompactNumberInput value={2} readOnly /><span>–</span><CompactNumberInput value={9.5} readOnly /></label>
-            <label><span>Disabled</span><RangeInput aria-label="Disabled preview" value={35} disabled readOnly /><CheckboxInput disabled /></label>
+            <div className="controls-preview__item"><span>ScalarBar</span><ScalarBar aria-label="Material preview" value={scalarPreview} onChange={setScalarPreview} /><output>{scalarPreview.toFixed(2)}</output></div>
+            <div className="controls-preview__item"><span>RangeViewport</span><RangeViewport aria-label="Zoom range preview" start={rangePreview.start} end={rangePreview.end} onChange={setRangePreview} /><output>{rangePreview.start.toFixed(0)}–{rangePreview.end.toFixed(0)}</output></div>
+            <label className="controls-preview__item"><CheckboxInput defaultChecked /><span>Cast shadows</span></label>
+            <label className="controls-preview__item"><span>Shading</span><CompactSelect defaultValue="Smooth"><option>Smooth</option><option>Flat</option></CompactSelect></label>
+            <label className="controls-preview__item"><span>Range</span><CompactNumberInput value={2} readOnly /><span>–</span><CompactNumberInput value={9.5} readOnly /></label>
+            <div className="controls-preview__item"><span>Regular range</span><RangeInput aria-label="Disabled preview" value={35} disabled readOnly /><CheckboxInput disabled /></div>
           </div>
         </Story>
 

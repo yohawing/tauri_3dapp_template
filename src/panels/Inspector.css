@@ -246,15 +246,6 @@
   box-shadow: var(--focus-ring);
 }
 
-.inspector-slider {
-  --slider-track: #131316;
-  --slider-fill: #3b6fc4;
-  flex: 1 1 auto;
-  width: auto;
-  min-width: 0;
-  height: 17px;
-}
-
 .inspector-number {
   flex: 0 0 26px;
   width: 26px;
@@ -304,7 +295,6 @@
   box-shadow: var(--focus-ring);
 }
 
-.inspector-slider:disabled,
 .inspector-color-input:disabled,
 .inspector-field .ui-select:disabled,
 .inspector-panel .inspector-field input.ui-checkbox:disabled {

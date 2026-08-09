@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { CheckboxInput, CompactSelect, RangeInput } from "../components/controls/CompactControls";
+import { CheckboxInput, CompactSelect } from "../components/controls/CompactControls";
+import { ScalarBar } from "../components/controls/ScalarBar";
 import {
   dispatchSceneCommand,
   useSceneProjection,
@@ -119,14 +120,13 @@ function MaterialSlider({ label, value, onChange }: { label: string; value: numb
     <label className="inspector-field">
       <span className="inspector-field__label">{label}</span>
       <span className="inspector-slider-editor">
-        <RangeInput
+        <ScalarBar
           aria-label={label}
-          className="inspector-slider"
-          min="0"
-          max="1"
-          step="0.01"
+          min={0}
+          max={1}
+          step={0.01}
           value={value}
-          onChange={(event) => onChange(event.currentTarget.valueAsNumber)}
+          onChange={onChange}
         />
         <span className="inspector-number">{value.toFixed(2)}</span>
       </span>

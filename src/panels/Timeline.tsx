@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { CompactNumberInput, RangeInput } from "../components/controls/CompactControls";
+import { CompactNumberInput } from "../components/controls/CompactControls";
+import { RangeViewport, type RangeViewportValue } from "../components/controls/RangeViewport";
 import { runtimeTimelineDataSource } from "../timeline/adapters/gltfProjectionDataSource";
 import {
   createViewTransform,
@@ -12,9 +13,16 @@ import {
 import "./Timeline.css";
 
 const ROW_HEIGHT = 26;
-const DEFAULT_PIXELS_PER_SECOND = 60;
+const MIN_PIXELS_PER_SECOND = 12;
+const MAX_PIXELS_PER_SECOND = 180;
+const ZOOM_NAVIGATOR_BASE = 30;
 const PLAYHEAD_TIME = 4.55;
 let timelineSelfTestHasRun = false;
+
+function pixelsPerSecondFromZoomRange(range: RangeViewportValue) {
+  const width = Math.max(1, range.end - range.start) / 100;
+  return Math.min(MAX_PIXELS_PER_SECOND, Math.max(MIN_PIXELS_PER_SECOND, ZOOM_NAVIGATOR_BASE / width));
+}
 
 interface TimelineProps {
   dataSource?: TimelineDataSource;
@@ -289,7 +297,8 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
   const treeRowsRef = useRef<HTMLDivElement>(null);
   const rulerRef = useRef<HTMLDivElement>(null);
   const canvasViewportRef = useRef<HTMLDivElement>(null);
-  const [pixelsPerSecond, setPixelsPerSecond] = useState(DEFAULT_PIXELS_PER_SECOND);
+  const [zoomRange, setZoomRange] = useState<RangeViewportValue>({ start: 2, end: 52 });
+  const pixelsPerSecond = pixelsPerSecondFromZoomRange(zoomRange);
   const [visibleRange, setVisibleRange] = useState({ start: 0, end: 12 });
   const [playheadTime, setPlayheadTime] = useState(PLAYHEAD_TIME);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -369,7 +378,7 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
   useEffect(() => {
     if (timelineSelfTestHasRun || !import.meta.env.VITE_TIMELINE_SELF_TEST) return;
     timelineSelfTestHasRun = true;
-    const zoomTimer = window.setTimeout(() => setPixelsPerSecond(160), 2000);
+    const zoomTimer = window.setTimeout(() => setZoomRange({ start: 2, end: 20.75 }), 2000);
     const scrollTimer = window.setTimeout(() => {
       const viewport = canvasViewportRef.current;
       if (!viewport) return;
@@ -470,12 +479,11 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
             <span className="timeline-panel__fps">24 fps</span>
             <label className="timeline-panel__zoom">
               Zoom
-              <RangeInput
+              <RangeViewport
                 aria-label="Timeline zoom"
-                min="12"
-                max="180"
-                value={pixelsPerSecond}
-                onChange={(event) => setPixelsPerSecond(Number(event.currentTarget.value))}
+                start={zoomRange.start}
+                end={zoomRange.end}
+                onChange={setZoomRange}
               />
             </label>
             <label className="timeline-panel__range-field">
