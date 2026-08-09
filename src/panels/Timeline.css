@@ -302,6 +302,21 @@
   display: block;
 }
 
+.timeline-panel__canvas-content {
+  position: relative;
+}
+
+.timeline-panel__canvas-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 1;
+  border-left: 1px solid #ff5d73;
+  pointer-events: none;
+  will-change: transform;
+}
+
 .timeline-panel__canvas-viewport::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -784,7 +799,9 @@
 }
 
 .timeline-panel__ruler-playhead {
+  left: 0;
   border-left-color: #ff5d73;
+  will-change: transform;
 }
 
 .timeline-panel__ruler-playhead::after {

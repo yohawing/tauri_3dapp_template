@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { CompactNumberInput } from "../components/controls/CompactControls";
 import { RangeViewport, type RangeViewportValue } from "../components/controls/RangeViewport";
 import { runtimeTimelineDataSource } from "../timeline/adapters/gltfProjectionDataSource";
@@ -212,7 +212,6 @@ function paintTimeline(
   keyColumns: readonly TimelineKeyColumn[],
   pixelsPerSecond: number,
   timeEnd: number,
-  playheadTime: number,
   range: { enabled: boolean; start: number; end: number },
 ) {
   const canvasWidth = Math.max(1, timeEnd * pixelsPerSecond);
@@ -291,13 +290,17 @@ function paintTimeline(
     context.stroke();
   }
 
-  const playheadX = transform.timeToX(playheadTime) + 0.5;
-  context.strokeStyle = "#ff5d73";
-  context.lineWidth = 1;
-  context.beginPath();
-  context.moveTo(playheadX, 0);
-  context.lineTo(playheadX, height);
-  context.stroke();
+}
+
+function hasSamePlaybackMetadata(
+  current: TimelinePlaybackSnapshot | null,
+  next: TimelinePlaybackSnapshot,
+): boolean {
+  return current !== null &&
+    current.available === next.available &&
+    current.instanceId === next.instanceId &&
+    current.clipIndex === next.clipIndex &&
+    current.duration === next.duration;
 }
 
 export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelineProps) {
@@ -307,6 +310,10 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
     dataSource.getRevision,
   );
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const canvasPlayheadRef = useRef<HTMLDivElement>(null);
+  const rulerPlayheadRef = useRef<HTMLDivElement>(null);
+  const frameReadoutRef = useRef<HTMLSpanElement>(null);
+  const timeReadoutRef = useRef<HTMLSpanElement>(null);
   const treeRowsRef = useRef<HTMLDivElement>(null);
   const rulerRef = useRef<HTMLDivElement>(null);
   const canvasViewportRef = useRef<HTMLDivElement>(null);
@@ -317,6 +324,8 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
   const [isPlaying, setIsPlaying] = useState(false);
   const [loop, setLoop] = useState(false);
   const [nativePlayback, setNativePlayback] = useState<TimelinePlaybackSnapshot | null>(null);
+  const nativePlaybackRef = useRef<TimelinePlaybackSnapshot | null>(null);
+  const playheadTimeRef = useRef(PLAYHEAD_TIME);
   const [rangeEnabled, setRangeEnabled] = useState(true);
   const [rangeStart, setRangeStart] = useState(2);
   const [rangeEnd, setRangeEnd] = useState(9.5);
@@ -342,11 +351,26 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
     [dataSource, revision],
   );
 
+  const presentPlayhead = useCallback((time: number) => {
+    const clamped = Math.min(timeEnd, Math.max(0, time));
+    playheadTimeRef.current = clamped;
+    const offset = `${clamped * pixelsPerSecond}px`;
+    if (canvasPlayheadRef.current) canvasPlayheadRef.current.style.transform = `translateX(${offset})`;
+    if (rulerPlayheadRef.current) rulerPlayheadRef.current.style.transform = `translateX(${offset})`;
+    if (frameReadoutRef.current) {
+      frameReadoutRef.current.textContent =
+        `${String(Math.round(clamped * 24)).padStart(4, "0")} / ${String(Math.round(timeEnd * 24)).padStart(4, "0")}`;
+    }
+    if (timeReadoutRef.current) timeReadoutRef.current.textContent = `${clamped.toFixed(2)} s`;
+  }, [pixelsPerSecond, timeEnd]);
+
+  useEffect(() => presentPlayhead(playheadTimeRef.current), [presentPlayhead]);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const paint = () =>
-      paintTimeline(canvas, rows, items, keys, keyColumns, pixelsPerSecond, timeEnd, playheadTime, {
+      paintTimeline(canvas, rows, items, keys, keyColumns, pixelsPerSecond, timeEnd, {
         enabled: rangeEnabled,
         start: rangeStart,
         end: rangeEnd,
@@ -354,7 +378,7 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
     paint();
     window.addEventListener("resize", paint);
     return () => window.removeEventListener("resize", paint);
-  }, [items, keyColumns, keys, pixelsPerSecond, rows, timeEnd, playheadTime, rangeEnabled, rangeStart, rangeEnd]);
+  }, [items, keyColumns, keys, pixelsPerSecond, rows, timeEnd, rangeEnabled, rangeStart, rangeEnd]);
 
   useEffect(() => {
     let disposed = false;
@@ -382,8 +406,11 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
       }
       if (!snapshot.available || snapshot.revision < latestRevision) return;
       latestRevision = snapshot.revision;
-      setNativePlayback(snapshot);
-      setPlayheadTime(projectTimelinePlaybackTime(snapshot));
+      nativePlaybackRef.current = snapshot;
+      setNativePlayback((current) => hasSamePlaybackMetadata(current, snapshot) ? current : snapshot);
+      const projectedTime = projectTimelinePlaybackTime(snapshot);
+      presentPlayhead(projectedTime);
+      if (!snapshot.playing) setPlayheadTime(projectedTime);
       setIsPlaying(snapshot.playing);
       setLoop(snapshot.looping);
       setRangeEnabled(false);
@@ -440,36 +467,41 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
       disposed = true;
       unlisten?.();
     };
-  }, []);
+  }, [presentPlayhead]);
 
   useEffect(() => {
-    if (!nativePlayback?.playing) return;
+    if (!isPlaying || !nativePlayback) return;
     let animationFrame = 0;
     const updateProjectedTime = () => {
-      setPlayheadTime(projectTimelinePlaybackTime(nativePlayback));
+      const snapshot = nativePlaybackRef.current;
+      if (snapshot?.playing) presentPlayhead(projectTimelinePlaybackTime(snapshot));
       animationFrame = window.requestAnimationFrame(updateProjectedTime);
     };
     animationFrame = window.requestAnimationFrame(updateProjectedTime);
     return () => window.cancelAnimationFrame(animationFrame);
-  }, [nativePlayback]);
+  }, [isPlaying, presentPlayhead]);
 
   useEffect(() => {
     if (nativePlayback || !isPlaying) return;
+    let current = playheadTimeRef.current;
     const timer = window.setInterval(() => {
-      setPlayheadTime((current) => {
-        const next = current + 1 / 24;
-        const start = rangeEnabled ? rangeStart : 0;
-        const end = rangeEnabled ? rangeEnd : timeEnd;
-        if (next >= end) {
-          if (loop) return start;
+      const next = current + 1 / 24;
+      const start = rangeEnabled ? rangeStart : 0;
+      const end = rangeEnabled ? rangeEnd : timeEnd;
+      if (next >= end) {
+        current = loop ? start : end;
+        presentPlayhead(current);
+        if (!loop) {
+          setPlayheadTime(current);
           setIsPlaying(false);
-          return end;
         }
-        return next;
-      });
+        return;
+      }
+      current = next;
+      presentPlayhead(current);
     }, 1000 / 24);
     return () => window.clearInterval(timer);
-  }, [nativePlayback, isPlaying, loop, rangeEnabled, rangeStart, rangeEnd, timeEnd]);
+  }, [nativePlayback, isPlaying, loop, rangeEnabled, rangeStart, rangeEnd, timeEnd, presentPlayhead]);
 
   useEffect(() => {
     const viewport = canvasViewportRef.current;
@@ -599,17 +631,22 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
   };
   const seekTo = (time: number) => {
     const clamped = Math.min(timeEnd, Math.max(0, time));
+    const snapshot = nativePlaybackRef.current;
+    if (snapshot) {
+      nativePlaybackRef.current = { ...snapshot, time: clamped, sampledAtUnixMs: Date.now() };
+    }
+    presentPlayhead(clamped);
     setPlayheadTime(clamped);
     sendNative("seek", clamped);
   };
   const nudgePlayhead = (delta: number) => {
     const min = rangeEnabled ? rangeStart : 0;
     const max = rangeEnabled ? rangeEnd : timeEnd;
-    seekTo(Math.min(max, Math.max(min, playheadTime + delta)));
+    seekTo(Math.min(max, Math.max(min, playheadTimeRef.current + delta)));
   };
   const jumpTo = (time: number) => seekTo(time);
-  const jumpToPreviousKey = () => jumpTo(Math.max(0, Math.ceil(playheadTime) - 1));
-  const jumpToNextKey = () => jumpTo(Math.min(timeEnd, Math.floor(playheadTime) + 1));
+  const jumpToPreviousKey = () => jumpTo(Math.max(0, Math.ceil(playheadTimeRef.current) - 1));
+  const jumpToNextKey = () => jumpTo(Math.min(timeEnd, Math.floor(playheadTimeRef.current) + 1));
 
   return (
     <section className="timeline-panel" aria-label="Timeline editor preview">
@@ -641,6 +678,16 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
             aria-pressed={isPlaying}
             onClick={() => {
               const next = !isPlaying;
+              const snapshot = nativePlaybackRef.current;
+              if (snapshot) {
+                nativePlaybackRef.current = {
+                  ...snapshot,
+                  playing: next,
+                  time: playheadTimeRef.current,
+                  sampledAtUnixMs: Date.now(),
+                };
+              }
+              if (!next) setPlayheadTime(playheadTimeRef.current);
               setIsPlaying(next);
               sendNative(next ? "play" : "pause");
             }}
@@ -657,11 +704,13 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
             aria-pressed={loop}
             onClick={() => {
               const next = !loop;
+              const snapshot = nativePlaybackRef.current;
+              if (snapshot) nativePlaybackRef.current = { ...snapshot, looping: next };
               setLoop(next);
               sendNative("setLooping", next);
             }}
           >↔</button>
-          <span className="timeline-panel__frame">{String(Math.round(playheadTime * 24)).padStart(4, "0")} / {String(Math.round(timeEnd * 24)).padStart(4, "0")}</span>
+          <span className="timeline-panel__frame" ref={frameReadoutRef}>{String(Math.round(playheadTime * 24)).padStart(4, "0")} / {String(Math.round(timeEnd * 24)).padStart(4, "0")}</span>
           <span className="timeline-panel__divider" />
           <button className="timeline-tool timeline-tool--active" type="button">Select</button>
           <button className="timeline-tool" type="button" disabled title="Snapping is preview-only">Snap</button>
@@ -678,7 +727,7 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
           </div>
           <div className="timeline-panel__readout">
             <span className="timeline-panel__status-dot" />
-            <span>{playheadTime.toFixed(2)} s</span>
+            <span ref={timeReadoutRef}>{playheadTime.toFixed(2)} s</span>
             <span className="timeline-panel__fps">24 fps</span>
             <label className="timeline-panel__zoom">
               Zoom
@@ -731,10 +780,7 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
                 <span>{String(second).padStart(2, "0")}:00</span>
               </div>
             ))}
-            <div
-              className="timeline-panel__ruler-playhead"
-              style={{ left: Math.min(playheadTime, timeEnd) * pixelsPerSecond }}
-            />
+            <div className="timeline-panel__ruler-playhead" ref={rulerPlayheadRef} />
           </div>
         </div>
 
@@ -765,7 +811,13 @@ export function Timeline({ dataSource = runtimeTimelineDataSource }: TimelinePro
         </div>
 
         <div className="timeline-panel__canvas-viewport" ref={canvasViewportRef} onScroll={handleScroll}>
-          <canvas ref={canvasRef} aria-label="Timeline tracks" />
+          <div
+            className="timeline-panel__canvas-content"
+            style={{ width: canvasWidth, height: rows.length * ROW_HEIGHT }}
+          >
+            <canvas ref={canvasRef} aria-label="Timeline tracks" />
+            <div className="timeline-panel__canvas-playhead" ref={canvasPlayheadRef} aria-hidden="true" />
+          </div>
         </div>
       </div>
     </section>
