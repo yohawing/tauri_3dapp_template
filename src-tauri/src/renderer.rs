@@ -9,6 +9,7 @@ use kiss3d::prelude::{
     SceneNode3d, Vec3, Window, BLACK, ORANGE,
 };
 
+use crate::performance::{target_from_env, PerformanceSampler};
 use crate::protocol::{CameraState, ViewportRect};
 use crate::scene::{ResolvedAssetPath, Scene, SceneInstance};
 use crate::scene_projection::{
@@ -107,6 +108,8 @@ pub struct Renderer {
     scene_label: String,
     default_node_id: String,
     camera: OrbitCamera3d,
+    performance_target: Option<(u32, u32)>,
+    performance_sampler: Option<PerformanceSampler>,
 }
 
 impl Renderer {
@@ -128,6 +131,7 @@ impl Renderer {
         let cube = scene.add_cube(0.5, 0.5, 0.5).set_color(ORANGE);
         let camera = OrbitCamera3d::new(Vec3::new(3.0, 1.5, -3.0), Vec3::ZERO);
 
+        let performance_target = target_from_env();
         Renderer {
             window: kiss_window,
             scene,
@@ -137,6 +141,8 @@ impl Renderer {
             scene_label: "Scene".to_string(),
             default_node_id: CUBE_ID.to_string(),
             camera,
+            performance_target,
+            performance_sampler: PerformanceSampler::from_env(),
         }
     }
 
@@ -159,6 +165,7 @@ impl Renderer {
 
         let runtime = build_runtime_scene(scene_document, resolved_assets)?;
 
+        let performance_target = target_from_env();
         Ok(Renderer {
             window: kiss_window,
             scene: runtime.scene,
@@ -168,6 +175,8 @@ impl Renderer {
             scene_label: runtime.scene_label,
             default_node_id: runtime.default_node_id,
             camera: OrbitCamera3d::new(Vec3::new(3.0, 1.5, -3.0), Vec3::ZERO),
+            performance_target,
+            performance_sampler: PerformanceSampler::from_env(),
         })
     }
 
@@ -204,8 +213,11 @@ impl Renderer {
     }
 
     pub fn set_viewport_rect(&mut self, rect: ViewportRect) {
-        self.window
-            .set_render_viewport(Some(viewport_rect_to_physical(rect)));
+        let viewport = self
+            .performance_target
+            .map(|(width, height)| RenderViewport::new(0, 0, width, height))
+            .unwrap_or_else(|| viewport_rect_to_physical(rect));
+        self.window.set_render_viewport(Some(viewport));
     }
 
     pub fn render(&mut self) {
@@ -214,6 +226,12 @@ impl Renderer {
         }
         draw_reference_grid_and_axes(&mut self.window);
         let _ = pollster::block_on(self.window.render_3d(&mut self.scene, &mut self.camera));
+        if let (Some(sampler), Some(timings)) = (
+            self.performance_sampler.as_mut(),
+            self.window.render_timings(),
+        ) {
+            sampler.observe(timings, self.performance_target);
+        }
     }
 
     pub fn has_node(&self, node_id: &str) -> bool {

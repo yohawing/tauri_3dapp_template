@@ -1,4 +1,5 @@
 mod camera;
+mod performance;
 mod protocol;
 mod renderer;
 mod renderer_status;

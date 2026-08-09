@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { CanvasPerformanceSampler, parsePerformanceTarget } from "./performanceSampler";
 
 /**
  * Fixed IPC shape shared with the Rust side (see src-tauri/src/protocol.rs
@@ -93,8 +94,16 @@ export function mountCanvasBackend(
   // otherwise make identical RGB triples look visibly different here — turn
   // it off so the "same numbers" are actually the same pixels.
   renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
-  renderer.setPixelRatio(window.devicePixelRatio);
-  renderer.setSize(width, height);
+  const performanceTarget = parsePerformanceTarget(import.meta.env.VITE_PERF_TARGET);
+  if (performanceTarget) {
+    camera.aspect = performanceTarget[0] / performanceTarget[1];
+    camera.updateProjectionMatrix();
+    renderer.setPixelRatio(1);
+    renderer.setSize(performanceTarget[0], performanceTarget[1], false);
+  } else {
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(width, height);
+  }
   // Absolutely positioned to fill the host, and behind the (already-mounted)
   // overlay div, which relies on host's `position: relative` + DOM order for
   // its own stacking today. Pin z-index explicitly so appending the canvas
@@ -120,9 +129,21 @@ export function mountCanvasBackend(
   controls.update();
 
   let disposed = false;
+  const performanceSampleFrames = Number.parseInt(import.meta.env.VITE_PERF_SAMPLE_FRAMES ?? "", 10);
+  const performanceSampler =
+    performanceTarget && Number.isFinite(performanceSampleFrames) && performanceSampleFrames > 0
+      ? new CanvasPerformanceSampler(
+          performanceTarget[0],
+          performanceTarget[1],
+          performanceSampleFrames,
+        )
+      : null;
 
   function render() {
+    const startedAt = performance.now();
     renderer.render(scene, camera);
+    const summary = performanceSampler?.observe(startedAt, performance.now() - startedAt);
+    if (summary) console.info(`[perf] ${JSON.stringify(summary)}`);
   }
   controls.addEventListener("change", render);
 
@@ -139,7 +160,7 @@ export function mountCanvasBackend(
     const h = Math.max(host.clientHeight, 1);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
-    renderer.setSize(w, h);
+    if (!performanceTarget) renderer.setSize(w, h);
     render();
   });
   resizeObserver.observe(host);

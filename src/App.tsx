@@ -88,7 +88,9 @@ function App() {
   const layoutSubRef = useRef<DockviewIDisposable | null>(null);
   const addGroupSubRef = useRef<DockviewIDisposable | null>(null);
   const [inspectorVisible, setInspectorVisible] = useState(true);
-  const [viewportMode, setViewportMode] = useState<ViewportMode>("native");
+  const [viewportMode, setViewportMode] = useState<ViewportMode>(() =>
+    import.meta.env.VITE_PERF_BACKEND === "canvas" ? "canvas" : "native",
+  );
   const [rendererStatus, setRendererStatus] = useState<RendererStatus>(AVAILABLE_RENDERER_STATUS);
   const [consoleVisible, setConsoleVisible] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
