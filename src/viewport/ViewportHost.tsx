@@ -16,6 +16,9 @@ interface ViewportRect {
 }
 
 export type ViewportMode = "native" | "canvas";
+export type CameraProjection = "perspective" | "orthographic";
+export type CameraViewPreset = "front" | "right" | "top" | "perspective";
+export type CameraFov = 30 | 45 | 60 | 90;
 
 // Escape hatch for the dock shell: dockview's onDidLayoutChange fires when a
 // panel is moved without being resized (e.g. swapping left/right groups),
@@ -69,6 +72,22 @@ interface ViewportHostProps {
   showDebugOverlay?: boolean;
   fallbackReason?: string | null;
   recoveryHint?: string | null;
+  displayMode?: "lit" | "wireframe";
+  showGrid?: boolean;
+  showBones?: boolean;
+  projection?: CameraProjection;
+  fov?: CameraFov;
+  viewPreset?: CameraViewPreset;
+  onDisplaySettingsChange?: (patch: {
+    displayMode?: "lit" | "wireframe";
+    showGrid?: boolean;
+    showBones?: boolean;
+  }) => void;
+  onCameraSettingsChange?: (patch: {
+    projection?: CameraProjection;
+    fov?: CameraFov;
+  }) => void;
+  onCameraViewChange?: (preset: CameraViewPreset) => void;
 }
 
 /**
@@ -83,10 +102,51 @@ export function ViewportHost({
   showDebugOverlay = true,
   fallbackReason = null,
   recoveryHint = null,
+  displayMode = "lit",
+  showGrid = true,
+  showBones = false,
+  projection = "perspective",
+  fov = 45,
+  viewPreset = "perspective",
+  onDisplaySettingsChange,
+  onCameraSettingsChange,
+  onCameraViewChange,
 }: ViewportHostProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const rafIdRef = useRef<number | null>(null);
   const [lastRect, setLastRect] = useState<ViewportRect | null>(null);
+  const [showMenu, setShowMenu] = useState(false);
+  const [showCameraMenu, setShowCameraMenu] = useState(
+    () => Boolean(import.meta.env.VITE_VIEWPORT_CAMERA_MENU_SELF_TEST),
+  );
+
+  useEffect(() => {
+    if (mode !== "native" || !("__TAURI_INTERNALS__" in window)) return;
+    void safeInvoke("set_viewport_display", {
+      mode: displayMode,
+      showGrid,
+      showBones,
+    });
+  }, [displayMode, mode, showBones, showGrid]);
+
+  useEffect(() => {
+    if (mode !== "native" || !("__TAURI_INTERNALS__" in window)) return;
+    void safeInvoke("set_camera_settings", {
+      settings: { projection, fovDegrees: fov },
+    });
+  }, [fov, mode, projection]);
+
+  useEffect(() => {
+    if (!showMenu && !showCameraMenu) return;
+    const close = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setShowMenu(false);
+        setShowCameraMenu(false);
+      }
+    };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [showCameraMenu, showMenu]);
 
   // Coalesces any number of triggers (ResizeObserver, window resize, DPI
   // change) into at most one measurement + invoke per animation frame.
@@ -220,9 +280,140 @@ export function ViewportHost({
   }, [mode]);
 
   const browserNativePreview = mode === "native" && !("__TAURI_INTERNALS__" in window);
+  const cameraLabel = `${viewPreset[0].toUpperCase()}${viewPreset.slice(1)} · ${
+    projection === "perspective" ? "Perspective" : "Orthographic"
+  } · ${fov}°`;
+
+  const chooseCameraView = (preset: CameraViewPreset) => {
+    setShowCameraMenu(false);
+    onCameraViewChange?.(preset);
+  };
 
   return (
     <div ref={hostRef} className={`viewport-host${browserNativePreview ? " viewport-host--browser-preview" : ""}`}>
+      <div
+        className="viewport-host__toolbar"
+        onPointerDown={(event) => event.stopPropagation()}
+        onPointerMove={(event) => event.stopPropagation()}
+      >
+        <div className="viewport-host__mode-group" role="group" aria-label="Viewport display mode">
+          <button
+            type="button"
+            className={`viewport-host__tool-button${displayMode === "lit" ? " is-active" : ""}`}
+            aria-pressed={displayMode === "lit"}
+            disabled={mode !== "native"}
+            onClick={() => onDisplaySettingsChange?.({ displayMode: "lit" })}
+          >
+            Lit
+          </button>
+          <button
+            type="button"
+            className={`viewport-host__tool-button${displayMode === "wireframe" ? " is-active" : ""}`}
+            aria-pressed={displayMode === "wireframe"}
+            disabled={mode !== "native"}
+            onClick={() => onDisplaySettingsChange?.({ displayMode: "wireframe" })}
+          >
+            Wireframe
+          </button>
+        </div>
+        <div className="viewport-host__camera-menu">
+          <button
+            type="button"
+            className={`viewport-host__tool-button${showCameraMenu ? " is-active" : ""}`}
+            aria-expanded={showCameraMenu}
+            aria-haspopup="menu"
+            disabled={mode !== "native"}
+            onClick={() => setShowCameraMenu((open) => !open)}
+          >
+            Camera: {cameraLabel} ▾
+          </button>
+          {showCameraMenu && (
+            <div className="viewport-host__camera-popover" role="menu" aria-label="Camera settings">
+              <div className="viewport-host__camera-section">
+                <span className="viewport-host__camera-heading">Projection</span>
+                <div className="viewport-host__camera-options">
+                  {(["perspective", "orthographic"] as const).map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      className={`viewport-host__camera-option${projection === option ? " is-active" : ""}`}
+                      disabled={mode !== "native"}
+                      onClick={() => onCameraSettingsChange?.({ projection: option })}
+                    >
+                      {option[0].toUpperCase() + option.slice(1)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="viewport-host__camera-section">
+                <span className="viewport-host__camera-heading">FOV</span>
+                <div className="viewport-host__camera-options">
+                  {([30, 45, 60, 90] as const).map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      className={`viewport-host__camera-option${fov === option ? " is-active" : ""}`}
+                      disabled={mode !== "native"}
+                      onClick={() => onCameraSettingsChange?.({ fov: option })}
+                    >
+                      {option}°
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="viewport-host__camera-section">
+                <span className="viewport-host__camera-heading">View</span>
+                <div className="viewport-host__camera-options viewport-host__camera-options--views">
+                  {(["front", "right", "top", "perspective"] as const).map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      className={`viewport-host__camera-option${viewPreset === option ? " is-active" : ""}`}
+                      disabled={mode !== "native"}
+                      onClick={() => chooseCameraView(option)}
+                    >
+                      {option[0].toUpperCase() + option.slice(1)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="viewport-host__show-menu">
+          <button
+            type="button"
+            className={`viewport-host__tool-button${showMenu ? " is-active" : ""}`}
+            aria-expanded={showMenu}
+            aria-haspopup="menu"
+            onClick={() => setShowMenu((open) => !open)}
+          >
+            Show ▾
+          </button>
+          {showMenu && (
+            <div className="viewport-host__show-popover" role="menu">
+              <label className={`viewport-host__show-item${mode !== "native" ? " is-disabled" : ""}`}>
+                <input
+                  type="checkbox"
+                  checked={showGrid}
+                  disabled={mode !== "native"}
+                  onChange={(event) => onDisplaySettingsChange?.({ showGrid: event.currentTarget.checked })}
+                />
+                <span>Grid</span>
+              </label>
+              <label className={`viewport-host__show-item${mode !== "native" ? " is-disabled" : ""}`}>
+                <input
+                  type="checkbox"
+                  checked={showBones}
+                  disabled={mode !== "native"}
+                  onChange={(event) => onDisplaySettingsChange?.({ showBones: event.currentTarget.checked })}
+                />
+                <span>Bones</span>
+              </label>
+            </div>
+          )}
+        </div>
+      </div>
       {browserNativePreview && <span className="viewport-host__preview-label">native wgpu surface (transparent DOM hole)</span>}
       {mode === "canvas" && fallbackReason && (
         <div className="viewport-host__fallback" role="status">

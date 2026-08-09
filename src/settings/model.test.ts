@@ -28,10 +28,17 @@ describe("settings persistence", () => {
     expect(first).not.toBe(DEFAULT_SETTINGS);
   });
 
-  it("restores a saved v1 payload", () => {
+  it("restores a saved v2 payload", () => {
     const storage = new MemoryStorage();
     const settings = {
-      viewport: { debugOverlay: false },
+      viewport: {
+        debugOverlay: false,
+        displayMode: "wireframe" as const,
+        showGrid: false,
+        showBones: true,
+        projection: "orthographic" as const,
+        fov: 60 as const,
+      },
       console: { minimumLevel: "warn" as const, autoScroll: false },
     };
 
@@ -72,12 +79,48 @@ describe("settings persistence", () => {
     );
 
     expect(loadSettings(storage)).toEqual({
-      viewport: { debugOverlay: false },
+      viewport: { ...DEFAULT_SETTINGS.viewport, debugOverlay: false },
       console: {
         minimumLevel: DEFAULT_SETTINGS.console.minimumLevel,
         autoScroll: DEFAULT_SETTINGS.console.autoScroll,
       },
     });
+  });
+
+  it("keeps new viewport flags backward-compatible with an older v1 payload", () => {
+    const storage = new MemoryStorage();
+    storage.setItem(
+      SETTINGS_STORAGE_KEY,
+      JSON.stringify({
+        version: 1,
+        settings: {
+          viewport: { debugOverlay: true },
+          console: { minimumLevel: "info", autoScroll: true },
+        },
+      }),
+    );
+
+    expect(loadSettings(storage)).toEqual({
+      ...DEFAULT_SETTINGS,
+      viewport: { ...DEFAULT_SETTINGS.viewport, debugOverlay: true },
+    });
+  });
+
+  it("accepts v1 camera-less settings and applies camera defaults", () => {
+    const storage = new MemoryStorage();
+    storage.setItem(
+      SETTINGS_STORAGE_KEY,
+      JSON.stringify({
+        version: 1,
+        settings: {
+          viewport: { displayMode: "lit", showGrid: true, showBones: false },
+          console: { minimumLevel: "info", autoScroll: true },
+        },
+      }),
+    );
+
+    expect(loadSettings(storage).viewport.projection).toBe(DEFAULT_SETTINGS.viewport.projection);
+    expect(loadSettings(storage).viewport.fov).toBe(DEFAULT_SETTINGS.viewport.fov);
   });
 
   it("does not throw when the storage implementation fails", () => {

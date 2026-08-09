@@ -6,12 +6,15 @@ use std::time::Instant;
 
 use kiss3d::color::Color;
 use kiss3d::prelude::{
-    AnimationPlayer, CanvasSetup, Light, NumSamples, OrbitCamera3d, Quat, RenderViewport,
-    SceneNode3d, Vec3, Window, BLACK, ORANGE,
+    AnimationPlayer, Camera3d, CanvasSetup, Light, NumSamples, OrbitCamera3d, Projection, Quat,
+    RenderViewport, SceneNode3d, Vec3, Window, BLACK, ORANGE,
 };
 
 use crate::performance::{target_from_env, PerformanceSampler};
-use crate::protocol::{CameraState, ViewportRect};
+use crate::protocol::{
+    CameraProjection, CameraSettings, CameraState, ViewportDisplayMode, ViewportDisplaySettings,
+    ViewportRect,
+};
 use crate::scene::{ResolvedAssetPath, Scene, SceneInstance};
 use crate::scene_projection::{
     SceneCommand, SceneMaterial, SceneNodeSummary, SceneProjection, SceneTransform,
@@ -30,6 +33,8 @@ const GRID_MAJOR_COLOR: Color = Color::new(0.28, 0.31, 0.37, 1.0);
 const X_AXIS_COLOR: Color = Color::new(0.95, 0.20, 0.20, 1.0);
 const Y_AXIS_COLOR: Color = Color::new(0.20, 0.85, 0.30, 1.0);
 const Z_AXIS_COLOR: Color = Color::new(0.25, 0.45, 1.00, 1.0);
+const BONE_COLOR: Color = Color::new(1.0, 0.65, 0.15, 1.0);
+const BONE_OVERLAY_DEPTH_BIAS: f32 = 0.995;
 
 #[derive(Debug)]
 pub enum RendererError {
@@ -96,6 +101,7 @@ struct RuntimeInstance {
     id: String,
     root: SceneNode3d,
     player: AnimationPlayer,
+    bone_edges: Vec<(SceneNode3d, SceneNode3d)>,
 }
 
 struct RuntimeScene {
@@ -121,6 +127,8 @@ pub struct Renderer {
     scene_label: String,
     default_node_id: String,
     camera: OrbitCamera3d,
+    camera_settings: CameraSettings,
+    display: ViewportDisplaySettings,
     performance_target: Option<(u32, u32)>,
     performance_sampler: Option<PerformanceSampler>,
     animation_clock: Instant,
@@ -155,6 +163,8 @@ impl Renderer {
             scene_label: "Scene".to_string(),
             default_node_id: CUBE_ID.to_string(),
             camera,
+            camera_settings: CameraSettings::default(),
+            display: ViewportDisplaySettings::default(),
             performance_target,
             performance_sampler: PerformanceSampler::from_env(),
             animation_clock: Instant::now(),
@@ -190,6 +200,8 @@ impl Renderer {
             scene_label: runtime.scene_label,
             default_node_id: runtime.default_node_id,
             camera: OrbitCamera3d::new(Vec3::new(3.0, 1.5, -3.0), Vec3::ZERO),
+            camera_settings: CameraSettings::default(),
+            display: ViewportDisplaySettings::default(),
             performance_target,
             performance_sampler: PerformanceSampler::from_env(),
             animation_clock: Instant::now(),
@@ -223,6 +235,7 @@ impl Renderer {
         self.scene_label = runtime.scene_label;
         self.default_node_id = runtime.default_node_id;
         self.animation_clock = Instant::now();
+        self.apply_display_mode(self.display.mode);
         Ok(())
     }
 
@@ -241,12 +254,57 @@ impl Renderer {
         self.camera.look_at(eye, target);
     }
 
+    /// Apply editor-only projection/FOV settings to the Native camera. The
+    /// orbit pose remains owned by `CameraState`; changing these values never
+    /// alters target, yaw, pitch, or distance.
+    pub fn set_camera_settings(&mut self, settings: CameraSettings) {
+        self.camera.set_projection(match settings.projection {
+            CameraProjection::Perspective => Projection::Perspective,
+            CameraProjection::Orthographic => Projection::Orthographic,
+        });
+        self.camera.set_fov(
+            settings
+                .fov_degrees
+                .to_radians()
+                .clamp(0.01, std::f32::consts::PI - 0.01),
+        );
+        // OrbitCamera3d::set_fov updates the stored value but (in the vendor
+        // API) does not rebuild projection matrices. Re-running look_at keeps
+        // the current eye/target and refreshes the derived matrices.
+        let eye = self.camera.eye();
+        let target = self.camera.at();
+        self.camera.look_at(eye, target);
+        self.camera_settings = settings;
+    }
+
     pub fn set_viewport_rect(&mut self, rect: ViewportRect) {
         let viewport = self
             .performance_target
             .map(|(width, height)| RenderViewport::new(0, 0, width, height))
             .unwrap_or_else(|| viewport_rect_to_physical(rect));
         self.window.set_render_viewport(Some(viewport));
+    }
+
+    /// Apply transient editor-only display flags to the current Native scene.
+    /// Scene JSON and authored material values are intentionally untouched.
+    pub fn set_viewport_display(&mut self, settings: ViewportDisplaySettings) {
+        if self.display.mode != settings.mode {
+            self.apply_display_mode(settings.mode);
+        }
+        self.display = settings;
+    }
+
+    fn apply_display_mode(&mut self, mode: ViewportDisplayMode) {
+        match mode {
+            ViewportDisplayMode::Lit => {
+                self.scene.set_surface_rendering_activation_recursive(true);
+                self.scene.set_lines_width_recursive(0.0, false);
+            }
+            ViewportDisplayMode::Wireframe => {
+                self.scene.set_surface_rendering_activation_recursive(false);
+                self.scene.set_lines_width_recursive(1.5, false);
+            }
+        }
     }
 
     pub fn render(&mut self) {
@@ -262,7 +320,12 @@ impl Renderer {
         if let Some(cube) = self.cube.as_mut() {
             cube.rotate(Quat::from_axis_angle(Vec3::Y, 0.006));
         }
-        draw_reference_grid_and_axes(&mut self.window);
+        if self.display.show_grid {
+            draw_reference_grid_and_axes(&mut self.window);
+        }
+        if self.display.show_bones {
+            draw_bone_edges(&mut self.window, &self.instances);
+        }
         let _ = pollster::block_on(self.window.render_3d(&mut self.scene, &mut self.camera));
         if let (Some(sampler), Some(timings)) = (
             self.performance_sampler.as_mut(),
@@ -516,7 +579,7 @@ fn build_runtime_scene(
         })?;
         let (translation, rotation, scale) = instance_runtime_transform(instance)?;
 
-        let (mut root, player) = match asset.kind.as_str() {
+        let (mut root, player, bone_edges) = match asset.kind.as_str() {
             "gltf" => {
                 let loaded = catch_unwind(AssertUnwindSafe(|| kiss3d::loader::gltf::load(path)))
                     .map_err(|_| RendererError::AssetLoad {
@@ -531,7 +594,7 @@ fn build_runtime_scene(
                         path: path.display().to_string(),
                         message: error.to_string(),
                     })?;
-                (loaded.root, loaded.player)
+                (loaded.root, loaded.player, loaded.skeleton_edges)
             }
             "fbx" => {
                 let loaded = catch_unwind(AssertUnwindSafe(|| kiss3d::loader::fbx::load(path)))
@@ -551,7 +614,7 @@ fn build_runtime_scene(
                 if player.clip_count() > 0 {
                     player.play_index(0);
                 }
-                (loaded.root, player)
+                (loaded.root, player, loaded.skeleton_edges)
             }
             kind => {
                 return Err(RendererError::AssetLoad {
@@ -572,6 +635,7 @@ fn build_runtime_scene(
             id: instance.id.clone(),
             root,
             player,
+            bone_edges,
         });
     }
 
@@ -622,6 +686,25 @@ fn draw_reference_grid_and_axes(window: &mut Window) {
     window.draw_line(Vec3::ZERO, Vec3::X * AXIS_LENGTH, X_AXIS_COLOR, 2.5, false);
     window.draw_line(Vec3::ZERO, Vec3::Y * AXIS_LENGTH, Y_AXIS_COLOR, 2.5, false);
     window.draw_line(Vec3::ZERO, Vec3::Z * AXIS_LENGTH, Z_AXIS_COLOR, 2.5, false);
+}
+
+fn draw_bone_edges(window: &mut Window, instances: &[RuntimeInstance]) {
+    for instance in instances {
+        for (parent, child) in &instance.bone_edges {
+            let parent_position = parent.world_matrix().transform_point3(Vec3::ZERO);
+            let child_position = child.world_matrix().transform_point3(Vec3::ZERO);
+            if parent_position.is_finite() && child_position.is_finite() {
+                window.draw_line_with_depth_bias(
+                    parent_position,
+                    child_position,
+                    BONE_COLOR,
+                    2.5,
+                    false,
+                    BONE_OVERLAY_DEPTH_BIAS,
+                );
+            }
+        }
+    }
 }
 
 fn viewport_rect_to_physical(rect: ViewportRect) -> RenderViewport {
@@ -769,6 +852,7 @@ mod tests {
             id: "box-instance".to_string(),
             root,
             player: AnimationPlayer::new(Vec::new()),
+            bone_edges: Vec::new(),
         });
         assert_eq!(summary.id, "box-instance");
         assert_eq!(summary.label, "box-instance");

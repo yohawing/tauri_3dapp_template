@@ -16,6 +16,85 @@ pub struct ViewportRect {
     pub scale_factor: f32,
 }
 
+/// Editor-only Native viewport display flags. These are deliberately kept out
+/// of Scene JSON; the WebView persists them through its versioned Settings
+/// envelope while Native remains authoritative for the active renderer.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ViewportDisplaySettings {
+    pub mode: ViewportDisplayMode,
+    pub show_grid: bool,
+    pub show_bones: bool,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ViewportDisplayMode {
+    Lit,
+    Wireframe,
+}
+
+impl Default for ViewportDisplaySettings {
+    fn default() -> Self {
+        Self {
+            mode: ViewportDisplayMode::Lit,
+            show_grid: true,
+            show_bones: false,
+        }
+    }
+}
+
+/// Editor-only camera projection. Kept separate from `CameraState` so Scene
+/// JSON continues to serialize only target/orbit pose and Native↔Canvas
+/// handoff remains backwards-compatible.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CameraProjection {
+    Perspective,
+    Orthographic,
+}
+
+impl Default for CameraProjection {
+    fn default() -> Self {
+        Self::Perspective
+    }
+}
+
+/// View orientations offered by the Native viewport Camera menu.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CameraViewPreset {
+    Front,
+    Right,
+    Top,
+    Perspective,
+}
+
+impl Default for CameraViewPreset {
+    fn default() -> Self {
+        Self::Perspective
+    }
+}
+
+/// Transient editor camera settings. Projection and FOV are persisted by the
+/// WebView's versioned editor settings; the view preset is intentionally an
+/// action rather than Scene data.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CameraSettings {
+    pub projection: CameraProjection,
+    pub fov_degrees: f32,
+}
+
+impl Default for CameraSettings {
+    fn default() -> Self {
+        Self {
+            projection: CameraProjection::Perspective,
+            fov_degrees: 45.0,
+        }
+    }
+}
+
 /// Pointer/wheel input forwarded from the WebView's ViewportHost element via
 /// the `viewport_input` command. Generic and extensible: a new input source
 /// (keyboard, gamepad, ...) only needs a new variant here plus a match arm

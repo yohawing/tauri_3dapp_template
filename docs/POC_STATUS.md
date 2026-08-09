@@ -21,6 +21,8 @@
 | FBX skin animation／Native Timeline playback | implemented / verified | pass (2026-08-09 test＋screenshot) | 実FBX 1 clip、約24.83秒、76 animated nodes、228 channels。Play／Pause／Seek／Loopとtimestamp付きevent同期を確認 |
 | File > Import Asset | implemented / verified | pass (2026-08-09 self-test＋screenshot) | JSON手編集なしでFBX／glTF／GLBを現在Sceneへ追加。失敗時はScene／選択／保存先を保持しpath付きConsole診断 |
 | Imported Scene Save／restart／Open | implemented / verified | pass (2026-08-09 self-test＋screenshot) | 絶対asset pathを保持したまま再起動後にasset／transform／camera／Timeline metadataを復元 |
+| UE風Viewport表示設定 | implemented / verified | pass (2026-08-09 self-test＋screenshot) | Native Lit／Wireframe、Grid／Bones。FBX／glTF skin jointだけを描き、animated poseへ追従。Canvasでは操作disabled |
+| UE風Viewport Camera Controls | implemented / verified | pass (2026-08-09 test＋self-test＋screenshot) | Native Perspective／Orthographic、FOV 30／45／60／90、Front／Right／Top／Perspective。projection／FOVはsettings v2、viewは非永続。Canvasでは操作disabled |
 | DOM Menu／Shortcut | implemented / verified | pass (2026-08-08 test＋self-test) | menuとshortcutは同一Action。input／modal中の抑止をunit test済み |
 | Bounded Console drawer | implemented / verified | pass (2026-08-08 test＋screenshot) | scene／renderer／viewport／frontend、filter／Clear／Copy All／Auto-scroll、500 entry上限 |
 | Settings modal | implemented / verified | pass (2026-08-08 test＋screenshot) | overlay、Console level／Auto-scrollを即時反映し、version付きlocalStorageへ保存 |
@@ -86,6 +88,28 @@ Windows上の現行スライスは継続可。Native raster viewportの部分描
 - pass: app processを停止して再起動し、絶対pathを保持した保存SceneをOpen。Outliner／Inspector／Native Viewport、FBX animation、1 clip／228 channels Timelineを復元。
 - diagnostics: missing／parse／unsupported assetはpath付きerrorとしてOpen／Importをfail-closedにし、成功済みSceneと保存先を置換しない。
 - GUI経路: `VITE_ASSET_IMPORT_SAVE_SELF_TEST`、`VITE_ASSET_ROUNDTRIP_OPEN_SELF_TEST`、`screenshot-ui`のみ。Computer Useは未使用。
+
+## 2026-08-09 Viewport Show Flags証拠
+
+- Lit／Grid screenshot: `C:\Users\yohaw\AppData\Local\Temp\tauri3d-viewport-lit-grid.png`。
+- Wireframe／Bones screenshot: `C:\Users\yohaw\AppData\Local\Temp\tauri3d-viewport-wireframe-bones-fixed-b.png`。
+- animated Bones screenshots: `C:\Users\yohaw\AppData\Local\Temp\tauri3d-viewport-bones-motion-a.png` と `tauri3d-viewport-bones-motion-b.png`。
+- pass: Viewport toolbarのLit／WireframeとShow > Grid／Bonesをeditor-only Settingsとして保持し、`.scene.json`とasset materialを変更しない。CanvasではNative専用controlをdisabled表示する。
+- pass: FBX／glTF loaderはskinが参照するjoint同士のedgeだけを返し、mesh／group nodeを除外するfocused testが2件pass。
+- pass: FBXのancestor scaleを含むfull TRS world matrixから骨位置を取得し、depth-bias付きoverlayでmesh前面へ表示。2秒差の再生captureで腕／手の骨線とTimeline playheadがともに変化した。
+- GUI経路: `VITE_ASSET_ROUNDTRIP_OPEN_SELF_TEST`、`VITE_VIEWPORT_DISPLAY_SELF_TEST`、`screenshot-ui`のみ。Computer Useは未使用。
+
+## 2026-08-09 Viewport Camera Controls証拠
+
+- Top／Orthographic 60° screenshot: `C:\Users\yohaw\AppData\Local\Temp\tauri3d-camera-top-ortho-fixed.png`。
+- Native→Canvas→Native後のTop継続 screenshot: `C:\Users\yohaw\AppData\Local\Temp\tauri3d-camera-cycle-top-after-native.png`。
+- settings restart復元 screenshot: `C:\Users\yohaw\AppData\Local\Temp\tauri3d-camera-persisted-restart.png`。
+- Canvas disabled screenshot: `C:\Users\yohaw\AppData\Local\Temp\tauri3d-camera-canvas-disabled.png`。
+- pass: 実FBXでFront／Right／Top／Perspective presetをself-testし、Topでtarget／distanceを保持した上面表示を確認。projection／FOV／viewの現在値はtoolbarとmenuで判別可能。
+- pass: Perspective／OrthographicとFOV 30／45／60／90をversion 2 editor settingsへ保存し、version 1をcamera default付きで移行読込する。再起動後にOrthographic／60°を復元し、`.scene.json`の`CameraState`は変更しない。
+- pass: Top／Orthographic 60°からCanvasへ切り替え、Native復帰後もTop orientation／target／distanceを保持。CanvasではCamera buttonと全項目をdisabled表示する。
+- gate: frontend 34 tests、Rust 49 tests、`npm run build`、`cargo fmt --check`、`cargo check --locked`、`git diff --check`がpass。
+- GUI経路: `VITE_ASSET_ROUNDTRIP_OPEN_SELF_TEST`、`VITE_VIEWPORT_CAMERA_SELF_TEST`、`VITE_VIEWPORT_CAMERA_MENU_SELF_TEST`、`screenshot-ui`のみ。Computer Useは未使用。
 
 ## 2026-08-09 Asset playback vertical gate（partial）
 

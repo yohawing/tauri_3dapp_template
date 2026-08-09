@@ -1,5 +1,6 @@
 export const SETTINGS_STORAGE_KEY = "tauri3d.settings";
-export const SETTINGS_VERSION = 1;
+export const SETTINGS_VERSION = 2;
+const LEGACY_SETTINGS_VERSION = 1;
 
 export const CONSOLE_LEVELS = ["info", "warn", "error"] as const;
 export type ConsoleLevel = (typeof CONSOLE_LEVELS)[number];
@@ -7,6 +8,11 @@ export type ConsoleLevel = (typeof CONSOLE_LEVELS)[number];
 export interface Settings {
   viewport: {
     debugOverlay: boolean;
+    displayMode: "lit" | "wireframe";
+    showGrid: boolean;
+    showBones: boolean;
+    projection: "perspective" | "orthographic";
+    fov: 30 | 45 | 60 | 90;
   };
   console: {
     minimumLevel: ConsoleLevel;
@@ -22,6 +28,11 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   viewport: {
     debugOverlay: false,
+    displayMode: "lit",
+    showGrid: true,
+    showBones: false,
+    projection: "perspective",
+    fov: 45,
   },
   console: {
     minimumLevel: "info",
@@ -49,6 +60,14 @@ function isConsoleLevel(value: unknown): value is ConsoleLevel {
   return typeof value === "string" && (CONSOLE_LEVELS as readonly string[]).includes(value);
 }
 
+function isProjection(value: unknown): value is Settings["viewport"]["projection"] {
+  return value === "perspective" || value === "orthographic";
+}
+
+function isFov(value: unknown): value is Settings["viewport"]["fov"] {
+  return value === 30 || value === 45 || value === 60 || value === 90;
+}
+
 /**
  * Normalize a settings object without trusting values from a persisted file.
  * Unknown keys are ignored and each known key independently falls back to its
@@ -63,6 +82,21 @@ export function normalizeSettings(value: unknown): Settings {
 
   if (typeof viewport?.debugOverlay === "boolean") {
     defaults.viewport.debugOverlay = viewport.debugOverlay;
+  }
+  if (viewport?.displayMode === "lit" || viewport?.displayMode === "wireframe") {
+    defaults.viewport.displayMode = viewport.displayMode;
+  }
+  if (typeof viewport?.showGrid === "boolean") {
+    defaults.viewport.showGrid = viewport.showGrid;
+  }
+  if (typeof viewport?.showBones === "boolean") {
+    defaults.viewport.showBones = viewport.showBones;
+  }
+  if (isProjection(viewport?.projection)) {
+    defaults.viewport.projection = viewport.projection;
+  }
+  if (isFov(viewport?.fov)) {
+    defaults.viewport.fov = viewport.fov;
   }
   if (isConsoleLevel(consoleSettings?.minimumLevel)) {
     defaults.console.minimumLevel = consoleSettings.minimumLevel;
@@ -88,8 +122,9 @@ function resolveStorage(storage: SettingsStorage | null | undefined): SettingsSt
 }
 
 /**
- * Load and validate the v1 frontend settings. A missing store, malformed JSON,
- * unknown version, or storage exception is treated as an empty store.
+ * Load and validate the versioned frontend settings. Version 1 is accepted so
+ * adding camera controls does not discard an existing user's display/console
+ * preferences; newly added camera fields use their defaults.
  */
 export function loadSettings(storage?: SettingsStorage | null): Settings {
   const resolvedStorage = resolveStorage(storage);
@@ -105,7 +140,11 @@ export function loadSettings(storage?: SettingsStorage | null): Settings {
 
   try {
     const payload: unknown = JSON.parse(serialized);
-    if (!isRecord(payload) || payload.version !== SETTINGS_VERSION || !isRecord(payload.settings)) {
+    if (
+      !isRecord(payload) ||
+      (payload.version !== SETTINGS_VERSION && payload.version !== LEGACY_SETTINGS_VERSION) ||
+      !isRecord(payload.settings)
+    ) {
       return cloneDefaults();
     }
     return normalizeSettings(payload.settings);

@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import {
   DockviewReact,
   themeAbyss,
@@ -23,7 +24,14 @@ import { loadSettings, saveSettings, type Settings } from "./settings/model";
 import { Outliner } from "./panels/Outliner";
 import { Inspector } from "./panels/Inspector";
 import { Timeline } from "./panels/Timeline";
-import { ViewportHost, requestViewportRemeasure, type ViewportMode } from "./viewport/ViewportHost";
+import {
+  ViewportHost,
+  requestViewportRemeasure,
+  type CameraFov,
+  type CameraProjection,
+  type CameraViewPreset,
+  type ViewportMode,
+} from "./viewport/ViewportHost";
 import {
   AVAILABLE_RENDERER_STATUS,
   getRendererStatus,
@@ -37,6 +45,8 @@ let backendSelfTestHasRun = false;
 let dockSelfTestHasRun = false;
 let shortcutSelfTestHasRun = false;
 let shellSelfTestHasRun = false;
+let viewportDisplaySelfTestHasRun = false;
+let viewportCameraSelfTestHasRun = false;
 
 // Panel content, keyed by the `component` name used in shell/layout.ts. Each
 // entry wraps the (self-contained, opaque) panel component or ViewportHost in
@@ -78,6 +88,25 @@ const DOCK_COMPONENTS: Record<string, React.FunctionComponent<IDockviewPanelProp
         showDebugOverlay={(props.params.showDebugOverlay as boolean | undefined) ?? true}
         fallbackReason={(props.params.fallbackReason as string | null | undefined) ?? null}
         recoveryHint={(props.params.recoveryHint as string | null | undefined) ?? null}
+        displayMode={(props.params.displayMode as "lit" | "wireframe" | undefined) ?? "lit"}
+        showGrid={(props.params.showGrid as boolean | undefined) ?? true}
+        showBones={(props.params.showBones as boolean | undefined) ?? false}
+        projection={(props.params.projection as CameraProjection | undefined) ?? "perspective"}
+        fov={(props.params.fov as CameraFov | undefined) ?? 45}
+        viewPreset={(props.params.viewPreset as CameraViewPreset | undefined) ?? "perspective"}
+        onDisplaySettingsChange={props.params.onDisplaySettingsChange as
+          | ((patch: {
+              displayMode?: "lit" | "wireframe";
+              showGrid?: boolean;
+              showBones?: boolean;
+            }) => void)
+          | undefined}
+        onCameraSettingsChange={props.params.onCameraSettingsChange as
+          | ((patch: { projection?: CameraProjection; fov?: CameraFov }) => void)
+          | undefined}
+        onCameraViewChange={props.params.onCameraViewChange as
+          | ((preset: CameraViewPreset) => void)
+          | undefined}
       />
     </div>
   ),
@@ -95,6 +124,7 @@ function App() {
   const [consoleVisible, setConsoleVisible] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settings, setSettings] = useState<Settings>(() => loadSettings());
+  const [cameraViewPreset, setCameraViewPreset] = useState<CameraViewPreset>("perspective");
   const [consoleStore] = useState(() =>
     createConsoleStore({
       capacity: 500,
@@ -151,14 +181,81 @@ function App() {
     activateNativeRenderer: activateNativeForScene,
     revealConsole,
   });
+  const onViewportDisplaySettingsChange = useCallback(
+    (patch: {
+      displayMode?: "lit" | "wireframe";
+      showGrid?: boolean;
+      showBones?: boolean;
+    }) => {
+      setSettings((current) => {
+        const next = {
+          ...current,
+          viewport: { ...current.viewport, ...patch },
+        };
+        if (!saveSettings(next)) {
+          appendDiagnostic("warn", "frontend", "Viewport display changed for this session but could not be persisted");
+        }
+        return next;
+      });
+    },
+    [appendDiagnostic],
+  );
+  const onViewportCameraSettingsChange = useCallback(
+    (patch: { projection?: CameraProjection; fov?: CameraFov }) => {
+      setSettings((current) => {
+        const next = {
+          ...current,
+          viewport: { ...current.viewport, ...patch },
+        };
+        if (!saveSettings(next)) {
+          appendDiagnostic("warn", "frontend", "Viewport camera changed for this session but could not be persisted");
+        }
+        return next;
+      });
+    },
+    [appendDiagnostic],
+  );
+  const onViewportCameraViewChange = useCallback(
+    (preset: CameraViewPreset) => {
+      if (viewportMode !== "native") return;
+      setCameraViewPreset(preset);
+      void invoke("set_camera_view", { preset }).catch((error) => {
+        appendDiagnostic("warn", "viewport", `Camera view preset unavailable: ${String(error)}`);
+      });
+    },
+    [appendDiagnostic, viewportMode],
+  );
   const viewportPanelParams = useMemo(
     () => ({
       mode: viewportMode,
       showDebugOverlay: settings.viewport.debugOverlay,
       fallbackReason: rendererStatus.fallbackReason,
       recoveryHint: rendererStatus.recoveryHint,
+      displayMode: settings.viewport.displayMode,
+      showGrid: settings.viewport.showGrid,
+      showBones: settings.viewport.showBones,
+      projection: settings.viewport.projection,
+      fov: settings.viewport.fov,
+      viewPreset: cameraViewPreset,
+      onDisplaySettingsChange: onViewportDisplaySettingsChange,
+      onCameraSettingsChange: onViewportCameraSettingsChange,
+      onCameraViewChange: onViewportCameraViewChange,
     }),
-    [rendererStatus.fallbackReason, rendererStatus.recoveryHint, settings.viewport.debugOverlay, viewportMode],
+    [
+      onViewportDisplaySettingsChange,
+      rendererStatus.fallbackReason,
+      rendererStatus.recoveryHint,
+      settings.viewport.debugOverlay,
+      settings.viewport.displayMode,
+      settings.viewport.showBones,
+      settings.viewport.showGrid,
+      settings.viewport.projection,
+      settings.viewport.fov,
+      cameraViewPreset,
+      onViewportCameraSettingsChange,
+      onViewportCameraViewChange,
+      viewportMode,
+    ],
   );
 
   // Disposes the onDidLayoutChange subscription (created in onReady, below)
@@ -481,6 +578,61 @@ function App() {
     setTimeout(() => actionById(actions, "renderer.canvas").run(), 3000);
     setTimeout(() => actionById(actions, "renderer.native").run(), 6000);
   }, [actions]);
+
+  // Dev-only display-settings gate. It follows the same callback used by the
+  // viewport toolbar, so persistence and Native IPC wiring are exercised
+  // together rather than bypassed through a test-only state mutation.
+  useEffect(() => {
+    const requestedMode = import.meta.env.VITE_VIEWPORT_DISPLAY_SELF_TEST;
+    if (viewportDisplaySelfTestHasRun || !requestedMode) return;
+    viewportDisplaySelfTestHasRun = true;
+    setTimeout(() => {
+      const display = requestedMode === "lit"
+        ? { displayMode: "lit" as const, showGrid: true, showBones: false }
+        : { displayMode: "wireframe" as const, showGrid: false, showBones: true };
+      onViewportDisplaySettingsChange(display);
+      appendDiagnostic(
+        "info",
+        "viewport",
+        `Viewport display self-test applied: mode=${display.displayMode} grid=${display.showGrid ? "on" : "off"} bones=${display.showBones ? "on" : "off"}`,
+      );
+    }, 2000);
+  }, [appendDiagnostic, onViewportDisplaySettingsChange]);
+
+  // Dev-only camera gate. Each step uses the same callbacks/actions as the
+  // toolbar so projection/FOV persistence, Native view presets, and backend
+  // camera handoff are exercised without a test-only IPC path.
+  useEffect(() => {
+    const requestedTest = import.meta.env.VITE_VIEWPORT_CAMERA_SELF_TEST;
+    if (viewportCameraSelfTestHasRun || !requestedTest) return;
+    viewportCameraSelfTestHasRun = true;
+    if (["front", "right", "top", "perspective"].includes(requestedTest)) {
+      const preset = requestedTest as CameraViewPreset;
+      setTimeout(() => {
+        onViewportCameraSettingsChange({
+          projection: preset === "perspective" ? "perspective" : "orthographic",
+          fov: preset === "perspective" ? 45 : 60,
+        });
+        onViewportCameraViewChange(preset);
+        appendDiagnostic("info", "viewport", `Viewport camera hold self-test applied: ${preset}`);
+      }, 6000);
+      return;
+    }
+    setTimeout(() => {
+      onViewportCameraSettingsChange({ projection: "perspective", fov: 30 });
+      onViewportCameraViewChange("front");
+    }, 2000);
+    setTimeout(() => {
+      onViewportCameraSettingsChange({ projection: "orthographic", fov: 60 });
+      onViewportCameraViewChange("right");
+    }, 4000);
+    setTimeout(() => onViewportCameraViewChange("top"), 6000);
+    setTimeout(() => actionById(actions, "renderer.canvas").run(), 8000);
+    setTimeout(() => actionById(actions, "renderer.native").run(), 10000);
+    setTimeout(() => {
+      appendDiagnostic("info", "viewport", "Viewport camera self-test completed");
+    }, 12000);
+  }, [actions, appendDiagnostic, onViewportCameraSettingsChange, onViewportCameraViewChange]);
 
   // Reproducible GUI gate for the Console drawer and Settings modal. Both
   // steps use the exact finite actions exposed by the View menu.

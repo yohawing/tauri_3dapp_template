@@ -216,6 +216,162 @@
   cursor: grab;
 }
 
+.viewport-host__toolbar {
+  position: absolute;
+  z-index: 5;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  color: #d7d7dc;
+  background: rgb(27 27 33 / 88%);
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 4px;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 24%);
+  font-size: 11px;
+}
+
+.viewport-host__mode-group,
+.viewport-host__show-menu,
+.viewport-host__camera-menu {
+  display: flex;
+  position: relative;
+}
+
+.viewport-host__tool-button {
+  min-height: 22px;
+  padding: 2px 8px;
+  color: #c7c7cd;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.viewport-host__tool-button:hover:not(:disabled),
+.viewport-host__tool-button:focus-visible:not(:disabled) {
+  color: #f2f2f4;
+  background: rgb(255 255 255 / 8%);
+}
+
+.viewport-host__tool-button.is-active {
+  color: #fff;
+  background: rgb(70 112 190 / 74%);
+  border-color: rgb(138 177 242 / 65%);
+}
+
+.viewport-host__tool-button:disabled {
+  color: #777781;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.viewport-host__show-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 128px;
+  padding: 4px;
+  background: #202026;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 4px;
+  box-shadow: 0 8px 20px rgb(0 0 0 / 36%);
+}
+
+.viewport-host__camera-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 232px;
+  padding: 7px;
+  color: #d8d8de;
+  background: #202026;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 4px;
+  box-shadow: 0 8px 20px rgb(0 0 0 / 36%);
+}
+
+.viewport-host__camera-section + .viewport-host__camera-section {
+  margin-top: 7px;
+  padding-top: 7px;
+  border-top: 1px solid rgb(255 255 255 / 10%);
+}
+
+.viewport-host__camera-heading {
+  display: block;
+  margin-bottom: 4px;
+  color: #a1a1aa;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.viewport-host__camera-options {
+  display: flex;
+  gap: 3px;
+}
+
+.viewport-host__camera-option {
+  min-height: 24px;
+  padding: 2px 7px;
+  color: #d8d8de;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.viewport-host__camera-option:hover:not(:disabled),
+.viewport-host__camera-option:focus-visible:not(:disabled) {
+  outline: none;
+  background: rgb(255 255 255 / 8%);
+}
+
+.viewport-host__camera-option.is-active {
+  color: #fff;
+  background: rgb(70 112 190 / 74%);
+  border-color: rgb(138 177 242 / 65%);
+}
+
+.viewport-host__camera-option:disabled {
+  color: #777781;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.viewport-host__camera-options--views {
+  flex-wrap: wrap;
+}
+
+.viewport-host__show-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 24px;
+  padding: 2px 6px;
+  color: #d8d8de;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.viewport-host__show-item:hover:not(.is-disabled) {
+  background: rgb(255 255 255 / 8%);
+}
+
+.viewport-host__show-item.is-disabled {
+  color: #777781;
+}
+
+.viewport-host__show-item input {
+  accent-color: #6e9ee8;
+}
+
 .viewport-host__overlay {
   position: absolute;
   z-index: 1;

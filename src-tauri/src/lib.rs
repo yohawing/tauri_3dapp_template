@@ -17,7 +17,10 @@ use std::sync::{Mutex, OnceLock};
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 
 use camera::OrbitCamera;
-use protocol::{CameraState, ViewportInput, ViewportRect};
+use protocol::{
+    CameraSettings, CameraState, CameraViewPreset, ViewportDisplayMode, ViewportDisplaySettings,
+    ViewportInput, ViewportRect,
+};
 use renderer::Renderer;
 use scene_projection::{SceneCommandEnvelope, SceneCommandResult, SceneProjectionStore};
 
@@ -36,6 +39,8 @@ struct RendererActive(AtomicBool);
 #[derive(Default)]
 struct RendererControl {
     viewport_rect: Mutex<Option<ViewportRect>>,
+    viewport_display: Mutex<ViewportDisplaySettings>,
+    camera_settings: Mutex<CameraSettings>,
 }
 
 /// Diagnostic-only state for `[viewport-rect]` logging (see
@@ -96,6 +101,39 @@ fn set_viewport_rect(
     *state.viewport_rect.lock().unwrap() = Some(rect);
 }
 
+#[tauri::command]
+fn get_viewport_display(state: tauri::State<RendererControl>) -> ViewportDisplaySettings {
+    *state.viewport_display.lock().unwrap()
+}
+
+#[tauri::command(rename_all = "camelCase")]
+fn set_viewport_display(
+    state: tauri::State<RendererControl>,
+    mode: ViewportDisplayMode,
+    show_grid: bool,
+    show_bones: bool,
+) -> Result<ViewportDisplaySettings, String> {
+    let settings = ViewportDisplaySettings {
+        mode,
+        show_grid,
+        show_bones,
+    };
+    *state.viewport_display.lock().unwrap() = settings;
+    Ok(settings)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+fn set_camera_settings(
+    state: tauri::State<RendererControl>,
+    settings: CameraSettings,
+) -> Result<CameraSettings, String> {
+    if !settings.fov_degrees.is_finite() || !(1.0..=179.0).contains(&settings.fov_degrees) {
+        return Err("Camera FOV must be finite and between 1 and 179 degrees".into());
+    }
+    *state.camera_settings.lock().unwrap() = settings;
+    Ok(settings)
+}
+
 /// Generic input entry point for the ViewportHost: pointer/wheel events are
 /// forwarded here as a tagged `ViewportInput` and applied to the orbit
 /// camera. Adding a new input source later only means adding a variant to
@@ -137,6 +175,11 @@ fn get_camera(state: tauri::State<Mutex<OrbitCamera>>) -> CameraState {
 #[tauri::command]
 fn set_camera(state: tauri::State<Mutex<OrbitCamera>>, camera: CameraState) {
     state.lock().unwrap().set_state(camera);
+}
+
+#[tauri::command]
+fn set_camera_view(state: tauri::State<Mutex<OrbitCamera>>, preset: CameraViewPreset) {
+    state.lock().unwrap().set_view_preset(preset);
 }
 
 #[tauri::command]
@@ -194,11 +237,15 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             set_viewport_rect,
+            get_viewport_display,
+            set_viewport_display,
+            set_camera_settings,
             viewport_input,
             set_renderer_active,
             get_renderer_status,
             get_camera,
             set_camera,
+            set_camera_view,
             get_scene_projection,
             select_scene_node,
             dispatch_scene_command,
@@ -398,6 +445,16 @@ pub fn run() {
                     .viewport_rect
                     .lock()
                     .unwrap();
+                let viewport_display = *app_handle
+                    .state::<RendererControl>()
+                    .viewport_display
+                    .lock()
+                    .unwrap();
+                let camera_settings = *app_handle
+                    .state::<RendererControl>()
+                    .camera_settings
+                    .lock()
+                    .unwrap();
                 let active = app_handle
                     .state::<RendererActive>()
                     .0
@@ -441,6 +498,8 @@ pub fn run() {
                                 renderer::apply_viewport_rect(renderer, rect);
                             }
                             renderer.set_camera_state(camera);
+                            renderer.set_camera_settings(camera_settings);
+                            renderer.set_viewport_display(viewport_display);
                             renderer.render();
                         }
                         projection_store.publish(renderer.scene_projection(Some(&selected_id)));

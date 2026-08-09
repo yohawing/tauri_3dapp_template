@@ -3,7 +3,7 @@
 
 use glam::Vec3;
 
-use crate::protocol::{CameraState, ViewportInput};
+use crate::protocol::{CameraState, CameraViewPreset, ViewportInput};
 
 const PITCH_LIMIT: f32 = 1.55;
 const MIN_DISTANCE: f32 = 0.5;
@@ -119,6 +119,33 @@ impl OrbitCamera {
         self.drag = DragMode::None;
     }
 
+    /// Apply a fixed orientation while retaining the current focus point and
+    /// orbit distance. Presets are Native-only actions and deliberately do not
+    /// become part of `CameraState`/Scene JSON.
+    pub fn set_view_preset(&mut self, preset: CameraViewPreset) {
+        const FRONT_YAW: f32 = -std::f32::consts::FRAC_PI_2;
+        const RIGHT_YAW: f32 = 0.0;
+        match preset {
+            CameraViewPreset::Front => {
+                self.yaw = FRONT_YAW;
+                self.pitch = 0.0;
+            }
+            CameraViewPreset::Right => {
+                self.yaw = RIGHT_YAW;
+                self.pitch = 0.0;
+            }
+            CameraViewPreset::Top => {
+                self.yaw = FRONT_YAW;
+                self.pitch = PITCH_LIMIT;
+            }
+            CameraViewPreset::Perspective => {
+                self.yaw = -0.6;
+                self.pitch = 0.35;
+            }
+        }
+        self.drag = DragMode::None;
+    }
+
     fn eye(&self) -> Vec3 {
         let (sy, cy) = self.yaw.sin_cos();
         let (sp, cp) = self.pitch.sin_cos();
@@ -131,5 +158,27 @@ impl OrbitCamera {
         let right = forward.cross(Vec3::Y).normalize_or_zero();
         let up = right.cross(forward);
         (right, up)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn view_presets_keep_target_and_distance() {
+        let mut camera = OrbitCamera::default();
+        camera.target = Vec3::new(1.0, 2.0, 3.0);
+        camera.distance = 7.0;
+
+        camera.set_view_preset(CameraViewPreset::Top);
+        assert_eq!(camera.target, Vec3::new(1.0, 2.0, 3.0));
+        assert_eq!(camera.distance, 7.0);
+        assert!((camera.pitch - PITCH_LIMIT).abs() < f32::EPSILON);
+
+        camera.set_view_preset(CameraViewPreset::Perspective);
+        assert_eq!(camera.target, Vec3::new(1.0, 2.0, 3.0));
+        assert_eq!(camera.distance, 7.0);
+        assert!((camera.yaw + 0.6).abs() < f32::EPSILON);
     }
 }
