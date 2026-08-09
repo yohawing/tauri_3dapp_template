@@ -27,6 +27,7 @@ import { ViewportHost, requestViewportRemeasure, type ViewportMode } from "./vie
 import {
   AVAILABLE_RENDERER_STATUS,
   getRendererStatus,
+  onRendererStatusChanged,
   type RendererStatus,
 } from "./viewport/rendererStatus";
 import { buildDefaultLayout } from "./shell/layout";
@@ -203,20 +204,22 @@ function App() {
 
   useEffect(() => {
     let cancelled = false;
+    const acceptStatus = (status: RendererStatus) => {
+      if (cancelled) return;
+      setRendererStatus(status);
+      if (!status.nativeAvailable) {
+        setViewportMode("canvas");
+        setConsoleVisible(true);
+        appendDiagnostic(
+          "error",
+          "renderer",
+          `Automatic Canvas fallback: ${status.fallbackReason ?? "Native renderer is unavailable"}`,
+        );
+      }
+    };
+    const unlisten = onRendererStatusChanged(acceptStatus);
     void getRendererStatus()
-      .then((status) => {
-        if (cancelled) return;
-        setRendererStatus(status);
-        if (!status.nativeAvailable) {
-          setViewportMode("canvas");
-          setConsoleVisible(true);
-          appendDiagnostic(
-            "error",
-            "renderer",
-            `Automatic Canvas fallback: ${status.fallbackReason ?? "Native renderer is unavailable"}`,
-          );
-        }
-      })
+      .then(acceptStatus)
       .catch((error) => {
         if (!cancelled) {
           appendDiagnostic("warn", "renderer", `Renderer status unavailable: ${String(error)}`);
@@ -224,6 +227,7 @@ function App() {
       });
     return () => {
       cancelled = true;
+      void unlisten.then((dispose) => dispose());
     };
   }, [appendDiagnostic]);
 

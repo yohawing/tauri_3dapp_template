@@ -23,7 +23,8 @@
 | Settings modal | implemented / verified | pass (2026-08-08 test＋screenshot) | overlay、Console level／Auto-scrollを即時反映し、version付きlocalStorageへ保存 |
 | Material command ack／reject | implemented / previously verified | partial | self-test値`#2DC8FF / 0.80 / 0.20`の反映はpass。rejectは未確認 |
 | Native障害時の自動fallback | implemented / verified (fault injection) | pass (2026-08-09 screenshot) | 構築直後のunavailable注入でCanvas自動切替。実際の初期化例外／Device Lostは未接続 |
-| Surface／Device Lost復旧 | unimplemented / unverified | not applicable | failure取得範囲を先に確認する |
+| Device Lost検出／fallback | implemented / verified | pass (2026-08-09 screenshot) | wgpu callbackを`RendererStatus`へ接続。再作成せずCanvasへfail-closed |
+| Surface Lost／Outdated／Timeout／OutOfMemory取得 | blocked by vendor contract | unverified | Kiss3D内部でretry後`Option::None`へ集約され、app層では最小化frame skipと区別不能 |
 | fallback理由／復旧状態のUI表示 | implemented / verified | pass (2026-08-09 screenshot) | Viewport banner、Console、disabled Native action、再起動による再試行案内を確認 |
 | CanvasのScene同期 | intentionally deferred | not applicable | Camera＋Safe Modeを最低保証とする |
 | 1080p 60fps | unverified | pending | 計測条件を固定する |
@@ -40,7 +41,17 @@
 
 ## 現時点の判断
 
-Windows上の現行スライスは継続可。Native raster viewportの部分描画、Scene JSON v1のNew／Open／Save lifecycle、BrainStem read-only Timeline、Menu／Console／Settings、構築後unavailable注入からのCanvas fallbackまで成立した。ただし、PoC全体を完了扱いにはしない。実際のNative初期化例外／Surface／Device Lost、4K、macOSが未決着である。vendorのraytrace経路は部分viewport compositeへ未接続だが、現アプリはraster `render_3d`のみを使用する。
+Windows上の現行スライスは継続可。Native raster viewportの部分描画、Scene JSON v1のNew／Open／Save lifecycle、BrainStem read-only Timeline、Menu／Console／Settings、構築後unavailable注入と実Device Lost callbackからのCanvas fallbackまで成立した。ただし、PoC全体を完了扱いにはしない。実際のNative初期化例外、Surface acquisition error、4K、macOSが未決着である。vendorのraytrace経路は部分viewport compositeへ未接続だが、現アプリはraster `render_3d`のみを使用する。
+
+## 2026-08-09 Device Lost callback証拠
+
+- Device Lost screenshot: `C:\Users\yohaw\AppData\Local\Temp\tauri3d-device-lost-gate-20260809\device-lost.png`。
+- Recovery screenshot: `C:\Users\yohaw\AppData\Local\Temp\tauri3d-device-lost-gate-20260809\recovered-native.png`。
+- pass: `TAURI3D_FORCE_DEVICE_LOST=1`でwgpu deviceを実際にdestroyし、`DeviceLostReason::Destroyed` callbackを取得。
+- pass: callbackがNative描画をfail-closedで停止し、Tauri event経由でCanvasへ自動切替。Viewport bannerとConsoleに`wgpu device lost (Destroyed)`を表示。
+- pass: 環境変数なしの再起動でNative cube、Grid、Timeline、Viewport rectが復旧。
+- blocked: Surface `Lost／Outdated`はvendor内で再configure＋1回retryされ、その後の全surface acquisition errorは`Option::None`へ集約される。`render_3d`の`bool`はwindow継続だけを表すためroot appでは分類不能。
+- GUI経路: 実Device Lost注入、Tauri event、`screenshot-ui`のみ。Computer Useは未使用。
 
 ## 2026-08-09 Renderer fallback証拠
 

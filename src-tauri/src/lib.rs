@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
-use tauri::{Manager, RunEvent, WindowEvent};
+use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 
 use camera::OrbitCamera;
 use protocol::{CameraState, ViewportInput, ViewportRect};
@@ -270,7 +270,10 @@ pub fn run() {
                     "Injected Native renderer failure (TAURI3D_FORCE_NATIVE_FAILURE)".to_string()
                 });
             let renderer_status = match forced_failure {
-                Some(reason) => renderer_status::RendererStatus::unavailable(reason),
+                Some(reason) => renderer_status::RendererStatus::unavailable_with_hint(
+                    reason,
+                    "Restart without TAURI3D_FORCE_NATIVE_FAILURE to retry Native wgpu",
+                ),
                 None => renderer_status::RendererStatus::available(),
             };
             // Kiss3d owns thread-local GPU resources whose destruction must stay on
@@ -287,6 +290,33 @@ pub fn run() {
                 renderer_status.native_active,
             )));
             app.manage(renderer_status::RendererStatusStore::new(renderer_status));
+            let device = kiss3d::context::Context::get().device;
+            let device_lost_handle = app.handle().clone();
+            device.set_device_lost_callback(move |reason, message| {
+                let detail = if message.is_empty() {
+                    format!("wgpu device lost ({reason:?})")
+                } else {
+                    format!("wgpu device lost ({reason:?}): {message}")
+                };
+                device_lost_handle
+                    .state::<RendererActive>()
+                    .0
+                    .store(false, Ordering::Relaxed);
+                let status = device_lost_handle
+                    .state::<renderer_status::RendererStatusStore>()
+                    .mark_unavailable(detail);
+                if let Err(error) = device_lost_handle.emit("renderer-status-changed", status) {
+                    eprintln!("failed to emit renderer status after Device Lost: {error}");
+                }
+            });
+            if std::env::var("TAURI3D_FORCE_DEVICE_LOST")
+                .is_ok_and(|value| value != "0")
+            {
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(1500));
+                    device.destroy();
+                });
+            }
             app.manage(RendererControl::default());
             app.manage(ViewportRectLog::default());
             app.manage(projection_store);

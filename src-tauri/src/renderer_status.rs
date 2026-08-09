@@ -20,13 +20,18 @@ impl RendererStatus {
     }
 
     pub fn unavailable(reason: impl Into<String>) -> Self {
+        Self::unavailable_with_hint(reason, "Restart the application to retry Native wgpu")
+    }
+
+    pub fn unavailable_with_hint(
+        reason: impl Into<String>,
+        recovery_hint: impl Into<String>,
+    ) -> Self {
         Self {
             native_available: false,
             native_active: false,
             fallback_reason: Some(reason.into()),
-            recovery_hint: Some(
-                "Restart without TAURI3D_FORCE_NATIVE_FAILURE to retry Native wgpu".into(),
-            ),
+            recovery_hint: Some(recovery_hint.into()),
         }
     }
 }
@@ -52,6 +57,12 @@ impl RendererStatusStore {
         }
         status.native_active = active;
         Ok(status.clone())
+    }
+
+    pub fn mark_unavailable(&self, reason: impl Into<String>) -> RendererStatus {
+        let mut status = self.0.lock().unwrap();
+        *status = RendererStatus::unavailable(reason);
+        status.clone()
     }
 }
 
@@ -79,5 +90,17 @@ mod tests {
 
         assert!(!store.set_active(false).unwrap().native_active);
         assert!(store.set_active(true).unwrap().native_active);
+    }
+
+    #[test]
+    fn runtime_failure_replaces_active_status_fail_closed() {
+        let store = RendererStatusStore::new(RendererStatus::available());
+
+        let status = store.mark_unavailable("wgpu device lost");
+
+        assert!(!status.native_available);
+        assert!(!status.native_active);
+        assert_eq!(status.fallback_reason.as_deref(), Some("wgpu device lost"));
+        assert!(store.set_active(true).is_err());
     }
 }
