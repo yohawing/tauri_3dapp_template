@@ -69,6 +69,10 @@ Windows上の現行スライスは継続可。Native raster viewportの部分描
 - performance finding: 50ms invoke pollingは100 responsesで平均86.9ms、p95 126.2ms、overlap skip 102。250ms pollingでもp95 1805.3msだったため廃止。
 - current sync: Nativeがcanonical stateと採取timestampを保持し、250ms throttled Tauri eventをFrontendへpush。Frontendはsnapshot間の表示時刻だけを補間する。
 - event gate: 100 eventsで平均間隔278.9ms、snapshot delivery age平均164.0ms／p95 811ms、最大event間隔2207.3ms。poll backlogは解消したが、debug＋実FBX描画中のevent-loop stallは未解消。
+- release remeasurement: `src-tauri/target/release/tauri3d.exe` を `TAURI3D_SCENE=artifacts/absolute-path-gate/runtime-absolute.scene.json`、物理 `1920x1080`、60-frame warm-up＋180 samplesで起動。Native frameは平均60.087 FPS、wall p50／p95／p99 16.599／17.494／18.038 ms、CPU render p95 17.044 ms、GPU timestamp p95 0.118 msでnominal 60 Hzをpassした。
+- release event result: 同一実FBX playbackで100 event、平均interval 238.6 ms／最大interval 1102.8 ms、snapshot delivery age平均196.7 ms／p95 837 ms／最大2125 ms。frame wall／CPU／GPUに大きなstallはなく、releaseでも遅延が再現したためrenderer frame stallではなくTauri/WebView event delivery scheduling側の未解決問題と判定する。
+- release raw log: `artifacts/asset-gate/release-fbx-playback.stderr.log`（local／ignored）。
+- next action: Rustのevent emit時刻／sequenceとWebView listener受信時刻を別々に記録し、Tauri event queue遅延とWebView scheduling遅延を分離する。現時点でrenderer側の変更は行わない。
 - GUI経路: `VITE_TIMELINE_PLAYBACK_SELF_TEST`、`VITE_TIMELINE_PLAYBACK_SYNC_SELF_TEST`、ログ、`screenshot-ui`のみ。Computer Useは未使用。
 
 ## 2026-08-09 Asset Import UI証拠
@@ -156,7 +160,7 @@ Windows上の現行スライスは継続可。Native raster viewportの部分描
 - Native 1080p: pass。180 samples、average 60.644 FPS、wall p50／p95 16.410／17.297ms、GPU p95 0.053ms。
 - Canvas 1080p: fail。3 cold startsでaverage 56.993／56.793／57.196 FPS、wall p50 17.5〜17.6ms。59.0 FPS／p50 16.67ms gate未達。p95 18.1〜18.4msとCPU render p95 0.2msは範囲内。
 - idle playback unavailable eventを状態遷移時1回だけへ削減したがCanvas値は改善せず、原因ではなかった。
-- unresolved: Canvas nominal 60Hz回帰の切り分け、release buildでの実FBX event-loop stall再測定。したがって`ASSET-PLAYBACK-GATE-01`は完了扱いにしない。
+- unresolved: Canvas nominal 60Hz回帰の切り分けと、release実FBXで再現したTauri event queue／WebView scheduling遅延の内訳分離。したがって`ASSET-PLAYBACK-GATE-01`は完了扱いにしない。
 
 ## 2026-08-09 Device Lost callback証拠
 
