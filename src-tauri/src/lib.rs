@@ -10,16 +10,17 @@ mod timeline;
 mod timeline_playback;
 
 use std::cell::RefCell;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 
 use camera::OrbitCamera;
 use protocol::{
     CameraSettings, CameraState, CameraViewPreset, ViewportDisplayMode, ViewportDisplaySettings,
-    ViewportInput, ViewportRect,
+    ViewportEnvironmentSettings, ViewportInput, ViewportRect,
 };
 use renderer::Renderer;
 use scene_projection::{SceneCommandEnvelope, SceneCommandResult, SceneProjectionStore};
@@ -41,6 +42,14 @@ struct RendererControl {
     viewport_rect: Mutex<Option<ViewportRect>>,
     viewport_display: Mutex<ViewportDisplaySettings>,
     camera_settings: Mutex<CameraSettings>,
+    viewport_environment: Mutex<ViewportEnvironmentControl>,
+}
+
+#[derive(Default)]
+struct ViewportEnvironmentControl {
+    latest_sequence: u64,
+    settings: ViewportEnvironmentSettings,
+    encoded: Option<Arc<Vec<u8>>>,
 }
 
 /// Diagnostic-only state for `[viewport-rect]` logging (see
@@ -131,6 +140,80 @@ fn set_camera_settings(
         return Err("Camera FOV must be finite and between 1 and 179 degrees".into());
     }
     *state.camera_settings.lock().unwrap() = settings;
+    Ok(settings)
+}
+
+fn validate_viewport_environment(settings: &ViewportEnvironmentSettings) -> Result<(), String> {
+    if !settings.rotation_degrees.is_finite()
+        || !(-180.0..=180.0).contains(&settings.rotation_degrees)
+    {
+        return Err("HDRI rotation must be finite and between -180 and 180 degrees".into());
+    }
+    if !settings.intensity.is_finite() || !(0.0..=8.0).contains(&settings.intensity) {
+        return Err("HDRI intensity must be finite and between 0 and 8".into());
+    }
+    if settings.enabled {
+        if settings.path.trim().is_empty() {
+            return Err("HDRI path is required while the environment is enabled".into());
+        }
+        if !Path::new(&settings.path).is_absolute() {
+            return Err("HDRI path must be absolute".into());
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn set_viewport_environment(
+    state: tauri::State<'_, RendererControl>,
+    settings: ViewportEnvironmentSettings,
+    sequence: u64,
+) -> Result<ViewportEnvironmentSettings, String> {
+    let cached = {
+        let mut control = state.viewport_environment.lock().unwrap();
+        if sequence < control.latest_sequence {
+            return Err("HDRI request was superseded".into());
+        }
+        control.latest_sequence = sequence;
+        (control.settings.path == settings.path)
+            .then(|| control.encoded.clone())
+            .flatten()
+    };
+    validate_viewport_environment(&settings)?;
+
+    // File I/O and image validation can take several seconds for a 4K EXR.
+    // Keep it outside the render-loop mutex, then use the sequence to prevent
+    // an older load from overwriting a newer Clear or orientation request.
+    let encoded = if settings.enabled {
+        if let Some(cached) = cached {
+            Some(cached)
+        } else {
+            let path = settings.path.clone();
+            let bytes = tauri::async_runtime::spawn_blocking(move || {
+                let bytes = std::fs::read(&path)
+                    .map_err(|error| format!("Failed to read HDRI '{path}': {error}"))?;
+                image::load_from_memory(&bytes)
+                    .map_err(|error| format!("Failed to decode HDRI '{path}': {error}"))?;
+                Ok::<_, String>(bytes)
+            })
+            .await
+            .map_err(|error| format!("HDRI decode task failed: {error}"))??;
+            Some(Arc::new(bytes))
+        }
+    } else {
+        cached
+    };
+
+    let mut control = state.viewport_environment.lock().unwrap();
+    if sequence != control.latest_sequence {
+        return Err("HDRI request was superseded".into());
+    }
+    control.encoded = if settings.path.is_empty() {
+        None
+    } else {
+        encoded
+    };
+    control.settings = settings.clone();
     Ok(settings)
 }
 
@@ -240,6 +323,7 @@ pub fn run() {
             get_viewport_display,
             set_viewport_display,
             set_camera_settings,
+            set_viewport_environment,
             viewport_input,
             set_renderer_active,
             get_renderer_status,
@@ -455,6 +539,11 @@ pub fn run() {
                     .camera_settings
                     .lock()
                     .unwrap();
+                let viewport_environment = {
+                    let renderer_control = app_handle.state::<RendererControl>();
+                    let environment = renderer_control.viewport_environment.lock().unwrap();
+                    (environment.settings.clone(), environment.encoded.clone())
+                };
                 let active = app_handle
                     .state::<RendererActive>()
                     .0
@@ -500,6 +589,10 @@ pub fn run() {
                             renderer.set_camera_state(camera);
                             renderer.set_camera_settings(camera_settings);
                             renderer.set_viewport_display(viewport_display);
+                            renderer.set_viewport_environment(
+                                viewport_environment.0,
+                                viewport_environment.1.as_deref().map(Vec::as_slice),
+                            );
                             renderer.render();
                         }
                         projection_store.publish(renderer.scene_projection(Some(&selected_id)));
@@ -515,4 +608,46 @@ pub fn run() {
             }
             _ => {}
         });
+}
+
+#[cfg(test)]
+mod viewport_environment_tests {
+    use super::*;
+
+    fn settings() -> ViewportEnvironmentSettings {
+        ViewportEnvironmentSettings {
+            enabled: true,
+            path: std::env::current_dir()
+                .unwrap()
+                .join("studio.hdr")
+                .to_string_lossy()
+                .into_owned(),
+            rotation_degrees: 90.0,
+            intensity: 1.5,
+        }
+    }
+
+    #[test]
+    fn validates_supported_environment_ranges() {
+        assert!(validate_viewport_environment(&settings()).is_ok());
+    }
+
+    #[test]
+    fn rejects_relative_enabled_path() {
+        let mut value = settings();
+        value.path = "studio.hdr".into();
+        assert!(validate_viewport_environment(&value)
+            .unwrap_err()
+            .contains("absolute"));
+    }
+
+    #[test]
+    fn rejects_non_finite_or_out_of_range_controls() {
+        let mut value = settings();
+        value.rotation_degrees = f32::NAN;
+        assert!(validate_viewport_environment(&value).is_err());
+        value.rotation_degrees = 0.0;
+        value.intensity = 8.1;
+        assert!(validate_viewport_environment(&value).is_err());
+    }
 }

@@ -13,7 +13,7 @@ use kiss3d::prelude::{
 use crate::performance::{target_from_env, PerformanceSampler};
 use crate::protocol::{
     CameraProjection, CameraSettings, CameraState, ViewportDisplayMode, ViewportDisplaySettings,
-    ViewportRect,
+    ViewportEnvironmentSettings, ViewportRect,
 };
 use crate::scene::{ResolvedAssetPath, Scene, SceneInstance};
 use crate::scene_projection::{
@@ -129,6 +129,8 @@ pub struct Renderer {
     camera: OrbitCamera3d,
     camera_settings: CameraSettings,
     display: ViewportDisplaySettings,
+    environment_request: ViewportEnvironmentSettings,
+    environment_active: ViewportEnvironmentSettings,
     performance_target: Option<(u32, u32)>,
     performance_sampler: Option<PerformanceSampler>,
     animation_clock: Instant,
@@ -165,6 +167,8 @@ impl Renderer {
             camera,
             camera_settings: CameraSettings::default(),
             display: ViewportDisplaySettings::default(),
+            environment_request: ViewportEnvironmentSettings::default(),
+            environment_active: ViewportEnvironmentSettings::default(),
             performance_target,
             performance_sampler: PerformanceSampler::from_env(),
             animation_clock: Instant::now(),
@@ -202,6 +206,8 @@ impl Renderer {
             camera: OrbitCamera3d::new(Vec3::new(3.0, 1.5, -3.0), Vec3::ZERO),
             camera_settings: CameraSettings::default(),
             display: ViewportDisplaySettings::default(),
+            environment_request: ViewportEnvironmentSettings::default(),
+            environment_active: ViewportEnvironmentSettings::default(),
             performance_target,
             performance_sampler: PerformanceSampler::from_env(),
             animation_clock: Instant::now(),
@@ -292,6 +298,42 @@ impl Renderer {
             self.apply_display_mode(settings.mode);
         }
         self.display = settings;
+    }
+
+    /// Apply a validated editor-only equirectangular skybox/IBL request. A
+    /// failed decode leaves the previously active environment untouched.
+    pub fn set_viewport_environment(
+        &mut self,
+        settings: ViewportEnvironmentSettings,
+        encoded: Option<&[u8]>,
+    ) {
+        if self.environment_request == settings {
+            return;
+        }
+        self.environment_request = settings.clone();
+        if !settings.enabled {
+            self.window.clear_skybox();
+            self.environment_active = settings;
+            return;
+        }
+
+        let needs_load = !self.window.has_skybox() || self.environment_active.path != settings.path;
+        if needs_load {
+            let Some(bytes) = encoded else {
+                eprintln!("[viewport-environment] validated HDRI bytes are unavailable");
+                return;
+            };
+            if !self.window.set_skybox_from_memory(bytes) {
+                eprintln!(
+                    "[viewport-environment] failed to apply decoded HDRI: {}",
+                    settings.path
+                );
+                return;
+            }
+        }
+        self.window
+            .set_skybox_orientation(settings.rotation_degrees.to_radians(), settings.intensity);
+        self.environment_active = settings;
     }
 
     fn apply_display_mode(&mut self, mode: ViewportDisplayMode) {

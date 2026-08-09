@@ -5545,6 +5545,7 @@ version = "0.1.0"
 dependencies = [
  "glam",
  "gltf",
+ "image",
  "kiss3d",
  "pathdiff",
  "pollster 1.0.1",

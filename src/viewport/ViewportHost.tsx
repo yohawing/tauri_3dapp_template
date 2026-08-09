@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { attachViewportInput, maybeRunViewportInputSelfTest } from "./input";
 import { mountCanvasBackend, type CameraState, type CanvasBackendHandle } from "./canvasBackend";
+import type { ViewportEnvironmentSettings } from "../settings/model";
 
 /**
  * Fixed IPC contract shared with the Rust side. Do not change field names or
@@ -78,6 +79,7 @@ interface ViewportHostProps {
   projection?: CameraProjection;
   fov?: CameraFov;
   viewPreset?: CameraViewPreset;
+  environment?: ViewportEnvironmentSettings;
   onDisplaySettingsChange?: (patch: {
     displayMode?: "lit" | "wireframe";
     showGrid?: boolean;
@@ -88,6 +90,9 @@ interface ViewportHostProps {
     fov?: CameraFov;
   }) => void;
   onCameraViewChange?: (preset: CameraViewPreset) => void;
+  onEnvironmentSettingsChange?: (patch: Partial<ViewportEnvironmentSettings>) => void;
+  onEnvironmentBrowse?: () => void;
+  onEnvironmentClear?: () => void;
 }
 
 /**
@@ -108,9 +113,13 @@ export function ViewportHost({
   projection = "perspective",
   fov = 45,
   viewPreset = "perspective",
+  environment = { enabled: false, path: "", rotationDegrees: 0, intensity: 1 },
   onDisplaySettingsChange,
   onCameraSettingsChange,
   onCameraViewChange,
+  onEnvironmentSettingsChange,
+  onEnvironmentBrowse,
+  onEnvironmentClear,
 }: ViewportHostProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const rafIdRef = useRef<number | null>(null);
@@ -118,6 +127,9 @@ export function ViewportHost({
   const [showMenu, setShowMenu] = useState(false);
   const [showCameraMenu, setShowCameraMenu] = useState(
     () => Boolean(import.meta.env.VITE_VIEWPORT_CAMERA_MENU_SELF_TEST),
+  );
+  const [showEnvironmentMenu, setShowEnvironmentMenu] = useState(
+    () => Boolean(import.meta.env.VITE_VIEWPORT_ENVIRONMENT_MENU_SELF_TEST),
   );
 
   useEffect(() => {
@@ -137,16 +149,17 @@ export function ViewportHost({
   }, [fov, mode, projection]);
 
   useEffect(() => {
-    if (!showMenu && !showCameraMenu) return;
+    if (!showMenu && !showCameraMenu && !showEnvironmentMenu) return;
     const close = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setShowMenu(false);
         setShowCameraMenu(false);
+        setShowEnvironmentMenu(false);
       }
     };
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
-  }, [showCameraMenu, showMenu]);
+  }, [showCameraMenu, showEnvironmentMenu, showMenu]);
 
   // Coalesces any number of triggers (ResizeObserver, window resize, DPI
   // change) into at most one measurement + invoke per animation frame.
@@ -283,6 +296,7 @@ export function ViewportHost({
   const cameraLabel = `${viewPreset[0].toUpperCase()}${viewPreset.slice(1)} · ${
     projection === "perspective" ? "Perspective" : "Orthographic"
   } · ${fov}°`;
+  const environmentName = environment.path.split(/[\\/]/).pop() || "Off";
 
   const chooseCameraView = (preset: CameraViewPreset) => {
     setShowCameraMenu(false);
@@ -377,6 +391,78 @@ export function ViewportHost({
                   ))}
                 </div>
               </div>
+            </div>
+          )}
+        </div>
+        <div className="viewport-host__environment-menu">
+          <button
+            type="button"
+            className={`viewport-host__tool-button${showEnvironmentMenu ? " is-active" : ""}`}
+            aria-expanded={showEnvironmentMenu}
+            aria-haspopup="menu"
+            disabled={mode !== "native"}
+            title={environment.path || "No environment selected"}
+            onClick={() => setShowEnvironmentMenu((open) => !open)}
+          >
+            Environment: {environment.enabled ? environmentName : "Off"} ▾
+          </button>
+          {showEnvironmentMenu && (
+            <div className="viewport-host__environment-popover" role="menu" aria-label="Environment settings">
+              <div className="viewport-host__environment-actions">
+                <button
+                  type="button"
+                  className="viewport-host__camera-option"
+                  disabled={mode !== "native"}
+                  onClick={onEnvironmentBrowse}
+                >
+                  Browse…
+                </button>
+                <button
+                  type="button"
+                  className="viewport-host__camera-option"
+                  disabled={mode !== "native" || environment.path.length === 0}
+                  onClick={onEnvironmentClear}
+                >
+                  Clear
+                </button>
+              </div>
+              <div className="viewport-host__environment-path" title={environment.path}>
+                {environment.path || "No environment selected"}
+              </div>
+              <label className={`viewport-host__show-item${mode !== "native" ? " is-disabled" : ""}`}>
+                <input
+                  type="checkbox"
+                  checked={environment.enabled}
+                  disabled={mode !== "native" || environment.path.length === 0}
+                  onChange={(event) => onEnvironmentSettingsChange?.({ enabled: event.currentTarget.checked })}
+                />
+                <span>Enabled</span>
+              </label>
+              <label className="viewport-host__environment-field">
+                <span>Y Rotation</span>
+                <input
+                  type="number"
+                  min={-180}
+                  max={180}
+                  step={15}
+                  value={environment.rotationDegrees}
+                  disabled={mode !== "native" || !environment.enabled}
+                  onChange={(event) => onEnvironmentSettingsChange?.({ rotationDegrees: Number(event.currentTarget.value) })}
+                />
+                <small>deg</small>
+              </label>
+              <label className="viewport-host__environment-field">
+                <span>Intensity</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={8}
+                  step={0.1}
+                  value={environment.intensity}
+                  disabled={mode !== "native" || !environment.enabled}
+                  onChange={(event) => onEnvironmentSettingsChange?.({ intensity: Number(event.currentTarget.value) })}
+                />
+              </label>
             </div>
           )}
         </div>

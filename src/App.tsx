@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import {
   DockviewReact,
   themeAbyss,
@@ -20,7 +21,12 @@ import {
 import { MenuBar } from "./panels/MenuBar";
 import { ConsoleDrawer, createConsoleStore, type ConsoleEntry, type ConsoleStore } from "./console";
 import { SettingsModal } from "./settings/SettingsModal";
-import { loadSettings, saveSettings, type Settings } from "./settings/model";
+import {
+  loadSettings,
+  saveSettings,
+  type Settings,
+  type ViewportEnvironmentSettings,
+} from "./settings/model";
 import { Outliner } from "./panels/Outliner";
 import { Inspector } from "./panels/Inspector";
 import { Timeline } from "./panels/Timeline";
@@ -47,6 +53,7 @@ let shortcutSelfTestHasRun = false;
 let shellSelfTestHasRun = false;
 let viewportDisplaySelfTestHasRun = false;
 let viewportCameraSelfTestHasRun = false;
+let viewportEnvironmentSelfTestHasRun = false;
 
 // Panel content, keyed by the `component` name used in shell/layout.ts. Each
 // entry wraps the (self-contained, opaque) panel component or ViewportHost in
@@ -94,6 +101,12 @@ const DOCK_COMPONENTS: Record<string, React.FunctionComponent<IDockviewPanelProp
         projection={(props.params.projection as CameraProjection | undefined) ?? "perspective"}
         fov={(props.params.fov as CameraFov | undefined) ?? 45}
         viewPreset={(props.params.viewPreset as CameraViewPreset | undefined) ?? "perspective"}
+        environment={(props.params.environment as ViewportEnvironmentSettings | undefined) ?? {
+          enabled: false,
+          path: "",
+          rotationDegrees: 0,
+          intensity: 1,
+        }}
         onDisplaySettingsChange={props.params.onDisplaySettingsChange as
           | ((patch: {
               displayMode?: "lit" | "wireframe";
@@ -107,6 +120,11 @@ const DOCK_COMPONENTS: Record<string, React.FunctionComponent<IDockviewPanelProp
         onCameraViewChange={props.params.onCameraViewChange as
           | ((preset: CameraViewPreset) => void)
           | undefined}
+        onEnvironmentSettingsChange={props.params.onEnvironmentSettingsChange as
+          | ((patch: Partial<ViewportEnvironmentSettings>) => void)
+          | undefined}
+        onEnvironmentBrowse={props.params.onEnvironmentBrowse as (() => void) | undefined}
+        onEnvironmentClear={props.params.onEnvironmentClear as (() => void) | undefined}
       />
     </div>
   ),
@@ -124,6 +142,11 @@ function App() {
   const [consoleVisible, setConsoleVisible] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settings, setSettings] = useState<Settings>(() => loadSettings());
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  // Seed from wall time so a frontend reload in the same native process does
+  // not restart its request ordering below the Rust-side latest sequence.
+  const environmentRequestSequenceRef = useRef(Date.now());
   const [cameraViewPreset, setCameraViewPreset] = useState<CameraViewPreset>("perspective");
   const [consoleStore] = useState(() =>
     createConsoleStore({
@@ -225,6 +248,76 @@ function App() {
     },
     [appendDiagnostic, viewportMode],
   );
+  const applyViewportEnvironment = useCallback(
+    async (next: ViewportEnvironmentSettings, action: string) => {
+      const sequence = environmentRequestSequenceRef.current + 1;
+      environmentRequestSequenceRef.current = sequence;
+      try {
+        const accepted = await invoke<ViewportEnvironmentSettings>("set_viewport_environment", {
+          settings: next,
+          sequence,
+        });
+        if (sequence !== environmentRequestSequenceRef.current) return;
+        const current = settingsRef.current;
+        const updated = {
+          ...current,
+          viewport: { ...current.viewport, environment: accepted },
+        };
+        settingsRef.current = updated;
+        setSettings(updated);
+        if (!saveSettings(updated)) {
+          appendDiagnostic("warn", "frontend", "Viewport environment changed but could not be persisted");
+        }
+        appendDiagnostic(
+          "info",
+          "viewport",
+          `${action}: ${accepted.enabled ? accepted.path : "environment off"}`,
+        );
+      } catch (error) {
+        if (sequence !== environmentRequestSequenceRef.current) return;
+        appendDiagnostic("error", "viewport", `${action} failed: ${String(error)}`);
+      }
+    },
+    [appendDiagnostic],
+  );
+  const onViewportEnvironmentSettingsChange = useCallback(
+    (patch: Partial<ViewportEnvironmentSettings>) => {
+      void applyViewportEnvironment(
+        { ...settingsRef.current.viewport.environment, ...patch },
+        "Viewport environment updated",
+      );
+    },
+    [applyViewportEnvironment],
+  );
+  const onViewportEnvironmentBrowse = useCallback(async () => {
+    const path = await open({
+      multiple: false,
+      directory: false,
+      filters: [{ name: "Environment Image", extensions: ["hdr", "exr", "png", "jpg", "jpeg", "webp"] }],
+    });
+    if (typeof path !== "string") return;
+    await applyViewportEnvironment(
+      { ...settingsRef.current.viewport.environment, enabled: true, path },
+      "HDRI loaded",
+    );
+  }, [applyViewportEnvironment]);
+  const onViewportEnvironmentClear = useCallback(() => {
+    void applyViewportEnvironment(
+      { ...settingsRef.current.viewport.environment, enabled: false, path: "" },
+      "HDRI cleared",
+    );
+  }, [applyViewportEnvironment]);
+  const initialEnvironmentAppliedRef = useRef(false);
+  useEffect(() => {
+    if (initialEnvironmentAppliedRef.current || !("__TAURI_INTERNALS__" in window)) return;
+    initialEnvironmentAppliedRef.current = true;
+    void invoke<ViewportEnvironmentSettings>("set_viewport_environment", {
+      settings: settings.viewport.environment,
+      sequence: environmentRequestSequenceRef.current,
+    }).catch((error) => {
+      appendDiagnostic("error", "viewport", `Persisted HDRI could not be restored: ${String(error)}`);
+    });
+  }, [appendDiagnostic, settings.viewport.environment]);
   const viewportPanelParams = useMemo(
     () => ({
       mode: viewportMode,
@@ -237,9 +330,13 @@ function App() {
       projection: settings.viewport.projection,
       fov: settings.viewport.fov,
       viewPreset: cameraViewPreset,
+      environment: settings.viewport.environment,
       onDisplaySettingsChange: onViewportDisplaySettingsChange,
       onCameraSettingsChange: onViewportCameraSettingsChange,
       onCameraViewChange: onViewportCameraViewChange,
+      onEnvironmentSettingsChange: onViewportEnvironmentSettingsChange,
+      onEnvironmentBrowse: onViewportEnvironmentBrowse,
+      onEnvironmentClear: onViewportEnvironmentClear,
     }),
     [
       onViewportDisplaySettingsChange,
@@ -252,8 +349,12 @@ function App() {
       settings.viewport.projection,
       settings.viewport.fov,
       cameraViewPreset,
+      settings.viewport.environment,
       onViewportCameraSettingsChange,
       onViewportCameraViewChange,
+      onViewportEnvironmentSettingsChange,
+      onViewportEnvironmentBrowse,
+      onViewportEnvironmentClear,
       viewportMode,
     ],
   );
@@ -633,6 +734,38 @@ function App() {
       appendDiagnostic("info", "viewport", "Viewport camera self-test completed");
     }, 12000);
   }, [actions, appendDiagnostic, onViewportCameraSettingsChange, onViewportCameraViewChange]);
+
+  // Dev-only real-file HDRI gate. Uses the production validation/persistence
+  // path so load, orientation, failure retention, and clear can be captured
+  // without automating the native file picker.
+  useEffect(() => {
+    const path = import.meta.env.VITE_VIEWPORT_ENVIRONMENT_SELF_TEST;
+    if (viewportEnvironmentSelfTestHasRun || !path) return;
+    viewportEnvironmentSelfTestHasRun = true;
+    const base = { enabled: true, path, rotationDegrees: 0, intensity: 1 };
+    void (async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+      await applyViewportEnvironment(base, "HDRI self-test loaded");
+      if (import.meta.env.VITE_VIEWPORT_ENVIRONMENT_ROTATE_SELF_TEST) {
+        await applyViewportEnvironment(
+          { ...base, rotationDegrees: 90, intensity: 2 },
+          "HDRI self-test rotated",
+        );
+      }
+      if (import.meta.env.VITE_VIEWPORT_ENVIRONMENT_INVALID_SELF_TEST) {
+        await applyViewportEnvironment(
+          { ...base, path: `${path}.missing` },
+          "HDRI invalid self-test",
+        );
+      }
+      if (import.meta.env.VITE_VIEWPORT_ENVIRONMENT_CLEAR_SELF_TEST) {
+        await applyViewportEnvironment(
+          { ...base, enabled: false, path: "" },
+          "HDRI self-test cleared",
+        );
+      }
+    })();
+  }, [applyViewportEnvironment]);
 
   // Reproducible GUI gate for the Console drawer and Settings modal. Both
   // steps use the exact finite actions exposed by the View menu.

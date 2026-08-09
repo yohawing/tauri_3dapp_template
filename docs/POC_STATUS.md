@@ -22,7 +22,8 @@
 | File > Import Asset | implemented / verified | pass (2026-08-09 self-test＋screenshot) | JSON手編集なしでFBX／glTF／GLBを現在Sceneへ追加。失敗時はScene／選択／保存先を保持しpath付きConsole診断 |
 | Imported Scene Save／restart／Open | implemented / verified | pass (2026-08-09 self-test＋screenshot) | 絶対asset pathを保持したまま再起動後にasset／transform／camera／Timeline metadataを復元 |
 | UE風Viewport表示設定 | implemented / verified | pass (2026-08-09 self-test＋screenshot) | Native Lit／Wireframe、Grid／Bones。FBX／glTF skin jointだけを描き、animated poseへ追従。Canvasでは操作disabled |
-| UE風Viewport Camera Controls | implemented / verified | pass (2026-08-09 test＋self-test＋screenshot) | Native Perspective／Orthographic、FOV 30／45／60／90、Front／Right／Top／Perspective。projection／FOVはsettings v2、viewは非永続。Canvasでは操作disabled |
+| UE風Viewport Camera Controls | implemented / verified | pass (2026-08-09 test＋self-test＋screenshot) | Native Perspective／Orthographic、FOV 30／45／60／90、Front／Right／Top／Perspective。projection／FOVはv2で導入しsettings v3でも保持、viewは非永続。Canvasでは操作disabled |
+| Native Viewport HDRI／IBL | implemented / verified | pass (2026-08-09 test＋self-test＋screenshot) | 外部EXRの背景／IBL、Y Rotation／Intensity、失敗時保持、Clear／透明復帰、settings v3再起動復元。Canvasでは操作disabled |
 | DOM Menu／Shortcut | implemented / verified | pass (2026-08-08 test＋self-test) | menuとshortcutは同一Action。input／modal中の抑止をunit test済み |
 | Bounded Console drawer | implemented / verified | pass (2026-08-08 test＋screenshot) | scene／renderer／viewport／frontend、filter／Clear／Copy All／Auto-scroll、500 entry上限 |
 | Settings modal | implemented / verified | pass (2026-08-08 test＋screenshot) | overlay、Console level／Auto-scrollを即時反映し、version付きlocalStorageへ保存 |
@@ -106,10 +107,22 @@ Windows上の現行スライスは継続可。Native raster viewportの部分描
 - settings restart復元 screenshot: `C:\Users\yohaw\AppData\Local\Temp\tauri3d-camera-persisted-restart.png`。
 - Canvas disabled screenshot: `C:\Users\yohaw\AppData\Local\Temp\tauri3d-camera-canvas-disabled.png`。
 - pass: 実FBXでFront／Right／Top／Perspective presetをself-testし、Topでtarget／distanceを保持した上面表示を確認。projection／FOV／viewの現在値はtoolbarとmenuで判別可能。
-- pass: Perspective／OrthographicとFOV 30／45／60／90をversion 2 editor settingsへ保存し、version 1をcamera default付きで移行読込する。再起動後にOrthographic／60°を復元し、`.scene.json`の`CameraState`は変更しない。
+- pass: Perspective／OrthographicとFOV 30／45／60／90はversion 2で導入し、現行version 3 editor settingsでも保持する。version 1はcamera default付きで移行読込し、再起動後にOrthographic／60°を復元する。`.scene.json`の`CameraState`は変更しない。
 - pass: Top／Orthographic 60°からCanvasへ切り替え、Native復帰後もTop orientation／target／distanceを保持。CanvasではCamera buttonと全項目をdisabled表示する。
 - gate: frontend 34 tests、Rust 49 tests、`npm run build`、`cargo fmt --check`、`cargo check --locked`、`git diff --check`がpass。
 - GUI経路: `VITE_ASSET_ROUNDTRIP_OPEN_SELF_TEST`、`VITE_VIEWPORT_CAMERA_SELF_TEST`、`VITE_VIEWPORT_CAMERA_MENU_SELF_TEST`、`screenshot-ui`のみ。Computer Useは未使用。
+
+## 2026-08-09 Native Viewport HDRI／IBL証拠
+
+- 外部EXR＋実FBX、Rotation／Intensity、失敗時保持 screenshot: `C:\Users\yohaw\AppData\Local\Temp\tauri3d-hdri-rotated-invalid-retained.png`。
+- settings再起動復元 screenshot: `C:\Users\yohaw\AppData\Local\Temp\tauri3d-hdri-persisted-restart.png`。
+- Clear／透明背景復帰 screenshot: `C:\Users\yohaw\AppData\Local\Temp\tauri3d-hdri-clear-sequenced.png`。
+- Canvas再起動後のOff永続化／disabled screenshot: `C:\Users\yohaw\AppData\Local\Temp\tauri3d-hdri-canvas-persisted-off.png`。
+- pass: `F:\3dcg\Assets\HDRI\studio_small_08_4k.exr`を絶対pathからruntime loadし、skybox背景とIBLを実FBXへ適用。Y Rotation 90°／Intensity 2を反映し、存在しないpathのload失敗時も直前の有効environmentを保持した。
+- pass: Enabled／path／Rotation／Intensityをversion 3 editor settingsへ保存し、version 1／2をdefault environment付きで移行読込する。再起動後にEXR／90°／2を復元し、`.scene.json`は変更しない。
+- pass: 4K EXRの読込／decodeをrender-loop mutexの外で行い、連番で古い非同期loadが新しいClearを上書きしない。Clear後のlocalStorage recordは`enabled:false`／空pathで、透明Viewport背景へ復帰。Canvas再起動時はOffを復元し全environment操作をdisabled表示する。
+- gate: frontend 35 tests、Rust 52 tests、`npm run build`、`cargo fmt --check`、`cargo check --locked`、`cargo test --locked`、`git diff --check`がpass。
+- GUI経路: `VITE_VIEWPORT_ENVIRONMENT_SELF_TEST`、`VITE_VIEWPORT_ENVIRONMENT_ROTATE_SELF_TEST`、`VITE_VIEWPORT_ENVIRONMENT_INVALID_SELF_TEST`、`VITE_VIEWPORT_ENVIRONMENT_CLEAR_SELF_TEST`、`VITE_VIEWPORT_ENVIRONMENT_MENU_SELF_TEST`、`screenshot-ui`のみ。Computer Useは未使用。
 
 ## 2026-08-09 Asset playback vertical gate（partial）
 

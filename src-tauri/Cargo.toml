@@ -35,3 +35,4 @@ gltf = { version = "1.4", features = [
     "KHR_materials_transmission",
 ] }
 pathdiff = "0.2"
+image = { version = "0.25", default-features = false, features = ["default-formats"] }

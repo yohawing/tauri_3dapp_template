@@ -28,7 +28,7 @@ describe("settings persistence", () => {
     expect(first).not.toBe(DEFAULT_SETTINGS);
   });
 
-  it("restores a saved v2 payload", () => {
+  it("restores a saved v3 payload", () => {
     const storage = new MemoryStorage();
     const settings = {
       viewport: {
@@ -38,6 +38,12 @@ describe("settings persistence", () => {
         showBones: true,
         projection: "orthographic" as const,
         fov: 60 as const,
+        environment: {
+          enabled: true,
+          path: "F:\\assets\\studio.hdr",
+          rotationDegrees: 90,
+          intensity: 1.5,
+        },
       },
       console: { minimumLevel: "warn" as const, autoScroll: false },
     };
@@ -121,6 +127,28 @@ describe("settings persistence", () => {
 
     expect(loadSettings(storage).viewport.projection).toBe(DEFAULT_SETTINGS.viewport.projection);
     expect(loadSettings(storage).viewport.fov).toBe(DEFAULT_SETTINGS.viewport.fov);
+  });
+
+  it("accepts v2 environment-less settings and applies environment defaults", () => {
+    const storage = new MemoryStorage();
+    storage.setItem(
+      SETTINGS_STORAGE_KEY,
+      JSON.stringify({
+        version: 2,
+        settings: {
+          viewport: {
+            displayMode: "lit",
+            showGrid: true,
+            showBones: false,
+            projection: "perspective",
+            fov: 45,
+          },
+          console: { minimumLevel: "info", autoScroll: true },
+        },
+      }),
+    );
+
+    expect(loadSettings(storage).viewport.environment).toEqual(DEFAULT_SETTINGS.viewport.environment);
   });
 
   it("does not throw when the storage implementation fails", () => {

@@ -95,6 +95,28 @@ impl Default for CameraSettings {
     }
 }
 
+/// Editor-only equirectangular environment settings. The path is an absolute
+/// local runtime input and deliberately remains outside Scene JSON.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ViewportEnvironmentSettings {
+    pub enabled: bool,
+    pub path: String,
+    pub rotation_degrees: f32,
+    pub intensity: f32,
+}
+
+impl Default for ViewportEnvironmentSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            path: String::new(),
+            rotation_degrees: 0.0,
+            intensity: 1.0,
+        }
+    }
+}
+
 /// Pointer/wheel input forwarded from the WebView's ViewportHost element via
 /// the `viewport_input` command. Generic and extensible: a new input source
 /// (keyboard, gamepad, ...) only needs a new variant here plus a match arm

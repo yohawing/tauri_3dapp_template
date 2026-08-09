@@ -1,9 +1,16 @@
 export const SETTINGS_STORAGE_KEY = "tauri3d.settings";
-export const SETTINGS_VERSION = 2;
-const LEGACY_SETTINGS_VERSION = 1;
+export const SETTINGS_VERSION = 3;
+const LEGACY_SETTINGS_VERSIONS = [1, 2] as const;
 
 export const CONSOLE_LEVELS = ["info", "warn", "error"] as const;
 export type ConsoleLevel = (typeof CONSOLE_LEVELS)[number];
+
+export interface ViewportEnvironmentSettings {
+  enabled: boolean;
+  path: string;
+  rotationDegrees: number;
+  intensity: number;
+}
 
 export interface Settings {
   viewport: {
@@ -13,6 +20,7 @@ export interface Settings {
     showBones: boolean;
     projection: "perspective" | "orthographic";
     fov: 30 | 45 | 60 | 90;
+    environment: ViewportEnvironmentSettings;
   };
   console: {
     minimumLevel: ConsoleLevel;
@@ -33,6 +41,12 @@ export const DEFAULT_SETTINGS: Settings = {
     showBones: false,
     projection: "perspective",
     fov: 45,
+    environment: {
+      enabled: false,
+      path: "",
+      rotationDegrees: 0,
+      intensity: 1,
+    },
   },
   console: {
     minimumLevel: "info",
@@ -47,7 +61,10 @@ export interface SettingsStorage {
 
 function cloneDefaults(): Settings {
   return {
-    viewport: { ...DEFAULT_SETTINGS.viewport },
+    viewport: {
+      ...DEFAULT_SETTINGS.viewport,
+      environment: { ...DEFAULT_SETTINGS.viewport.environment },
+    },
     console: { ...DEFAULT_SETTINGS.console },
   };
 }
@@ -98,6 +115,29 @@ export function normalizeSettings(value: unknown): Settings {
   if (isFov(viewport?.fov)) {
     defaults.viewport.fov = viewport.fov;
   }
+  const environment = isRecord(viewport?.environment) ? viewport.environment : undefined;
+  if (typeof environment?.enabled === "boolean") {
+    defaults.viewport.environment.enabled = environment.enabled;
+  }
+  if (typeof environment?.path === "string") {
+    defaults.viewport.environment.path = environment.path;
+  }
+  if (
+    typeof environment?.rotationDegrees === "number" &&
+    Number.isFinite(environment.rotationDegrees) &&
+    environment.rotationDegrees >= -180 &&
+    environment.rotationDegrees <= 180
+  ) {
+    defaults.viewport.environment.rotationDegrees = environment.rotationDegrees;
+  }
+  if (
+    typeof environment?.intensity === "number" &&
+    Number.isFinite(environment.intensity) &&
+    environment.intensity >= 0 &&
+    environment.intensity <= 8
+  ) {
+    defaults.viewport.environment.intensity = environment.intensity;
+  }
   if (isConsoleLevel(consoleSettings?.minimumLevel)) {
     defaults.console.minimumLevel = consoleSettings.minimumLevel;
   }
@@ -122,9 +162,9 @@ function resolveStorage(storage: SettingsStorage | null | undefined): SettingsSt
 }
 
 /**
- * Load and validate the versioned frontend settings. Version 1 is accepted so
- * adding camera controls does not discard an existing user's display/console
- * preferences; newly added camera fields use their defaults.
+ * Load and validate the versioned frontend settings. Versions 1 and 2 remain
+ * accepted so camera/environment additions do not discard existing editor
+ * preferences; fields absent from an older payload use their defaults.
  */
 export function loadSettings(storage?: SettingsStorage | null): Settings {
   const resolvedStorage = resolveStorage(storage);
@@ -142,7 +182,8 @@ export function loadSettings(storage?: SettingsStorage | null): Settings {
     const payload: unknown = JSON.parse(serialized);
     if (
       !isRecord(payload) ||
-      (payload.version !== SETTINGS_VERSION && payload.version !== LEGACY_SETTINGS_VERSION) ||
+      (payload.version !== SETTINGS_VERSION &&
+        !(LEGACY_SETTINGS_VERSIONS as readonly number[]).includes(payload.version as number)) ||
       !isRecord(payload.settings)
     ) {
       return cloneDefaults();

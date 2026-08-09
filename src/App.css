@@ -235,7 +235,8 @@
 
 .viewport-host__mode-group,
 .viewport-host__show-menu,
-.viewport-host__camera-menu {
+.viewport-host__camera-menu,
+.viewport-host__environment-menu {
   display: flex;
   position: relative;
 }
@@ -292,6 +293,62 @@
   border: 1px solid rgb(255 255 255 / 14%);
   border-radius: 4px;
   box-shadow: 0 8px 20px rgb(0 0 0 / 36%);
+}
+
+.viewport-host__environment-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  width: 280px;
+  padding: 7px;
+  color: #d8d8de;
+  background: #202026;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 4px;
+  box-shadow: 0 8px 20px rgb(0 0 0 / 36%);
+}
+
+.viewport-host__environment-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.viewport-host__environment-path {
+  overflow: hidden;
+  margin: 6px 0;
+  padding: 5px 6px;
+  color: #aeb0b8;
+  background: rgb(0 0 0 / 20%);
+  border-radius: 3px;
+  font-family: "SF Mono", Consolas, monospace;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viewport-host__environment-field {
+  display: grid;
+  grid-template-columns: 1fr 82px auto;
+  align-items: center;
+  gap: 5px;
+  min-height: 29px;
+  color: #cfd0d6;
+}
+
+.viewport-host__environment-field input {
+  width: 100%;
+  min-width: 0;
+  padding: 3px 5px;
+  color: #eeeef1;
+  background: #151519;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 3px;
+  font: inherit;
+}
+
+.viewport-host__environment-field input:disabled {
+  color: #777781;
+  opacity: 0.65;
 }
 
 .viewport-host__camera-section + .viewport-host__camera-section {
