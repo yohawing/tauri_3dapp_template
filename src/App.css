@@ -889,6 +889,116 @@
   background: rgba(255, 255, 255, 0.08);
 }
 
+/* Reference parity pass (Tauri3D Shell.html):
+ * nav 24px/#232329 with rgba white .10 divider; console controls use the
+ * 13px/17px/200px primitives and 10px/16px diagnostic rows shown there. */
+.menu-bar {
+  height: 24px;
+  background: #232329;
+  border-bottom-color: rgba(255, 255, 255, 0.10);
+}
+
+.menu-bar__trigger {
+  height: 18px;
+  padding: 0 8px;
+  border-radius: 3px;
+  color: #d6d6dc;
+  font-size: 10px;
+}
+
+.menu-bar__renderer-toggle {
+  gap: 2px;
+  padding: 2px;
+  background: #131316;
+  border-color: rgba(255, 255, 255, 0.10);
+  border-radius: 3px;
+}
+
+.menu-bar__renderer-button {
+  height: 14px;
+  padding: 0 8px;
+  border-radius: 2px;
+  color: #9a9aa4;
+  font-size: 9px;
+}
+
+.menu-bar__renderer-button.is-active {
+  color: #f2f2f5;
+  background: #3b6fc4;
+}
+
+.console-drawer__header {
+  background: #1c1c21;
+  border-bottom-color: rgba(255, 255, 255, 0.06);
+}
+
+.console-drawer__filter {
+  gap: 2px;
+  padding: 2px;
+  background: #131316;
+  border-color: rgba(255, 255, 255, 0.09);
+  border-radius: 3px;
+}
+
+.console-drawer__filter-button {
+  height: 13px;
+  padding: 0 8px;
+  border-radius: 2px;
+  font-size: 9px;
+}
+
+.console-drawer__search {
+  width: 200px;
+  flex: 0 0 200px;
+  height: 17px;
+  border-color: rgba(255, 255, 255, 0.09);
+  border-radius: 3px;
+  background: #131316;
+  color: #6e6e78;
+  font-size: 9px;
+}
+
+.console-drawer__button {
+  min-height: 17px;
+  height: 17px;
+  padding: 0 8px;
+  border-color: rgba(255, 255, 255, 0.10);
+  border-radius: 3px;
+  background: #2b2b32;
+  color: #d6d6dc;
+  font-size: 9px;
+}
+
+.console-drawer__button--autoscroll.is-active {
+  border-color: #5a8fe0;
+  background: #3b6fc4;
+  color: #fff;
+}
+
+.console-drawer__entries {
+  padding: 4px 0;
+  background: #131316;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.console-drawer__entry {
+  min-height: 16px;
+  grid-template-columns: auto auto auto minmax(0, 1fr);
+  gap: 6px;
+  padding: 0 12px;
+  border-left-width: 2px;
+  border-bottom: 0;
+  color: #c2c2ca;
+}
+
+.console-drawer__timestamp { color: #5c5c66; }
+.console-drawer__source { color: #7a7a86; }
+.console-drawer__entry .console-drawer__level { color: #8a8a94; }
+.console-drawer__entry--warn .console-drawer__level { color: #e0a33a; }
+.console-drawer__entry--error .console-drawer__level { color: #f0616f; }
+
 .outliner-panel__tab:focus-visible,
 .timeline-panel__tab:focus-visible,
 .console-drawer__tab:focus-visible {
