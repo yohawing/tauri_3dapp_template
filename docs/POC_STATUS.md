@@ -22,8 +22,9 @@
 | File > Import Asset | implemented / verified | pass (2026-08-09 self-test＋screenshot) | JSON手編集なしでFBX／glTF／GLBを現在Sceneへ追加。失敗時はScene／選択／保存先を保持しpath付きConsole診断 |
 | Imported Scene Save／restart／Open | implemented / verified | pass (2026-08-09 self-test＋screenshot) | 絶対asset pathを保持したまま再起動後にasset／transform／camera／Timeline metadataを復元 |
 | UE風Viewport表示設定 | implemented / verified | pass (2026-08-09 self-test＋screenshot) | Native Lit／Wireframe、Grid／Bones。FBX／glTF skin jointだけを描き、animated poseへ追従。Canvasでは操作disabled |
-| UE風Viewport Camera Controls | implemented / verified | pass (2026-08-09 test＋self-test＋screenshot) | Native Perspective／Orthographic、FOV 30／45／60／90、Front／Right／Top／Perspective。projection／FOVはv2で導入しsettings v3でも保持、viewは非永続。Canvasでは操作disabled |
+| UE風Viewport Camera Controls | implemented / verified | pass (2026-08-09 test＋self-test＋screenshot) | Native Perspective／Orthographic、FOV 30／45／60／90、Front／Right／Top／Perspective。projection／FOVはv2で導入しsettings v4でも保持、viewは非永続。Canvasでは操作disabled |
 | Native Viewport HDRI／IBL | implemented / verified | pass (2026-08-09 test＋self-test＋screenshot) | 外部EXRの背景／IBL、Y Rotation／Intensity、失敗時保持、Clear／透明復帰、settings v3再起動復元。Canvasでは操作disabled |
+| Viewport Lighting／Background | implemented / verified | functional pass／real-FBX 1080p perf fail (2026-08-09) | Exposure、None／Reinhard／ACES、Ambient、Shadow 512／1024／2048＋Softness、Transparent／Solid。settings v4、Canvas disabled |
 | DOM Menu／Shortcut | implemented / verified | pass (2026-08-08 test＋self-test) | menuとshortcutは同一Action。input／modal中の抑止をunit test済み |
 | Bounded Console drawer | implemented / verified | pass (2026-08-08 test＋screenshot) | scene／renderer／viewport／frontend、filter／Clear／Copy All／Auto-scroll、500 entry上限 |
 | Settings modal | implemented / verified | pass (2026-08-08 test＋screenshot) | overlay、Console level／Auto-scrollを即時反映し、version付きlocalStorageへ保存 |
@@ -107,7 +108,7 @@ Windows上の現行スライスは継続可。Native raster viewportの部分描
 - settings restart復元 screenshot: `C:\Users\yohaw\AppData\Local\Temp\tauri3d-camera-persisted-restart.png`。
 - Canvas disabled screenshot: `C:\Users\yohaw\AppData\Local\Temp\tauri3d-camera-canvas-disabled.png`。
 - pass: 実FBXでFront／Right／Top／Perspective presetをself-testし、Topでtarget／distanceを保持した上面表示を確認。projection／FOV／viewの現在値はtoolbarとmenuで判別可能。
-- pass: Perspective／OrthographicとFOV 30／45／60／90はversion 2で導入し、現行version 3 editor settingsでも保持する。version 1はcamera default付きで移行読込し、再起動後にOrthographic／60°を復元する。`.scene.json`の`CameraState`は変更しない。
+- pass: Perspective／OrthographicとFOV 30／45／60／90はversion 2で導入し、現行version 4 editor settingsでも保持する。version 1はcamera default付きで移行読込し、再起動後にOrthographic／60°を復元する。`.scene.json`の`CameraState`は変更しない。
 - pass: Top／Orthographic 60°からCanvasへ切り替え、Native復帰後もTop orientation／target／distanceを保持。CanvasではCamera buttonと全項目をdisabled表示する。
 - gate: frontend 34 tests、Rust 49 tests、`npm run build`、`cargo fmt --check`、`cargo check --locked`、`git diff --check`がpass。
 - GUI経路: `VITE_ASSET_ROUNDTRIP_OPEN_SELF_TEST`、`VITE_VIEWPORT_CAMERA_SELF_TEST`、`VITE_VIEWPORT_CAMERA_MENU_SELF_TEST`、`screenshot-ui`のみ。Computer Useは未使用。
@@ -119,10 +120,33 @@ Windows上の現行スライスは継続可。Native raster viewportの部分描
 - Clear／透明背景復帰 screenshot: `C:\Users\yohaw\AppData\Local\Temp\tauri3d-hdri-clear-sequenced.png`。
 - Canvas再起動後のOff永続化／disabled screenshot: `C:\Users\yohaw\AppData\Local\Temp\tauri3d-hdri-canvas-persisted-off.png`。
 - pass: `F:\3dcg\Assets\HDRI\studio_small_08_4k.exr`を絶対pathからruntime loadし、skybox背景とIBLを実FBXへ適用。Y Rotation 90°／Intensity 2を反映し、存在しないpathのload失敗時も直前の有効environmentを保持した。
-- pass: Enabled／path／Rotation／Intensityをversion 3 editor settingsへ保存し、version 1／2をdefault environment付きで移行読込する。再起動後にEXR／90°／2を復元し、`.scene.json`は変更しない。
+- pass: Enabled／path／Rotation／Intensityはversion 3で導入し、現行version 4 editor settingsでも保持する。version 1／2をdefault environment付きで移行読込し、再起動後にEXR／90°／2を復元する。`.scene.json`は変更しない。
 - pass: 4K EXRの読込／decodeをrender-loop mutexの外で行い、連番で古い非同期loadが新しいClearを上書きしない。Clear後のlocalStorage recordは`enabled:false`／空pathで、透明Viewport背景へ復帰。Canvas再起動時はOffを復元し全environment操作をdisabled表示する。
 - gate: frontend 35 tests、Rust 52 tests、`npm run build`、`cargo fmt --check`、`cargo check --locked`、`cargo test --locked`、`git diff --check`がpass。
 - GUI経路: `VITE_VIEWPORT_ENVIRONMENT_SELF_TEST`、`VITE_VIEWPORT_ENVIRONMENT_ROTATE_SELF_TEST`、`VITE_VIEWPORT_ENVIRONMENT_INVALID_SELF_TEST`、`VITE_VIEWPORT_ENVIRONMENT_CLEAR_SELF_TEST`、`VITE_VIEWPORT_ENVIRONMENT_MENU_SELF_TEST`、`screenshot-ui`のみ。Computer Useは未使用。
+
+## 2026-08-09 Viewport Lighting／Background証拠
+
+- HDRI優先＋Lighting controls screenshot: `C:\Users\yohaw\AppData\Local\Temp\tauri3d-lighting-hdri-precedence-late.png`。
+- HDRI Off＋Solid background screenshot: `C:\Users\yohaw\AppData\Local\Temp\tauri3d-lighting-solid-background.png`。
+- Transparent復帰 screenshot: `C:\Users\yohaw\AppData\Local\Temp\tauri3d-lighting-transparent-restored.png`。
+- settings v4再起動復元 screenshot: `C:\Users\yohaw\AppData\Local\Temp\tauri3d-lighting-persisted-restart.png`。
+- Canvas disabled screenshot: `C:\Users\yohaw\AppData\Local\Temp\tauri3d-lighting-canvas-disabled-persisted.png`。
+- pass: 実FBXでExposure 2、Reinhard／ACES、Ambient 0.35、Shadow enabled／512／1024／2048／Softness 2、Transparent／Solid `#172033`をNative既存setterへ適用。HDRI On時はHDRI背景を優先するnoteを表示し、HDRI OffでSolid、TransparentでWebView背景へ復帰した。
+- pass: Lighting設定をversion 4 editor settingsへ保存し、version 1〜3をLighting default付きで移行読込する。graceful process再起動後にExposure 2／ACES／Ambient 0.35／Shadow 2048／Softness 2／Transparentを復元し、`.scene.json`は変更しない。Canvasではmenuを含む全Lighting操作をdisabled表示する。
+- gate: frontend 37 tests、Rust 54 tests、`npm run build`、`cargo fmt --check`、`cargo check --locked`、`cargo test --locked`、`git diff --check`がpass。
+
+実FBX 1080p shadow preset cold run（debug、60-frame warm-up＋180 samples、`TAURI3D_SCENE=artifacts/absolute-path-gate/runtime-absolute.scene.json`）:
+
+| Shadow resolution | average FPS | wall p50 / p95 / p99 | CPU render p95 | GPU p95 | nominal 60 Hz |
+|---:|---:|---:|---:|---:|---|
+| 512 | 14.307 | 69.022 / 74.355 / 79.911 ms | 73.470 ms | 0.391 ms | fail |
+| 1024 | 13.527 | 71.926 / 84.401 / 109.625 ms | 82.968 ms | 0.384 ms | fail |
+| 2048 | 13.117 | 74.562 / 85.211 / 123.505 ms | 84.019 ms | 0.386 ms | fail |
+
+- interpretation: presetを下げるとwall／CPUは改善するが、GPU p95は0.384〜0.391 msでほぼ横ばい。現debug実FBX経路はshadow GPU負荷よりCPU render側が支配的で、nominal 60 Hz failは`ASSET-PLAYBACK-GATE-01`へ引き継ぐ。
+- raw logs: `artifacts/lighting-perf-fbx-512-stderr.log`、`lighting-perf-fbx-1024-stderr.log`、`lighting-perf-fbx-2048-stderr.log`（local／ignored）。
+- GUI経路: `VITE_VIEWPORT_LIGHTING_SELF_TEST`、`VITE_VIEWPORT_LIGHTING_MENU_SELF_TEST`、`VITE_VIEWPORT_ENVIRONMENT_CLEAR_SELF_TEST`、`screenshot-ui`のみ。Computer Useは未使用。
 
 ## 2026-08-09 Asset playback vertical gate（partial）
 

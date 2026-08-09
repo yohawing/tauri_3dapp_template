@@ -26,6 +26,7 @@ import {
   saveSettings,
   type Settings,
   type ViewportEnvironmentSettings,
+  type ViewportLightingSettings,
 } from "./settings/model";
 import { Outliner } from "./panels/Outliner";
 import { Inspector } from "./panels/Inspector";
@@ -54,6 +55,7 @@ let shellSelfTestHasRun = false;
 let viewportDisplaySelfTestHasRun = false;
 let viewportCameraSelfTestHasRun = false;
 let viewportEnvironmentSelfTestHasRun = false;
+let viewportLightingSelfTestHasRun = false;
 
 // Panel content, keyed by the `component` name used in shell/layout.ts. Each
 // entry wraps the (self-contained, opaque) panel component or ViewportHost in
@@ -107,6 +109,17 @@ const DOCK_COMPONENTS: Record<string, React.FunctionComponent<IDockviewPanelProp
           rotationDegrees: 0,
           intensity: 1,
         }}
+        lighting={(props.params.lighting as ViewportLightingSettings | undefined) ?? {
+          exposure: 1,
+          tonemap: "none",
+          ambientIntensity: 0.2,
+          ambientColor: "#ffffff",
+          shadowsEnabled: true,
+          shadowResolution: 2048,
+          shadowSoftness: 1,
+          backgroundMode: "transparent",
+          backgroundColor: "#000000",
+        }}
         onDisplaySettingsChange={props.params.onDisplaySettingsChange as
           | ((patch: {
               displayMode?: "lit" | "wireframe";
@@ -125,6 +138,9 @@ const DOCK_COMPONENTS: Record<string, React.FunctionComponent<IDockviewPanelProp
           | undefined}
         onEnvironmentBrowse={props.params.onEnvironmentBrowse as (() => void) | undefined}
         onEnvironmentClear={props.params.onEnvironmentClear as (() => void) | undefined}
+        onLightingSettingsChange={props.params.onLightingSettingsChange as
+          | ((patch: Partial<ViewportLightingSettings>) => void)
+          | undefined}
       />
     </div>
   ),
@@ -169,6 +185,16 @@ function App() {
     },
     [consoleStore],
   );
+
+  // Persist the committed React snapshot instead of writing independently
+  // from async HDRI and lighting callbacks. React's state queue then defines a
+  // single order, so either control family cannot save a stale copy of the other.
+  useEffect(() => {
+    settingsRef.current = settings;
+    if (!saveSettings(settings)) {
+      appendDiagnostic("warn", "frontend", "Editor settings changed for this session but could not be persisted");
+    }
+  }, [appendDiagnostic, settings]);
 
   const selectNativeRenderer = useCallback(() => {
     if (!rendererStatus.nativeAvailable) {
@@ -248,6 +274,23 @@ function App() {
     },
     [appendDiagnostic, viewportMode],
   );
+  const onViewportLightingSettingsChange = useCallback(
+    (patch: Partial<ViewportLightingSettings>) => {
+      if (viewportMode !== "native") return;
+      setSettings((current) => {
+        const next = {
+          ...current,
+          viewport: {
+            ...current.viewport,
+            lighting: { ...current.viewport.lighting, ...patch },
+          },
+        };
+        settingsRef.current = next;
+        return next;
+      });
+    },
+    [viewportMode],
+  );
   const applyViewportEnvironment = useCallback(
     async (next: ViewportEnvironmentSettings, action: string) => {
       const sequence = environmentRequestSequenceRef.current + 1;
@@ -258,16 +301,14 @@ function App() {
           sequence,
         });
         if (sequence !== environmentRequestSequenceRef.current) return;
-        const current = settingsRef.current;
-        const updated = {
-          ...current,
-          viewport: { ...current.viewport, environment: accepted },
-        };
-        settingsRef.current = updated;
-        setSettings(updated);
-        if (!saveSettings(updated)) {
-          appendDiagnostic("warn", "frontend", "Viewport environment changed but could not be persisted");
-        }
+        setSettings((current) => {
+          const updated = {
+            ...current,
+            viewport: { ...current.viewport, environment: accepted },
+          };
+          settingsRef.current = updated;
+          return updated;
+        });
         appendDiagnostic(
           "info",
           "viewport",
@@ -331,12 +372,14 @@ function App() {
       fov: settings.viewport.fov,
       viewPreset: cameraViewPreset,
       environment: settings.viewport.environment,
+      lighting: settings.viewport.lighting,
       onDisplaySettingsChange: onViewportDisplaySettingsChange,
       onCameraSettingsChange: onViewportCameraSettingsChange,
       onCameraViewChange: onViewportCameraViewChange,
       onEnvironmentSettingsChange: onViewportEnvironmentSettingsChange,
       onEnvironmentBrowse: onViewportEnvironmentBrowse,
       onEnvironmentClear: onViewportEnvironmentClear,
+      onLightingSettingsChange: onViewportLightingSettingsChange,
     }),
     [
       onViewportDisplaySettingsChange,
@@ -350,11 +393,13 @@ function App() {
       settings.viewport.fov,
       cameraViewPreset,
       settings.viewport.environment,
+      settings.viewport.lighting,
       onViewportCameraSettingsChange,
       onViewportCameraViewChange,
       onViewportEnvironmentSettingsChange,
       onViewportEnvironmentBrowse,
       onViewportEnvironmentClear,
+      onViewportLightingSettingsChange,
       viewportMode,
     ],
   );
@@ -734,6 +779,39 @@ function App() {
       appendDiagnostic("info", "viewport", "Viewport camera self-test completed");
     }, 12000);
   }, [actions, appendDiagnostic, onViewportCameraSettingsChange, onViewportCameraViewChange]);
+
+  // Dev-only lighting gate. It follows the production callback so settings
+  // persistence and Native IPC are exercised together; Canvas remains an
+  // explicitly unsupported (disabled) control surface.
+  useEffect(() => {
+    const requestedTest = import.meta.env.VITE_VIEWPORT_LIGHTING_SELF_TEST;
+    if (viewportLightingSelfTestHasRun || !requestedTest || viewportMode !== "native") return;
+    viewportLightingSelfTestHasRun = true;
+    setTimeout(() => {
+      onViewportLightingSettingsChange({ exposure: 2, tonemap: "reinhard", ambientIntensity: 0.35 });
+      appendDiagnostic("info", "viewport", "Viewport lighting self-test: exposure/tonemap/ambient applied");
+    }, 2000);
+    setTimeout(() => {
+      onViewportLightingSettingsChange({ shadowsEnabled: true, shadowResolution: 512, shadowSoftness: 2 });
+    }, 4000);
+    setTimeout(() => {
+      onViewportLightingSettingsChange({ shadowResolution: 1024, backgroundMode: "solid", backgroundColor: "#172033" });
+    }, 6000);
+    setTimeout(() => {
+      const finalShadowResolution = requestedTest === "shadow-512"
+        ? 512
+        : requestedTest === "shadow-1024"
+          ? 1024
+          : 2048;
+      onViewportLightingSettingsChange({
+        shadowResolution: finalShadowResolution,
+        backgroundMode: requestedTest === "solid" ? "solid" : "transparent",
+        backgroundColor: "#172033",
+        tonemap: "aces",
+      });
+      appendDiagnostic("info", "viewport", "Viewport lighting self-test completed");
+    }, 8000);
+  }, [appendDiagnostic, onViewportLightingSettingsChange, viewportMode]);
 
   // Dev-only real-file HDRI gate. Uses the production validation/persistence
   // path so load, orientation, failure retention, and clear can be captured

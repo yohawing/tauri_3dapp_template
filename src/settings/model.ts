@@ -1,6 +1,6 @@
 export const SETTINGS_STORAGE_KEY = "tauri3d.settings";
-export const SETTINGS_VERSION = 3;
-const LEGACY_SETTINGS_VERSIONS = [1, 2] as const;
+export const SETTINGS_VERSION = 4;
+const LEGACY_SETTINGS_VERSIONS = [1, 2, 3] as const;
 
 export const CONSOLE_LEVELS = ["info", "warn", "error"] as const;
 export type ConsoleLevel = (typeof CONSOLE_LEVELS)[number];
@@ -12,6 +12,21 @@ export interface ViewportEnvironmentSettings {
   intensity: number;
 }
 
+export type ViewportTonemap = "none" | "reinhard" | "aces";
+export type ViewportBackgroundMode = "transparent" | "solid";
+
+export interface ViewportLightingSettings {
+  exposure: number;
+  tonemap: ViewportTonemap;
+  ambientIntensity: number;
+  ambientColor: string;
+  shadowsEnabled: boolean;
+  shadowResolution: 512 | 1024 | 2048;
+  shadowSoftness: number;
+  backgroundMode: ViewportBackgroundMode;
+  backgroundColor: string;
+}
+
 export interface Settings {
   viewport: {
     debugOverlay: boolean;
@@ -21,6 +36,7 @@ export interface Settings {
     projection: "perspective" | "orthographic";
     fov: 30 | 45 | 60 | 90;
     environment: ViewportEnvironmentSettings;
+    lighting: ViewportLightingSettings;
   };
   console: {
     minimumLevel: ConsoleLevel;
@@ -47,6 +63,17 @@ export const DEFAULT_SETTINGS: Settings = {
       rotationDegrees: 0,
       intensity: 1,
     },
+    lighting: {
+      exposure: 1,
+      tonemap: "none",
+      ambientIntensity: 0.2,
+      ambientColor: "#ffffff",
+      shadowsEnabled: true,
+      shadowResolution: 2048,
+      shadowSoftness: 1,
+      backgroundMode: "transparent",
+      backgroundColor: "#000000",
+    },
   },
   console: {
     minimumLevel: "info",
@@ -64,6 +91,7 @@ function cloneDefaults(): Settings {
     viewport: {
       ...DEFAULT_SETTINGS.viewport,
       environment: { ...DEFAULT_SETTINGS.viewport.environment },
+      lighting: { ...DEFAULT_SETTINGS.viewport.lighting },
     },
     console: { ...DEFAULT_SETTINGS.console },
   };
@@ -83,6 +111,22 @@ function isProjection(value: unknown): value is Settings["viewport"]["projection
 
 function isFov(value: unknown): value is Settings["viewport"]["fov"] {
   return value === 30 || value === 45 || value === 60 || value === 90;
+}
+
+function isTonemap(value: unknown): value is ViewportTonemap {
+  return value === "none" || value === "reinhard" || value === "aces";
+}
+
+function isBackgroundMode(value: unknown): value is ViewportBackgroundMode {
+  return value === "transparent" || value === "solid";
+}
+
+function isHexColor(value: unknown): value is string {
+  return typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value);
+}
+
+function isShadowResolution(value: unknown): value is Settings["viewport"]["lighting"]["shadowResolution"] {
+  return value === 512 || value === 1024 || value === 2048;
 }
 
 /**
@@ -138,6 +182,34 @@ export function normalizeSettings(value: unknown): Settings {
   ) {
     defaults.viewport.environment.intensity = environment.intensity;
   }
+  const lighting = isRecord(viewport?.lighting) ? viewport.lighting : undefined;
+  if (typeof lighting?.exposure === "number" && Number.isFinite(lighting.exposure) && lighting.exposure >= 0 && lighting.exposure <= 16) {
+    defaults.viewport.lighting.exposure = lighting.exposure;
+  }
+  if (isTonemap(lighting?.tonemap)) {
+    defaults.viewport.lighting.tonemap = lighting.tonemap;
+  }
+  if (typeof lighting?.ambientIntensity === "number" && Number.isFinite(lighting.ambientIntensity) && lighting.ambientIntensity >= 0 && lighting.ambientIntensity <= 4) {
+    defaults.viewport.lighting.ambientIntensity = lighting.ambientIntensity;
+  }
+  if (isHexColor(lighting?.ambientColor)) {
+    defaults.viewport.lighting.ambientColor = lighting.ambientColor.toLowerCase();
+  }
+  if (typeof lighting?.shadowsEnabled === "boolean") {
+    defaults.viewport.lighting.shadowsEnabled = lighting.shadowsEnabled;
+  }
+  if (isShadowResolution(lighting?.shadowResolution)) {
+    defaults.viewport.lighting.shadowResolution = lighting.shadowResolution;
+  }
+  if (typeof lighting?.shadowSoftness === "number" && Number.isFinite(lighting.shadowSoftness) && lighting.shadowSoftness >= 0 && lighting.shadowSoftness <= 8) {
+    defaults.viewport.lighting.shadowSoftness = lighting.shadowSoftness;
+  }
+  if (isBackgroundMode(lighting?.backgroundMode)) {
+    defaults.viewport.lighting.backgroundMode = lighting.backgroundMode;
+  }
+  if (isHexColor(lighting?.backgroundColor)) {
+    defaults.viewport.lighting.backgroundColor = lighting.backgroundColor.toLowerCase();
+  }
   if (isConsoleLevel(consoleSettings?.minimumLevel)) {
     defaults.console.minimumLevel = consoleSettings.minimumLevel;
   }
@@ -162,8 +234,8 @@ function resolveStorage(storage: SettingsStorage | null | undefined): SettingsSt
 }
 
 /**
- * Load and validate the versioned frontend settings. Versions 1 and 2 remain
- * accepted so camera/environment additions do not discard existing editor
+ * Load and validate the versioned frontend settings. Versions 1 through 3 remain
+ * accepted so lighting additions do not discard existing editor
  * preferences; fields absent from an older payload use their defaults.
  */
 export function loadSettings(storage?: SettingsStorage | null): Settings {

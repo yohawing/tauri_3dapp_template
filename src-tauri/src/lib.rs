@@ -20,7 +20,7 @@ use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 use camera::OrbitCamera;
 use protocol::{
     CameraSettings, CameraState, CameraViewPreset, ViewportDisplayMode, ViewportDisplaySettings,
-    ViewportEnvironmentSettings, ViewportInput, ViewportRect,
+    ViewportEnvironmentSettings, ViewportInput, ViewportLightingSettings, ViewportRect,
 };
 use renderer::Renderer;
 use scene_projection::{SceneCommandEnvelope, SceneCommandResult, SceneProjectionStore};
@@ -42,6 +42,7 @@ struct RendererControl {
     viewport_rect: Mutex<Option<ViewportRect>>,
     viewport_display: Mutex<ViewportDisplaySettings>,
     camera_settings: Mutex<CameraSettings>,
+    viewport_lighting: Mutex<ViewportLightingSettings>,
     viewport_environment: Mutex<ViewportEnvironmentControl>,
 }
 
@@ -140,6 +141,47 @@ fn set_camera_settings(
         return Err("Camera FOV must be finite and between 1 and 179 degrees".into());
     }
     *state.camera_settings.lock().unwrap() = settings;
+    Ok(settings)
+}
+
+fn validate_viewport_lighting(settings: &ViewportLightingSettings) -> Result<(), String> {
+    if !settings.exposure.is_finite() || !(0.0..=16.0).contains(&settings.exposure) {
+        return Err("Viewport exposure must be finite and between 0 and 16".into());
+    }
+    if !settings.ambient_intensity.is_finite() || !(0.0..=4.0).contains(&settings.ambient_intensity)
+    {
+        return Err("Ambient intensity must be finite and between 0 and 4".into());
+    }
+    if settings
+        .ambient_color
+        .iter()
+        .any(|value| !value.is_finite() || !(0.0..=1.0).contains(value))
+    {
+        return Err("Ambient color channels must be finite and between 0 and 1".into());
+    }
+    if !matches!(settings.shadow_resolution, 512 | 1024 | 2048) {
+        return Err("Shadow resolution must be 512, 1024, or 2048".into());
+    }
+    if !settings.shadow_softness.is_finite() || !(0.0..=8.0).contains(&settings.shadow_softness) {
+        return Err("Shadow softness must be finite and between 0 and 8".into());
+    }
+    if settings
+        .background_color
+        .iter()
+        .any(|value| !value.is_finite() || !(0.0..=1.0).contains(value))
+    {
+        return Err("Background color channels must be finite and between 0 and 1".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn set_viewport_lighting(
+    state: tauri::State<RendererControl>,
+    settings: ViewportLightingSettings,
+) -> Result<ViewportLightingSettings, String> {
+    validate_viewport_lighting(&settings)?;
+    *state.viewport_lighting.lock().unwrap() = settings;
     Ok(settings)
 }
 
@@ -323,6 +365,7 @@ pub fn run() {
             get_viewport_display,
             set_viewport_display,
             set_camera_settings,
+            set_viewport_lighting,
             set_viewport_environment,
             viewport_input,
             set_renderer_active,
@@ -539,6 +582,11 @@ pub fn run() {
                     .camera_settings
                     .lock()
                     .unwrap();
+                let viewport_lighting = *app_handle
+                    .state::<RendererControl>()
+                    .viewport_lighting
+                    .lock()
+                    .unwrap();
                 let viewport_environment = {
                     let renderer_control = app_handle.state::<RendererControl>();
                     let environment = renderer_control.viewport_environment.lock().unwrap();
@@ -589,6 +637,7 @@ pub fn run() {
                             renderer.set_camera_state(camera);
                             renderer.set_camera_settings(camera_settings);
                             renderer.set_viewport_display(viewport_display);
+                            renderer.set_viewport_lighting(viewport_lighting);
                             renderer.set_viewport_environment(
                                 viewport_environment.0,
                                 viewport_environment.1.as_deref().map(Vec::as_slice),
@@ -649,5 +698,33 @@ mod viewport_environment_tests {
         value.rotation_degrees = 0.0;
         value.intensity = 8.1;
         assert!(validate_viewport_environment(&value).is_err());
+    }
+}
+
+#[cfg(test)]
+mod viewport_lighting_tests {
+    use super::*;
+
+    #[test]
+    fn accepts_default_lighting_and_supported_resolutions() {
+        let mut value = ViewportLightingSettings::default();
+        assert!(validate_viewport_lighting(&value).is_ok());
+        for resolution in [512, 1024, 2048] {
+            value.shadow_resolution = resolution;
+            assert!(validate_viewport_lighting(&value).is_ok());
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_lighting_ranges() {
+        let mut value = ViewportLightingSettings::default();
+        value.exposure = f32::NAN;
+        assert!(validate_viewport_lighting(&value).is_err());
+        value = ViewportLightingSettings::default();
+        value.shadow_resolution = 4096;
+        assert!(validate_viewport_lighting(&value).is_err());
+        value = ViewportLightingSettings::default();
+        value.background_color = [2.0, 0.0, 0.0];
+        assert!(validate_viewport_lighting(&value).is_err());
     }
 }

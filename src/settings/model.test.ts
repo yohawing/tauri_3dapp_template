@@ -28,7 +28,7 @@ describe("settings persistence", () => {
     expect(first).not.toBe(DEFAULT_SETTINGS);
   });
 
-  it("restores a saved v3 payload", () => {
+  it("restores a saved v4 payload", () => {
     const storage = new MemoryStorage();
     const settings = {
       viewport: {
@@ -43,6 +43,17 @@ describe("settings persistence", () => {
           path: "F:\\assets\\studio.hdr",
           rotationDegrees: 90,
           intensity: 1.5,
+        },
+        lighting: {
+          exposure: 1.25,
+          tonemap: "reinhard" as const,
+          ambientIntensity: 0.35,
+          ambientColor: "#aabbcc",
+          shadowsEnabled: true,
+          shadowResolution: 1024 as const,
+          shadowSoftness: 2,
+          backgroundMode: "solid" as const,
+          backgroundColor: "#101820",
         },
       },
       console: { minimumLevel: "warn" as const, autoScroll: false },
@@ -149,6 +160,55 @@ describe("settings persistence", () => {
     );
 
     expect(loadSettings(storage).viewport.environment).toEqual(DEFAULT_SETTINGS.viewport.environment);
+  });
+
+  it("accepts v3 environment settings and applies lighting defaults", () => {
+    const storage = new MemoryStorage();
+    storage.setItem(
+      SETTINGS_STORAGE_KEY,
+      JSON.stringify({
+        version: 3,
+        settings: {
+          viewport: {
+            environment: {
+              enabled: false,
+              path: "",
+              rotationDegrees: 0,
+              intensity: 1,
+            },
+          },
+          console: { minimumLevel: "info", autoScroll: true },
+        },
+      }),
+    );
+
+    expect(loadSettings(storage).viewport.lighting).toEqual(DEFAULT_SETTINGS.viewport.lighting);
+  });
+
+  it("rejects malformed lighting values independently", () => {
+    const storage = new MemoryStorage();
+    storage.setItem(
+      SETTINGS_STORAGE_KEY,
+      JSON.stringify({
+        version: SETTINGS_VERSION,
+        settings: {
+          viewport: {
+            lighting: {
+              exposure: -1,
+              tonemap: "agx",
+              ambientIntensity: 99,
+              ambientColor: "red",
+              shadowsEnabled: "yes",
+              shadowResolution: 4096,
+              shadowSoftness: -1,
+              backgroundMode: "image",
+              backgroundColor: "#123",
+            },
+          },
+        },
+      }),
+    );
+    expect(loadSettings(storage).viewport.lighting).toEqual(DEFAULT_SETTINGS.viewport.lighting);
   });
 
   it("does not throw when the storage implementation fails", () => {

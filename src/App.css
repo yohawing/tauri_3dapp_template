@@ -236,7 +236,8 @@
 .viewport-host__mode-group,
 .viewport-host__show-menu,
 .viewport-host__camera-menu,
-.viewport-host__environment-menu {
+.viewport-host__environment-menu,
+.viewport-host__lighting-menu {
   display: flex;
   position: relative;
 }
@@ -308,6 +309,21 @@
   box-shadow: 0 8px 20px rgb(0 0 0 / 36%);
 }
 
+.viewport-host__lighting-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  width: 300px;
+  max-height: min(70vh, 480px);
+  overflow: auto;
+  padding: 7px;
+  color: #d8d8de;
+  background: #202026;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 4px;
+  box-shadow: 0 8px 20px rgb(0 0 0 / 36%);
+}
+
 .viewport-host__environment-actions {
   display: flex;
   gap: 4px;
@@ -344,6 +360,33 @@
   border: 1px solid rgb(255 255 255 / 14%);
   border-radius: 3px;
   font: inherit;
+}
+
+.viewport-host__environment-field select {
+  width: 100%;
+  min-width: 0;
+  padding: 3px 5px;
+  color: #eeeef1;
+  background: #151519;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 3px;
+  font: inherit;
+}
+
+.viewport-host__lighting-popover input[type="color"] {
+  width: 34px;
+  min-width: 34px;
+  height: 23px;
+  padding: 1px;
+}
+
+.viewport-host__environment-note {
+  margin-top: 7px;
+  padding-top: 6px;
+  color: #e7c77b;
+  border-top: 1px solid rgb(255 255 255 / 10%);
+  font-size: 10px;
+  line-height: 1.35;
 }
 
 .viewport-host__environment-field input:disabled {

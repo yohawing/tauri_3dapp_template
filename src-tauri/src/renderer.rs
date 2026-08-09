@@ -5,15 +5,17 @@ use std::path::Path;
 use std::time::Instant;
 
 use kiss3d::color::Color;
+use kiss3d::post_processing::Tonemap;
 use kiss3d::prelude::{
     AnimationPlayer, Camera3d, CanvasSetup, Light, NumSamples, OrbitCamera3d, Projection, Quat,
-    RenderViewport, SceneNode3d, Vec3, Window, BLACK, ORANGE,
+    RenderViewport, SceneNode3d, Vec3, Window, ORANGE,
 };
 
 use crate::performance::{target_from_env, PerformanceSampler};
 use crate::protocol::{
-    CameraProjection, CameraSettings, CameraState, ViewportDisplayMode, ViewportDisplaySettings,
-    ViewportEnvironmentSettings, ViewportRect,
+    CameraProjection, CameraSettings, CameraState, ViewportBackgroundMode, ViewportDisplayMode,
+    ViewportDisplaySettings, ViewportEnvironmentSettings, ViewportLightingSettings, ViewportRect,
+    ViewportTonemap,
 };
 use crate::scene::{ResolvedAssetPath, Scene, SceneInstance};
 use crate::scene_projection::{
@@ -147,7 +149,7 @@ impl Renderer {
 
         let mut kiss_window =
             pollster::block_on(Window::new_embedded(window, width, height, setup));
-        kiss_window.set_background_color(BLACK);
+        kiss_window.set_background_color(Color::new(0.0, 0.0, 0.0, 0.0));
 
         let mut scene = SceneNode3d::empty();
         let mut key_light = scene.add_light(Light::point(100.0));
@@ -190,7 +192,7 @@ impl Renderer {
 
         let mut kiss_window =
             pollster::block_on(Window::new_embedded(window, width, height, setup));
-        kiss_window.set_background_color(BLACK);
+        kiss_window.set_background_color(Color::new(0.0, 0.0, 0.0, 0.0));
 
         let runtime = build_runtime_scene(scene_document, resolved_assets)?;
 
@@ -298,6 +300,38 @@ impl Renderer {
             self.apply_display_mode(settings.mode);
         }
         self.display = settings;
+    }
+
+    /// Apply editor-only Native lighting and background controls. These values
+    /// are intentionally separate from Scene material/light data.
+    pub fn set_viewport_lighting(&mut self, settings: ViewportLightingSettings) {
+        self.window.set_exposure(settings.exposure);
+        self.window.set_tonemap(match settings.tonemap {
+            ViewportTonemap::None => Tonemap::None,
+            ViewportTonemap::Reinhard => Tonemap::Reinhard,
+            ViewportTonemap::Aces => Tonemap::Aces,
+        });
+        self.window.set_ambient(settings.ambient_intensity);
+        self.window.set_ambient_color(Color::new(
+            settings.ambient_color[0],
+            settings.ambient_color[1],
+            settings.ambient_color[2],
+            1.0,
+        ));
+        self.window.set_shadows_enabled(settings.shadows_enabled);
+        self.window
+            .set_shadow_resolution(settings.shadow_resolution);
+        self.window.set_shadow_softness(settings.shadow_softness);
+        let background = match settings.background_mode {
+            ViewportBackgroundMode::Transparent => Color::new(0.0, 0.0, 0.0, 0.0),
+            ViewportBackgroundMode::Solid => Color::new(
+                settings.background_color[0],
+                settings.background_color[1],
+                settings.background_color[2],
+                1.0,
+            ),
+        };
+        self.window.set_background_color(background);
     }
 
     /// Apply a validated editor-only equirectangular skybox/IBL request. A

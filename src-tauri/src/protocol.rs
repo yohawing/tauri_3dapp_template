@@ -117,6 +117,65 @@ impl Default for ViewportEnvironmentSettings {
     }
 }
 
+/// Editor-only Native viewport lighting and background controls. These values
+/// are persisted by the WebView settings envelope and never enter Scene JSON.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ViewportLightingSettings {
+    pub exposure: f32,
+    pub tonemap: ViewportTonemap,
+    pub ambient_intensity: f32,
+    pub ambient_color: [f32; 3],
+    pub shadows_enabled: bool,
+    pub shadow_resolution: u32,
+    pub shadow_softness: f32,
+    pub background_mode: ViewportBackgroundMode,
+    pub background_color: [f32; 3],
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ViewportTonemap {
+    None,
+    Reinhard,
+    Aces,
+}
+
+impl Default for ViewportTonemap {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ViewportBackgroundMode {
+    Transparent,
+    Solid,
+}
+
+impl Default for ViewportBackgroundMode {
+    fn default() -> Self {
+        Self::Transparent
+    }
+}
+
+impl Default for ViewportLightingSettings {
+    fn default() -> Self {
+        Self {
+            exposure: 1.0,
+            tonemap: ViewportTonemap::None,
+            ambient_intensity: 0.2,
+            ambient_color: [1.0, 1.0, 1.0],
+            shadows_enabled: true,
+            shadow_resolution: 2048,
+            shadow_softness: 1.0,
+            background_mode: ViewportBackgroundMode::Transparent,
+            background_color: [0.0, 0.0, 0.0],
+        }
+    }
+}
+
 /// Pointer/wheel input forwarded from the WebView's ViewportHost element via
 /// the `viewport_input` command. Generic and extensible: a new input source
 /// (keyboard, gamepad, ...) only needs a new variant here plus a match arm

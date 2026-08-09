@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { attachViewportInput, maybeRunViewportInputSelfTest } from "./input";
 import { mountCanvasBackend, type CameraState, type CanvasBackendHandle } from "./canvasBackend";
-import type { ViewportEnvironmentSettings } from "../settings/model";
+import type { ViewportEnvironmentSettings, ViewportLightingSettings, ViewportTonemap } from "../settings/model";
 
 /**
  * Fixed IPC contract shared with the Rust side. Do not change field names or
@@ -80,6 +80,7 @@ interface ViewportHostProps {
   fov?: CameraFov;
   viewPreset?: CameraViewPreset;
   environment?: ViewportEnvironmentSettings;
+  lighting?: ViewportLightingSettings;
   onDisplaySettingsChange?: (patch: {
     displayMode?: "lit" | "wireframe";
     showGrid?: boolean;
@@ -93,6 +94,7 @@ interface ViewportHostProps {
   onEnvironmentSettingsChange?: (patch: Partial<ViewportEnvironmentSettings>) => void;
   onEnvironmentBrowse?: () => void;
   onEnvironmentClear?: () => void;
+  onLightingSettingsChange?: (patch: Partial<ViewportLightingSettings>) => void;
 }
 
 /**
@@ -114,12 +116,24 @@ export function ViewportHost({
   fov = 45,
   viewPreset = "perspective",
   environment = { enabled: false, path: "", rotationDegrees: 0, intensity: 1 },
+  lighting = {
+    exposure: 1,
+    tonemap: "none",
+    ambientIntensity: 0.2,
+    ambientColor: "#ffffff",
+    shadowsEnabled: true,
+    shadowResolution: 2048,
+    shadowSoftness: 1,
+    backgroundMode: "transparent",
+    backgroundColor: "#000000",
+  },
   onDisplaySettingsChange,
   onCameraSettingsChange,
   onCameraViewChange,
   onEnvironmentSettingsChange,
   onEnvironmentBrowse,
   onEnvironmentClear,
+  onLightingSettingsChange,
 }: ViewportHostProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const rafIdRef = useRef<number | null>(null);
@@ -130,6 +144,9 @@ export function ViewportHost({
   );
   const [showEnvironmentMenu, setShowEnvironmentMenu] = useState(
     () => Boolean(import.meta.env.VITE_VIEWPORT_ENVIRONMENT_MENU_SELF_TEST),
+  );
+  const [showLightingMenu, setShowLightingMenu] = useState(
+    () => Boolean(import.meta.env.VITE_VIEWPORT_LIGHTING_MENU_SELF_TEST),
   );
 
   useEffect(() => {
@@ -149,17 +166,39 @@ export function ViewportHost({
   }, [fov, mode, projection]);
 
   useEffect(() => {
-    if (!showMenu && !showCameraMenu && !showEnvironmentMenu) return;
+    if (mode !== "native" || !("__TAURI_INTERNALS__" in window)) return;
+    const color = (value: string): [number, number, number] => {
+      const hex = /^#[0-9a-fA-F]{6}$/.test(value) ? value.slice(1) : "000000";
+      return [0, 1, 2].map((index) => Number.parseInt(hex.slice(index * 2, index * 2 + 2), 16) / 255) as [number, number, number];
+    };
+    void safeInvoke("set_viewport_lighting", {
+      settings: {
+        exposure: lighting.exposure,
+        tonemap: lighting.tonemap,
+        ambientIntensity: lighting.ambientIntensity,
+        ambientColor: color(lighting.ambientColor),
+        shadowsEnabled: lighting.shadowsEnabled,
+        shadowResolution: lighting.shadowResolution,
+        shadowSoftness: lighting.shadowSoftness,
+        backgroundMode: lighting.backgroundMode,
+        backgroundColor: color(lighting.backgroundColor),
+      },
+    });
+  }, [lighting, mode]);
+
+  useEffect(() => {
+    if (!showMenu && !showCameraMenu && !showEnvironmentMenu && !showLightingMenu) return;
     const close = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setShowMenu(false);
         setShowCameraMenu(false);
         setShowEnvironmentMenu(false);
+        setShowLightingMenu(false);
       }
     };
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
-  }, [showCameraMenu, showEnvironmentMenu, showMenu]);
+  }, [showCameraMenu, showEnvironmentMenu, showLightingMenu, showMenu]);
 
   // Coalesces any number of triggers (ResizeObserver, window resize, DPI
   // change) into at most one measurement + invoke per animation frame.
@@ -297,6 +336,7 @@ export function ViewportHost({
     projection === "perspective" ? "Perspective" : "Orthographic"
   } · ${fov}°`;
   const environmentName = environment.path.split(/[\\/]/).pop() || "Off";
+  const lightingLabel = `${lighting.exposure}× · ${lighting.tonemap.toUpperCase()} · ${lighting.shadowsEnabled ? "Shadows" : "No shadows"}`;
 
   const chooseCameraView = (preset: CameraViewPreset) => {
     setShowCameraMenu(false);
@@ -391,6 +431,124 @@ export function ViewportHost({
                   ))}
                 </div>
               </div>
+            </div>
+          )}
+        </div>
+        <div className="viewport-host__lighting-menu">
+          <button
+            type="button"
+            className={`viewport-host__tool-button${showLightingMenu ? " is-active" : ""}`}
+            aria-expanded={showLightingMenu}
+            aria-haspopup="menu"
+            disabled={mode !== "native"}
+            onClick={() => setShowLightingMenu((open) => !open)}
+          >
+            Lighting: {lightingLabel} ▾
+          </button>
+          {showLightingMenu && (
+            <div className="viewport-host__lighting-popover" role="menu" aria-label="Lighting settings">
+              <label className="viewport-host__environment-field">
+                <span>Exposure</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={16}
+                  step={0.1}
+                  value={lighting.exposure}
+                  disabled={mode !== "native"}
+                  onChange={(event) => onLightingSettingsChange?.({ exposure: Number(event.currentTarget.value) })}
+                />
+              </label>
+              <div className="viewport-host__camera-section">
+                <span className="viewport-host__camera-heading">Tonemap</span>
+                <div className="viewport-host__camera-options">
+                  {(["none", "reinhard", "aces"] as const).map((option: ViewportTonemap) => (
+                    <button
+                      key={option}
+                      type="button"
+                      className={`viewport-host__camera-option${lighting.tonemap === option ? " is-active" : ""}`}
+                      disabled={mode !== "native"}
+                      onClick={() => onLightingSettingsChange?.({ tonemap: option })}
+                    >
+                      {option === "aces" ? "ACES" : option[0].toUpperCase() + option.slice(1)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <label className="viewport-host__environment-field">
+                <span>Ambient</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={4}
+                  step={0.1}
+                  value={lighting.ambientIntensity}
+                  disabled={mode !== "native"}
+                  onChange={(event) => onLightingSettingsChange?.({ ambientIntensity: Number(event.currentTarget.value) })}
+                />
+                <input
+                  type="color"
+                  value={lighting.ambientColor}
+                  disabled={mode !== "native"}
+                  onChange={(event) => onLightingSettingsChange?.({ ambientColor: event.currentTarget.value })}
+                />
+              </label>
+              <label className={`viewport-host__show-item${mode !== "native" ? " is-disabled" : ""}`}>
+                <input
+                  type="checkbox"
+                  checked={lighting.shadowsEnabled}
+                  disabled={mode !== "native"}
+                  onChange={(event) => onLightingSettingsChange?.({ shadowsEnabled: event.currentTarget.checked })}
+                />
+                <span>Shadows</span>
+              </label>
+              <label className="viewport-host__environment-field">
+                <span>Resolution</span>
+                <select
+                  value={lighting.shadowResolution}
+                  disabled={mode !== "native" || !lighting.shadowsEnabled}
+                  onChange={(event) => onLightingSettingsChange?.({ shadowResolution: Number(event.currentTarget.value) as 512 | 1024 | 2048 })}
+                >
+                  {[512, 1024, 2048].map((value) => <option key={value} value={value}>{value}</option>)}
+                </select>
+              </label>
+              <label className="viewport-host__environment-field">
+                <span>Softness</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={8}
+                  step={0.1}
+                  value={lighting.shadowSoftness}
+                  disabled={mode !== "native" || !lighting.shadowsEnabled}
+                  onChange={(event) => onLightingSettingsChange?.({ shadowSoftness: Number(event.currentTarget.value) })}
+                />
+              </label>
+              <div className="viewport-host__camera-section">
+                <span className="viewport-host__camera-heading">Background</span>
+                <div className="viewport-host__camera-options">
+                  {(["transparent", "solid"] as const).map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      className={`viewport-host__camera-option${lighting.backgroundMode === option ? " is-active" : ""}`}
+                      disabled={mode !== "native"}
+                      onClick={() => onLightingSettingsChange?.({ backgroundMode: option })}
+                    >
+                      {option[0].toUpperCase() + option.slice(1)}
+                    </button>
+                  ))}
+                </div>
+                <input
+                  type="color"
+                  value={lighting.backgroundColor}
+                  disabled={mode !== "native" || lighting.backgroundMode !== "solid"}
+                  onChange={(event) => onLightingSettingsChange?.({ backgroundColor: event.currentTarget.value })}
+                />
+              </div>
+              {environment.enabled && (
+                <div className="viewport-host__environment-note">HDRI background takes precedence while Environment is enabled.</div>
+              )}
             </div>
           )}
         </div>
