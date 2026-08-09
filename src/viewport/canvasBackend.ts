@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { invoke } from "@tauri-apps/api/core";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { CanvasPerformanceSampler, parsePerformanceTarget } from "./performanceSampler";
 
@@ -143,7 +144,12 @@ export function mountCanvasBackend(
     const startedAt = performance.now();
     renderer.render(scene, camera);
     const summary = performanceSampler?.observe(startedAt, performance.now() - startedAt);
-    if (summary) console.info(`[perf] ${JSON.stringify(summary)}`);
+    if (summary) {
+      console.info(`[perf] ${JSON.stringify(summary)}`);
+      void invoke("report_performance_summary", { summary }).catch((error) =>
+        console.warn("[perf] failed to report Canvas performance summary:", error),
+      );
+    }
   }
   controls.addEventListener("change", render);
 

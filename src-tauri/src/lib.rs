@@ -165,6 +165,11 @@ fn get_timeline_projection(
     state.projection()
 }
 
+#[tauri::command]
+fn report_performance_summary(summary: serde_json::Value) {
+    eprintln!("[perf] {summary}");
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -182,6 +187,7 @@ pub fn run() {
             select_scene_node,
             dispatch_scene_command,
             get_timeline_projection,
+            report_performance_summary,
             scene_file::get_scene_file_status,
             scene_file::new_scene_file,
             scene_file::open_scene_file,
