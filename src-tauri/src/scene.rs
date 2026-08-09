@@ -300,24 +300,41 @@ impl Scene {
     }
 
     /// Clone this document for a new Scene-file location while preserving the
-    /// resolved asset targets of portable relative paths.
+    /// resolved asset targets. An untitled document has no source base, so its
+    /// imported absolute paths are made relative to the first save location.
     pub fn rebased_for_save(
         &self,
         source_scene_file: Option<&Path>,
         target_scene_file: &Path,
     ) -> Result<Self, SceneError> {
-        let Some(source_scene_file) = source_scene_file else {
-            return Ok(self.clone());
-        };
-        let resolved = self.resolve_asset_paths(source_scene_file)?;
         let target_file = absolute_path(target_scene_file)?;
         let target_parent = target_file.parent().unwrap_or_else(|| Path::new("."));
+        let canonical_target_parent = target_parent
+            .canonicalize()
+            .unwrap_or_else(|_| target_parent.to_path_buf());
         let mut rebased = self.clone();
-        for (asset, resolved) in rebased.assets.iter_mut().zip(resolved) {
-            asset.path = pathdiff::diff_paths(&resolved.resolved_path, target_parent)
-                .unwrap_or(resolved.resolved_path)
-                .to_string_lossy()
-                .into_owned();
+        if let Some(source_scene_file) = source_scene_file {
+            let resolved = self.resolve_asset_paths(source_scene_file)?;
+            for (asset, resolved) in rebased.assets.iter_mut().zip(resolved) {
+                let canonical_asset = resolved
+                    .resolved_path
+                    .canonicalize()
+                    .unwrap_or(resolved.resolved_path);
+                asset.path = pathdiff::diff_paths(&canonical_asset, &canonical_target_parent)
+                    .unwrap_or(canonical_asset)
+                    .to_string_lossy()
+                    .into_owned();
+            }
+        } else {
+            for asset in &mut rebased.assets {
+                let imported_path = PathBuf::from(&asset.path);
+                if imported_path.is_absolute() {
+                    asset.path = pathdiff::diff_paths(&imported_path, &canonical_target_parent)
+                        .unwrap_or(imported_path)
+                        .to_string_lossy()
+                        .into_owned();
+                }
+            }
         }
         rebased.validate().map_err(SceneError::Validation)?;
         Ok(rebased)
@@ -723,6 +740,38 @@ mod tests {
         assert_eq!(
             PathBuf::from(&rebased.assets[0].path),
             PathBuf::from("..").join("source/assets/character.glb")
+        );
+    }
+
+    #[test]
+    fn first_save_rebases_imported_absolute_asset() {
+        let root = temp_path("first-save");
+        let target = root.join("saved").join("copy.scene.json");
+        let asset = root.join("assets").join("character.fbx");
+        let mut scene = Scene::empty("Untitled");
+        scene.assets.push(SceneAsset {
+            id: "character".into(),
+            kind: "fbx".into(),
+            path: asset.to_string_lossy().into_owned(),
+        });
+        scene.instances.push(SceneInstance {
+            id: "character-1".into(),
+            asset: "character".into(),
+            transform: SceneTransform {
+                translation: [0.0; 3],
+                rotation: [0.0, 0.0, 0.0, 1.0],
+                scale: [1.0; 3],
+            },
+            visible: true,
+        });
+
+        let rebased = scene
+            .rebased_for_save(None, &target)
+            .expect("rebase first-save asset path");
+
+        assert_eq!(
+            PathBuf::from(&rebased.assets[0].path),
+            PathBuf::from("..").join("assets/character.fbx")
         );
     }
 }

@@ -38,6 +38,7 @@ export interface SceneFileController {
 
 let fileSelfTestHasRun = false;
 let assetImportSelfTestHasRun = false;
+let assetRoundtripOpenSelfTestHasRun = false;
 
 export function useSceneFileController({
   appendDiagnostic,
@@ -140,20 +141,34 @@ export function useSceneFileController({
   useEffect(() => {
     const importPath = import.meta.env.VITE_ASSET_IMPORT_SELF_TEST;
     const invalidImportPath = import.meta.env.VITE_ASSET_IMPORT_INVALID_SELF_TEST;
+    const savePath = import.meta.env.VITE_ASSET_IMPORT_SAVE_SELF_TEST;
     if (assetImportSelfTestHasRun || !importPath) return;
     assetImportSelfTestHasRun = true;
     appendDiagnostic("info", "scene", `Self-test Import scheduled: ${importPath}`);
-    window.setTimeout(() => {
-      void runOperation("Self-test Import Asset", true, () => importSceneAssetAtPath(importPath));
-    }, 2000);
-    if (invalidImportPath) {
-      window.setTimeout(() => {
-        void runOperation("Self-test Expected-failure Import Asset", false, () =>
+    const delay = (milliseconds: number) =>
+      new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
+    void (async () => {
+      await delay(2000);
+      await runOperation("Self-test Import Asset", true, () => importSceneAssetAtPath(importPath));
+      if (savePath) {
+        await runOperation("Self-test Save Imported Scene", false, () => saveSceneFileToPath(savePath));
+      }
+      if (invalidImportPath) {
+        await runOperation("Self-test Expected-failure Import Asset", false, () =>
           importSceneAssetAtPath(invalidImportPath),
         );
-      }, 20000);
-    }
+      }
+    })();
   }, [appendDiagnostic, runOperation]);
+
+  useEffect(() => {
+    const openPath = import.meta.env.VITE_ASSET_ROUNDTRIP_OPEN_SELF_TEST;
+    if (assetRoundtripOpenSelfTestHasRun || !openPath) return;
+    assetRoundtripOpenSelfTestHasRun = true;
+    window.setTimeout(() => {
+      void runOperation("Self-test Open Imported Scene", true, () => openSceneFileAtPath(openPath));
+    }, 2000);
+  }, [runOperation]);
 
   return { status, busy, newScene, openScene, importAsset, saveScene, saveSceneAs };
 }
