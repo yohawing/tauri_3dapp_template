@@ -614,11 +614,6 @@
   font-weight: 600;
 }
 
-.console-drawer__title-icon {
-  color: #7db4ff;
-  font-family: Consolas, monospace;
-}
-
 .console-drawer__count {
   min-width: 18px;
   padding: 1px 5px;

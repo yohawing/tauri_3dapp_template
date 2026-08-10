@@ -18,6 +18,7 @@ const kindMeta = {
   scene: { tag: "ROOT", color: "#d7a448" },
   light: { tag: "LIGHT", color: "#f5c15d" },
   mesh: { tag: "MESH", color: "#8c79d8" },
+  bone: { tag: "BONE", color: "#d89252" },
 } as const;
 
 function VisibilityIcon({ hidden }: { hidden: boolean }) {
@@ -74,6 +75,7 @@ function toTree(
 function Node({ node, style, dragHandle }: NodeRendererProps<SceneNode>) {
   const hidden = node.data.uiHidden === true;
   const meta = kindMeta[node.data.kind];
+  const supportsVisibility = node.data.kind !== "bone";
   return (
     <div
       ref={dragHandle}
@@ -96,18 +98,22 @@ function Node({ node, style, dragHandle }: NodeRendererProps<SceneNode>) {
       <span className="outliner-row__kind" style={{ backgroundColor: meta.color }} />
       <span className="outliner-row__label">{node.data.label}</span>
       <span className="outliner-row__tag">{meta.tag}</span>
-      <button
-        type="button"
-        className="outliner-row__visibility"
-        aria-label={`${hidden ? "Show" : "Hide"} ${node.data.label}`}
-        title="Toggle visibility"
-        onClick={(event) => {
-          event.stopPropagation();
-          node.data.toggleVisibility?.();
-        }}
-      >
-        <VisibilityIcon hidden={hidden} />
-      </button>
+      {supportsVisibility ? (
+        <button
+          type="button"
+          className="outliner-row__visibility"
+          aria-label={`${hidden ? "Show" : "Hide"} ${node.data.label}`}
+          title="Toggle visibility"
+          onClick={(event) => {
+            event.stopPropagation();
+            node.data.toggleVisibility?.();
+          }}
+        >
+          <VisibilityIcon hidden={hidden} />
+        </button>
+      ) : (
+        <span className="outliner-row__visibility outliner-row__visibility--placeholder" aria-hidden="true" />
+      )}
     </div>
   );
 }

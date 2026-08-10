@@ -98,7 +98,6 @@ export function ShellComponentsPage() {
       <div className="components-page__content">
         <header className="components-page__intro">
           <div><span className="components-page__eyebrow">ACTUAL COMPONENTS</span><h1>Shell component catalog</h1><p>本番コードを直接マウント。比較専用の複製コンポーネントは使用していません。</p></div>
-          <a href="/?shell=implementation">Open full shell ↗</a>
         </header>
 
         <Story id="menu-bar" title="MenuBar" note="menus, renderer segmented control, disabled command" className="component-story--menubar">
@@ -118,11 +117,11 @@ export function ShellComponentsPage() {
 
         <div className="components-page__panel-grid">
           <Story id="outliner" title="Outliner" note="tree, selection, visibility, search" className="component-story--panel"><Outliner /></Story>
-          <Story id="inspector" title="Inspector" note="transform, material, rendering" className="component-story--panel"><Inspector /></Story>
+          <Story id="inspector" title="Inspector" note="transform, material, light, rendering" className="component-story--panel"><Inspector /></Story>
           <Story id="viewport" title="ViewportHost" note="native transparent hole and diagnostics" className="component-story--panel component-story--viewport"><ViewportHost mode="native" /></Story>
         </div>
 
-        <Story id="timeline" title="Timeline" note="transport, range, tracks, clips, keys" className="component-story--timeline"><Timeline dataSource={fixtureTimelineDataSource} /></Story>
+        <Story id="timeline" title="Timeline" note="full transport, range, tracks, clips, keys" className="component-story--timeline"><Timeline dataSource={fixtureTimelineDataSource} variant="full" /></Story>
         <Story id="console" title="ConsoleDrawer" note="all levels, filters, search, clipboard, auto-scroll" className="component-story--console"><ConsoleDrawer store={consoleStore} /></Story>
         <Story id="settings" title="SettingsModal" note="dialog, checkbox, select, close action" className="component-story--modal"><SettingsModal open settings={settings} onChange={setSettings} onClose={() => undefined} /></Story>
       </div>

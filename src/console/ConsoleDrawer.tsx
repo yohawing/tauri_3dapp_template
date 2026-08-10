@@ -163,7 +163,6 @@ export function ConsoleDrawer(props: ConsoleDrawerProps) {
             Timeline
           </button>
           <button className="console-drawer__tab console-drawer__tab--active" type="button" role="tab" aria-selected="true">
-            <span className="console-drawer__title-icon" aria-hidden="true">›_</span>
             Console
           </button>
           <span className="console-drawer__count" aria-label={`${state.entries.length} entries`}>

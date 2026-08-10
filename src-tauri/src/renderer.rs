@@ -5,6 +5,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use kiss3d::color::Color;
+use kiss3d::light::LightType;
 use kiss3d::post_processing::Tonemap;
 use kiss3d::prelude::{
     AnimationPlayer, Camera3d, CanvasSetup, Light, NumSamples, OrbitCamera3d, Projection, Quat,
@@ -20,7 +21,7 @@ use crate::protocol::{
 };
 use crate::scene::{ResolvedAssetPath, Scene, SceneInstance};
 use crate::scene_projection::{
-    SceneCommand, SceneMaterial, SceneNodeSummary, SceneProjection, SceneTransform,
+    SceneCommand, SceneLight, SceneMaterial, SceneNodeSummary, SceneProjection, SceneTransform,
     SelectedSceneNode,
 };
 use crate::timeline_playback::{TimelinePlaybackCommand, TimelinePlaybackSnapshot};
@@ -38,6 +39,18 @@ const Y_AXIS_COLOR: Color = Color::new(0.20, 0.85, 0.30, 1.0);
 const Z_AXIS_COLOR: Color = Color::new(0.25, 0.45, 1.00, 1.0);
 const BONE_COLOR: Color = Color::new(1.0, 0.65, 0.15, 1.0);
 const BONE_OVERLAY_DEPTH_BIAS: f32 = 0.995;
+const BONE_RING_SEGMENTS: usize = 16;
+// Maya-style LocalAxis stays inside the joint sphere and does not scale with
+// the distance to the next joint.
+const BONE_AXIS_LENGTH_FACTOR: f32 = 0.8;
+// Keep the Maya-style joint marker and the pyramid cross-section independent
+// from the distance to the next joint.  The latter is derived from the
+// sphere diameter below: side = diameter / sqrt(2).
+const BONE_JOINT_RADIUS: f32 = 0.01;
+const BONE_PYRAMID_BASE_OFFSET_FACTOR: f32 = 0.06;
+const BONE_AXIS_WIDTH: f32 = 2.0;
+const BONE_RING_WIDTH: f32 = 1.5;
+const BONE_PYRAMID_WIDTH: f32 = 2.25;
 
 const SURFACE_STATUS_SELF_TEST_ENV: &str = "TAURI3D_SURFACE_STATUS_SELF_TEST";
 
@@ -137,6 +150,14 @@ struct RuntimeInstance {
     root: SceneNode3d,
     player: AnimationPlayer,
     bone_edges: Vec<(SceneNode3d, SceneNode3d)>,
+    bones: Vec<RuntimeBone>,
+}
+
+struct RuntimeBone {
+    source_index: usize,
+    parent_source_index: Option<usize>,
+    label: String,
+    node: SceneNode3d,
 }
 
 struct RuntimeScene {
@@ -186,8 +207,7 @@ impl Renderer {
         kiss_window.set_background_color(Color::new(0.0, 0.0, 0.0, 0.0));
 
         let mut scene = SceneNode3d::empty();
-        let mut key_light = scene.add_light(Light::point(100.0));
-        key_light.set_position(Vec3::new(2.5, 3.0, -2.0));
+        let key_light = scene.add_light(Light::directional(Vec3::new(-0.45, -1.0, -0.35)));
         let cube = scene.add_cube(0.5, 0.5, 0.5).set_color(ORANGE);
         let camera = OrbitCamera3d::new(Vec3::new(3.0, 1.5, -3.0), Vec3::ZERO);
 
@@ -459,6 +479,7 @@ impl Renderer {
             || node_id == KEY_LIGHT_ID
             || (node_id == CUBE_ID && self.cube.is_some())
             || self.instances.iter().any(|instance| instance.id == node_id)
+            || self.runtime_bone(node_id).is_some()
     }
 
     pub fn default_node_id(&self) -> &str {
@@ -552,27 +573,73 @@ impl Renderer {
                     return Err(format!("unsupported scene node '{node_id}'"));
                 }
             }
+            SceneCommand::SetLightColor { node_id, color } if node_id == KEY_LIGHT_ID => {
+                self.key_light.modify_light(|light| {
+                    light.color = Color::new(color[0], color[1], color[2], color[3]);
+                });
+            }
+            SceneCommand::SetLightIntensity { node_id, value } if node_id == KEY_LIGHT_ID => {
+                self.key_light.modify_light(|light| light.intensity = value);
+            }
+            SceneCommand::SetLightDirection { node_id, direction } if node_id == KEY_LIGHT_ID => {
+                let direction = Vec3::from_array(direction).normalize();
+                let mut applied = false;
+                self.key_light.modify_light(|light| {
+                    if let LightType::Directional(current) = &mut light.light_type {
+                        *current = direction;
+                        applied = true;
+                    }
+                });
+                if !applied {
+                    return Err(format!("scene node '{node_id}' is not directional"));
+                }
+            }
+            SceneCommand::SetLightEnabled { node_id, enabled } if node_id == KEY_LIGHT_ID => {
+                self.key_light.modify_light(|light| light.enabled = enabled);
+            }
+            SceneCommand::SetLightCastsShadows {
+                node_id,
+                casts_shadows,
+            } if node_id == KEY_LIGHT_ID => {
+                self.key_light
+                    .modify_light(|light| light.casts_shadows = casts_shadows);
+            }
             SceneCommand::SetVisibility { node_id, visible } => {
                 match node_id.as_str() {
-                    SCENE_ID => self.scene.set_visible(visible),
-                    KEY_LIGHT_ID => self.key_light.set_visible(visible),
-                    CUBE_ID => self
-                        .cube
-                        .as_mut()
-                        .ok_or_else(|| format!("unsupported scene node '{node_id}'"))?
-                        .set_visible(visible),
-                    _ => self
-                        .instances
-                        .iter_mut()
-                        .find(|instance| instance.id == node_id)
-                        .ok_or_else(|| format!("unsupported scene node '{node_id}'"))?
-                        .root
-                        .set_visible(visible),
+                    SCENE_ID => {
+                        self.scene.set_visible(visible);
+                    }
+                    KEY_LIGHT_ID => {
+                        self.key_light.set_visible(visible);
+                    }
+                    CUBE_ID => {
+                        self.cube
+                            .as_mut()
+                            .ok_or_else(|| format!("unsupported scene node '{node_id}'"))?
+                            .set_visible(visible);
+                    }
+                    _ => {
+                        if let Some(bone) = self.runtime_bone_mut(&node_id) {
+                            bone.node.set_visible(visible);
+                        } else {
+                            self.instances
+                                .iter_mut()
+                                .find(|instance| instance.id == node_id)
+                                .ok_or_else(|| format!("unsupported scene node '{node_id}'"))?
+                                .root
+                                .set_visible(visible);
+                        }
+                    }
                 };
             }
             SceneCommand::SetBaseColor { node_id, .. }
             | SceneCommand::SetMetallic { node_id, .. }
-            | SceneCommand::SetRoughness { node_id, .. } => {
+            | SceneCommand::SetRoughness { node_id, .. }
+            | SceneCommand::SetLightColor { node_id, .. }
+            | SceneCommand::SetLightIntensity { node_id, .. }
+            | SceneCommand::SetLightDirection { node_id, .. }
+            | SceneCommand::SetLightEnabled { node_id, .. }
+            | SceneCommand::SetLightCastsShadows { node_id, .. } => {
                 return Err(format!("unsupported scene node '{node_id}'"));
             }
         }
@@ -610,7 +677,7 @@ impl Renderer {
                 visible: cube.is_visible(),
             });
         }
-        nodes.extend(self.instances.iter().map(runtime_instance_summary));
+        nodes.extend(self.instances.iter().flat_map(runtime_instance_summaries));
 
         let selected = selected_node_id
             .as_deref()
@@ -635,7 +702,8 @@ impl Renderer {
                 .instances
                 .iter()
                 .find(|instance| instance.id == node_id)
-                .map(|instance| &instance.root)?,
+                .map(|instance| &instance.root)
+                .or_else(|| self.runtime_bone(node_id).map(|bone| &bone.node))?,
         };
         let pose = node.local_transformation();
         let transform = SceneTransform {
@@ -663,8 +731,45 @@ impl Renderer {
             id: node_id.to_string(),
             transform,
             material,
+            light: project_light(node),
         })
     }
+}
+
+fn project_light(node: &SceneNode3d) -> Option<SceneLight> {
+    let light = node.light()?;
+    let direction = match &light.light_type {
+        LightType::Directional(direction) => Some(direction.to_array()),
+        _ => None,
+    };
+    let (light_type, attenuation_radius, inner_cone_angle, outer_cone_angle) = match light
+        .light_type
+    {
+        LightType::Point { attenuation_radius } => ("point", Some(attenuation_radius), None, None),
+        LightType::Directional(_) => ("directional", None, None, None),
+        LightType::Spot {
+            inner_cone_angle,
+            outer_cone_angle,
+            attenuation_radius,
+        } => (
+            "spot",
+            Some(attenuation_radius),
+            Some(inner_cone_angle),
+            Some(outer_cone_angle),
+        ),
+    };
+    Some(SceneLight {
+        light_type: light_type.to_string(),
+        direction,
+        color: [light.color.r, light.color.g, light.color.b, light.color.a],
+        intensity: light.intensity,
+        radius: light.radius,
+        enabled: light.enabled,
+        casts_shadows: light.casts_shadows,
+        attenuation_radius,
+        inner_cone_angle,
+        outer_cone_angle,
+    })
 }
 
 fn build_runtime_scene(
@@ -672,8 +777,7 @@ fn build_runtime_scene(
     resolved_assets: &[ResolvedAssetPath],
 ) -> Result<RuntimeScene, RendererError> {
     let mut scene = SceneNode3d::empty();
-    let mut key_light = scene.add_light(Light::point(100.0));
-    key_light.set_position(Vec3::new(2.5, 3.0, -2.0));
+    let key_light = scene.add_light(Light::directional(Vec3::new(-0.45, -1.0, -0.35)));
 
     let paths_by_id: HashMap<&str, &Path> = resolved_assets
         .iter()
@@ -700,7 +804,7 @@ fn build_runtime_scene(
         })?;
         let (translation, rotation, scale) = instance_runtime_transform(instance)?;
 
-        let (mut root, player, bone_edges) = match asset.kind.as_str() {
+        let (mut root, player, bone_edges, skeleton_nodes) = match asset.kind.as_str() {
             "gltf" => {
                 let loaded = catch_unwind(AssertUnwindSafe(|| kiss3d::loader::gltf::load(path)))
                     .map_err(|_| RendererError::AssetLoad {
@@ -715,7 +819,12 @@ fn build_runtime_scene(
                         path: path.display().to_string(),
                         message: error.to_string(),
                     })?;
-                (loaded.root, loaded.player, loaded.skeleton_edges)
+                (
+                    loaded.root,
+                    loaded.player,
+                    loaded.skeleton_edges,
+                    loaded.skeleton_nodes,
+                )
             }
             "fbx" => {
                 let loaded = catch_unwind(AssertUnwindSafe(|| kiss3d::loader::fbx::load(path)))
@@ -735,7 +844,12 @@ fn build_runtime_scene(
                 if player.clip_count() > 0 {
                     player.play_index(0);
                 }
-                (loaded.root, player, loaded.skeleton_edges)
+                (
+                    loaded.root,
+                    player,
+                    loaded.skeleton_edges,
+                    loaded.skeleton_nodes,
+                )
             }
             kind => {
                 return Err(RendererError::AssetLoad {
@@ -757,6 +871,15 @@ fn build_runtime_scene(
             root,
             player,
             bone_edges,
+            bones: skeleton_nodes
+                .into_iter()
+                .map(|bone| RuntimeBone {
+                    source_index: bone.index,
+                    parent_source_index: bone.parent_index,
+                    label: bone.name,
+                    node: bone.node,
+                })
+                .collect(),
         });
     }
 
@@ -810,22 +933,204 @@ fn draw_reference_grid_and_axes(window: &mut Window) {
 }
 
 fn draw_bone_edges(window: &mut Window, instances: &[RuntimeInstance]) {
+    let mut joints: HashMap<u64, SceneNode3d> = HashMap::new();
+
     for instance in instances {
+        if !instance.root.is_visible() {
+            continue;
+        }
+
         for (parent, child) in &instance.bone_edges {
             let parent_position = parent.world_matrix().transform_point3(Vec3::ZERO);
             let child_position = child.world_matrix().transform_point3(Vec3::ZERO);
-            if parent_position.is_finite() && child_position.is_finite() {
-                window.draw_line_with_depth_bias(
-                    parent_position,
-                    child_position,
-                    BONE_COLOR,
-                    2.5,
-                    false,
-                    BONE_OVERLAY_DEPTH_BIAS,
-                );
+            if !parent_position.is_finite() || !child_position.is_finite() {
+                continue;
+            }
+
+            let delta = child_position - parent_position;
+            let edge_length = delta.length();
+            if !edge_length.is_finite() {
+                continue;
+            }
+
+            register_bone_joint(&mut joints, parent);
+            register_bone_joint(&mut joints, child);
+
+            if edge_length > BONE_EPSILON {
+                draw_bone_pyramid(window, parent, parent_position, child_position, edge_length);
             }
         }
     }
+
+    for (_, joint) in joints {
+        draw_bone_joint_gizmo(window, &joint);
+    }
+}
+
+const BONE_EPSILON: f32 = 1.0e-8;
+
+fn register_bone_joint(joints: &mut HashMap<u64, SceneNode3d>, node: &SceneNode3d) {
+    joints.entry(node.ptr_id()).or_insert_with(|| node.clone());
+}
+
+fn draw_bone_joint_gizmo(window: &mut Window, node: &SceneNode3d) {
+    let world = node.world_matrix();
+    let center = world.transform_point3(Vec3::ZERO);
+    if !center.is_finite() {
+        return;
+    }
+
+    let [local_x, local_y, local_z] = bone_local_basis(node, center);
+    let radius = bone_joint_radius();
+    let axis_length = radius * BONE_AXIS_LENGTH_FACTOR;
+
+    draw_bone_line(
+        window,
+        center,
+        center + local_x * axis_length,
+        X_AXIS_COLOR,
+        BONE_AXIS_WIDTH,
+    );
+    draw_bone_line(
+        window,
+        center,
+        center + local_y * axis_length,
+        Y_AXIS_COLOR,
+        BONE_AXIS_WIDTH,
+    );
+    draw_bone_line(
+        window,
+        center,
+        center + local_z * axis_length,
+        Z_AXIS_COLOR,
+        BONE_AXIS_WIDTH,
+    );
+
+    // Maya-style joint sphere: three orthogonal great circles, colored by
+    // their corresponding local axis.
+    draw_bone_ring(window, center, local_y, local_z, radius, X_AXIS_COLOR);
+    draw_bone_ring(window, center, local_z, local_x, radius, Y_AXIS_COLOR);
+    draw_bone_ring(window, center, local_x, local_y, radius, Z_AXIS_COLOR);
+}
+
+fn draw_bone_pyramid(
+    window: &mut Window,
+    parent: &SceneNode3d,
+    parent_position: Vec3,
+    child_position: Vec3,
+    edge_length: f32,
+) {
+    let direction = unit_or(child_position - parent_position, Vec3::Y);
+    let [local_x, local_y, local_z] = bone_local_basis(parent, parent_position);
+
+    // Keep the square stable even when the bone points almost along one of
+    // the joint's local axes.
+    let mut side = local_x;
+    if direction.dot(side).abs() > 0.85 {
+        side = local_y;
+    }
+    if direction.dot(side).abs() > 0.85 {
+        side = local_z;
+    }
+    let side_a = unit_or(
+        side - direction * direction.dot(side),
+        perpendicular_to(direction),
+    );
+    let side_b = unit_or(direction.cross(side_a), perpendicular_to(direction));
+
+    let half_width = bone_pyramid_half_width();
+    let base_center = parent_position + direction * (edge_length * BONE_PYRAMID_BASE_OFFSET_FACTOR);
+    let corners = [
+        base_center + side_a * half_width + side_b * half_width,
+        base_center - side_a * half_width + side_b * half_width,
+        base_center - side_a * half_width - side_b * half_width,
+        base_center + side_a * half_width - side_b * half_width,
+    ];
+
+    for index in 0..corners.len() {
+        let next = (index + 1) % corners.len();
+        draw_bone_line(
+            window,
+            corners[index],
+            corners[next],
+            BONE_COLOR,
+            BONE_PYRAMID_WIDTH,
+        );
+        draw_bone_line(
+            window,
+            corners[index],
+            child_position,
+            BONE_COLOR,
+            BONE_PYRAMID_WIDTH,
+        );
+    }
+}
+
+fn draw_bone_ring(
+    window: &mut Window,
+    center: Vec3,
+    axis_a: Vec3,
+    axis_b: Vec3,
+    radius: f32,
+    color: Color,
+) {
+    let tau = std::f32::consts::PI * 2.0;
+    let mut previous = center + axis_a * radius;
+    for segment in 1..=BONE_RING_SEGMENTS {
+        let angle = tau * segment as f32 / BONE_RING_SEGMENTS as f32;
+        let (sin, cos) = angle.sin_cos();
+        let current = center + (axis_a * cos + axis_b * sin) * radius;
+        draw_bone_line(window, previous, current, color, BONE_RING_WIDTH);
+        previous = current;
+    }
+}
+
+fn draw_bone_line(window: &mut Window, start: Vec3, end: Vec3, color: Color, width: f32) {
+    if start.is_finite() && end.is_finite() {
+        window.draw_line_with_depth_bias(start, end, color, width, false, BONE_OVERLAY_DEPTH_BIAS);
+    }
+}
+
+fn bone_local_basis(node: &SceneNode3d, origin: Vec3) -> [Vec3; 3] {
+    let world = node.world_matrix();
+    let raw_x = world.transform_point3(Vec3::X) - origin;
+    let local_x = unit_or(raw_x, Vec3::X);
+    let raw_y = world.transform_point3(Vec3::Y) - origin;
+    let local_y = unit_or(
+        raw_y - local_x * local_x.dot(raw_y),
+        perpendicular_to(local_x),
+    );
+    let mut local_z = unit_or(local_x.cross(local_y), Vec3::Z);
+    let raw_z = world.transform_point3(Vec3::Z) - origin;
+    if raw_z.is_finite() && raw_z.length_squared() > BONE_EPSILON && raw_z.dot(local_z) < 0.0 {
+        local_z = -local_z;
+    }
+    [local_x, local_y, local_z]
+}
+
+fn bone_joint_radius() -> f32 {
+    BONE_JOINT_RADIUS
+}
+
+fn bone_pyramid_half_width() -> f32 {
+    bone_joint_radius() / std::f32::consts::SQRT_2
+}
+
+fn unit_or(value: Vec3, fallback: Vec3) -> Vec3 {
+    if value.is_finite() && value.length_squared() > BONE_EPSILON {
+        value.normalize()
+    } else {
+        fallback
+    }
+}
+
+fn perpendicular_to(direction: Vec3) -> Vec3 {
+    let reference = if direction.y.abs() < 0.9 {
+        Vec3::Y
+    } else {
+        Vec3::X
+    };
+    unit_or(reference - direction * direction.dot(reference), Vec3::Z)
 }
 
 fn viewport_rect_to_physical(rect: ViewportRect) -> RenderViewport {
@@ -905,13 +1210,59 @@ fn instance_runtime_transform(
     ))
 }
 
-fn runtime_instance_summary(instance: &RuntimeInstance) -> SceneNodeSummary {
-    SceneNodeSummary {
+fn runtime_bone_id(instance_id: &str, source_index: usize) -> String {
+    format!("{instance_id}::bone::{source_index}")
+}
+
+fn runtime_instance_summaries(instance: &RuntimeInstance) -> Vec<SceneNodeSummary> {
+    let visible = instance.root.is_visible();
+    let mut nodes = vec![SceneNodeSummary {
         id: instance.id.clone(),
         parent: Some(SCENE_ID.to_string()),
         label: instance.id.clone(),
         kind: "mesh".to_string(),
-        visible: instance.root.is_visible(),
+        visible,
+    }];
+    nodes.extend(instance.bones.iter().map(|bone| {
+        SceneNodeSummary {
+            id: runtime_bone_id(&instance.id, bone.source_index),
+            parent: bone
+                .parent_source_index
+                .map(|parent| runtime_bone_id(&instance.id, parent))
+                .or_else(|| Some(instance.id.clone())),
+            label: bone.label.clone(),
+            kind: "bone".to_string(),
+            visible,
+        }
+    }));
+    nodes
+}
+
+impl Renderer {
+    fn runtime_bone(&self, node_id: &str) -> Option<&RuntimeBone> {
+        for instance in &self.instances {
+            if let Some(bone) = instance
+                .bones
+                .iter()
+                .find(|bone| runtime_bone_id(&instance.id, bone.source_index) == node_id)
+            {
+                return Some(bone);
+            }
+        }
+        None
+    }
+
+    fn runtime_bone_mut(&mut self, node_id: &str) -> Option<&mut RuntimeBone> {
+        for instance in &mut self.instances {
+            if let Some(bone) = instance
+                .bones
+                .iter_mut()
+                .find(|bone| runtime_bone_id(&instance.id, bone.source_index) == node_id)
+            {
+                return Some(bone);
+            }
+        }
+        None
     }
 }
 
@@ -966,19 +1317,92 @@ mod tests {
     }
 
     #[test]
+    fn bone_local_basis_is_orthonormal_for_identity_node() {
+        let node = SceneNode3d::empty();
+        let [x, y, z] = bone_local_basis(&node, Vec3::ZERO);
+
+        assert!((x.dot(Vec3::X) - 1.0).abs() < 1e-5);
+        assert!((y.dot(Vec3::Y) - 1.0).abs() < 1e-5);
+        assert!((z.dot(Vec3::Z) - 1.0).abs() < 1e-5);
+        assert!(x.dot(y).abs() < 1e-5);
+        assert!(y.dot(z).abs() < 1e-5);
+        assert!(z.dot(x).abs() < 1e-5);
+    }
+
+    #[test]
+    fn bone_perpendicular_to_axis_handles_vertical_bones() {
+        let perpendicular = perpendicular_to(Vec3::Y);
+
+        assert!(perpendicular.is_finite());
+        assert!(perpendicular.dot(Vec3::Y).abs() < 1e-5);
+        assert!((perpendicular.length() - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn bone_pyramid_side_is_fixed_to_sphere_diameter_over_sqrt_two() {
+        let sphere_diameter = bone_joint_radius() * 2.0;
+        let side = bone_pyramid_half_width() * 2.0;
+
+        assert!((side - sphere_diameter / std::f32::consts::SQRT_2).abs() < 1e-6);
+        assert_eq!(bone_joint_radius(), BONE_JOINT_RADIUS);
+    }
+
+    #[test]
+    fn bone_local_axis_stays_inside_joint_sphere() {
+        let axis_length = bone_joint_radius() * BONE_AXIS_LENGTH_FACTOR;
+
+        assert!(axis_length <= bone_joint_radius());
+        assert!(axis_length > 0.0);
+    }
+
+    #[test]
     fn runtime_projection_summary_uses_instance_id_without_cube() {
         let mut root = SceneNode3d::empty();
         root.set_visible(false);
-        let summary = runtime_instance_summary(&RuntimeInstance {
+        let summaries = runtime_instance_summaries(&RuntimeInstance {
             id: "box-instance".to_string(),
             root,
             player: AnimationPlayer::new(Vec::new()),
             bone_edges: Vec::new(),
+            bones: Vec::new(),
         });
+        let summary = &summaries[0];
         assert_eq!(summary.id, "box-instance");
         assert_eq!(summary.label, "box-instance");
         assert_eq!(summary.parent.as_deref(), Some(SCENE_ID));
         assert!(!summary.visible);
+    }
+
+    #[test]
+    fn runtime_projection_summary_nests_bones_under_the_instance_and_each_parent() {
+        let mut root = SceneNode3d::empty();
+        root.set_visible(true);
+        let summaries = runtime_instance_summaries(&RuntimeInstance {
+            id: "character".to_string(),
+            root,
+            player: AnimationPlayer::new(Vec::new()),
+            bone_edges: Vec::new(),
+            bones: vec![
+                RuntimeBone {
+                    source_index: 4,
+                    parent_source_index: None,
+                    label: "Root".to_string(),
+                    node: SceneNode3d::empty(),
+                },
+                RuntimeBone {
+                    source_index: 9,
+                    parent_source_index: Some(4),
+                    label: "Spine".to_string(),
+                    node: SceneNode3d::empty(),
+                },
+            ],
+        });
+
+        assert_eq!(summaries[1].id, "character::bone::4");
+        assert_eq!(summaries[1].parent.as_deref(), Some("character"));
+        assert_eq!(summaries[1].kind, "bone");
+        assert_eq!(summaries[2].id, "character::bone::9");
+        assert_eq!(summaries[2].parent.as_deref(), Some("character::bone::4"));
     }
 
     #[test]

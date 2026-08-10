@@ -47,6 +47,10 @@ function modifiersFromEvent(e: {
   return modifiers;
 }
 
+function isViewportUiTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest("[data-viewport-ui]") !== null;
+}
+
 /**
  * Wires pointer/wheel listeners on `el` and forwards them to Rust via
  * sendViewportInput. Coordinates are CSS px local to `el` (clientX/Y minus
@@ -84,6 +88,7 @@ export function attachViewportInput(el: HTMLElement): () => void {
   }
 
   function onPointerDown(e: PointerEvent) {
+    if (isViewportUiTarget(e.target)) return;
     el.setPointerCapture(e.pointerId);
     // Avoid text selection / native context-menu weirdness while dragging.
     e.preventDefault();
@@ -98,6 +103,7 @@ export function attachViewportInput(el: HTMLElement): () => void {
   }
 
   function onPointerMove(e: PointerEvent) {
+    if (isViewportUiTarget(e.target)) return;
     const { x, y } = localPoint(e);
     scheduleMove({
       type: "pointerMove",
@@ -109,6 +115,7 @@ export function attachViewportInput(el: HTMLElement): () => void {
   }
 
   function onPointerUpOrCancel(e: PointerEvent) {
+    if (isViewportUiTarget(e.target) && !el.hasPointerCapture(e.pointerId)) return;
     if (el.hasPointerCapture(e.pointerId)) {
       el.releasePointerCapture(e.pointerId);
     }
@@ -123,10 +130,12 @@ export function attachViewportInput(el: HTMLElement): () => void {
   }
 
   function onContextMenu(e: Event) {
+    if (isViewportUiTarget(e.target)) return;
     e.preventDefault();
   }
 
   function onWheel(e: WheelEvent) {
+    if (isViewportUiTarget(e.target)) return;
     // Stop page zoom/scroll from also reacting to wheel input over the
     // viewport — the native camera owns this gesture.
     e.preventDefault();

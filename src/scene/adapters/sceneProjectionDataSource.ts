@@ -4,6 +4,7 @@ import type {
   SceneCommand,
   SceneCommandEnvelope,
   SceneCommandResult,
+  SceneLight,
   SceneMaterial,
   SceneCommandProperty,
   SceneProjection,
@@ -25,6 +26,7 @@ const FIXTURE_PROJECTION: SceneProjection = {
       scale: [1, 1, 1],
     },
     material: { color: [1, 0.45, 0.1, 1], metallic: 0, roughness: 0.5 },
+    light: null,
   },
   lastProcessedSequence: 0,
   commandResults: [],
@@ -169,6 +171,19 @@ export class SceneProjectionDataSource {
         return;
       }
       const selected = this.snapshot.selected;
+      if (isLightCommand(command) && (!selected?.light || selected.id !== command.nodeId)) return;
+      const light = selected?.light;
+      if (selected && light && selected.id === command.nodeId && isLightCommand(command)) {
+        this.snapshot = {
+          ...this.snapshot,
+          revision: this.snapshot.revision + 1,
+          selected: { ...selected, light: applyFixtureLightCommand(light, command) },
+          lastProcessedSequence: envelope.sequence,
+          commandResults: [...this.snapshot.commandResults, resultFor(envelope, true)].slice(-32),
+        };
+        this.emit();
+        return;
+      }
       const material = selected?.material;
       if (!selected || !material || selected.id !== command.nodeId) return;
       const nextMaterial = applyFixtureCommand(material, command);
@@ -300,6 +315,16 @@ function commandProperty(command: SceneCommand): SceneCommandProperty {
       return "metallic";
     case "setRoughness":
       return "roughness";
+    case "setLightColor":
+      return "lightColor";
+    case "setLightIntensity":
+      return "lightIntensity";
+    case "setLightDirection":
+      return "lightDirection";
+    case "setLightEnabled":
+      return "lightEnabled";
+    case "setLightCastsShadows":
+      return "lightCastsShadows";
     case "setVisibility":
       return "visibility";
   }
@@ -330,6 +355,16 @@ export function applyOptimisticToProjection(projection: SceneProjection, envelop
     };
   }
   const selected = projection.selected;
+  if (isLightCommand(envelope.command)) {
+    if (!selected || selected.id !== envelope.command.nodeId || !selected.light) return projection;
+    return {
+      ...projection,
+      selected: {
+        ...selected,
+        light: applyFixtureLightCommand(selected.light, envelope.command),
+      },
+    };
+  }
   if (!selected || selected.id !== envelope.command.nodeId || !selected.material) return projection;
   return {
     ...projection,
@@ -363,13 +398,62 @@ function applyFixtureCommand(material: SceneMaterial, command: SceneCommand): Sc
       return { ...material, metallic: command.value };
     case "setRoughness":
       return { ...material, roughness: command.value };
+    case "setLightColor":
+    case "setLightIntensity":
+    case "setLightDirection":
+    case "setLightEnabled":
+    case "setLightCastsShadows":
     case "setVisibility":
       return material;
   }
 }
 
+function isLightCommand(command: SceneCommand): command is Extract<SceneCommand, { type: `setLight${string}` }> {
+  return command.type.startsWith("setLight");
+}
+
+function applyFixtureLightCommand(light: SceneLight, command: SceneCommand): SceneLight {
+  switch (command.type) {
+    case "setLightColor":
+      return { ...light, color: command.color };
+    case "setLightIntensity":
+      return { ...light, intensity: command.value };
+    case "setLightDirection":
+      return { ...light, direction: command.direction };
+    case "setLightEnabled":
+      return { ...light, enabled: command.enabled };
+    case "setLightCastsShadows":
+      return { ...light, castsShadows: command.castsShadows };
+    default:
+      return light;
+  }
+}
+
 function fixtureDetails(nodeId: string): SceneProjection["selected"] {
   if (nodeId === "cube") return FIXTURE_PROJECTION.selected;
+  if (nodeId === "key-light") {
+    return {
+      id: nodeId,
+      transform: {
+        translation: [0, 0, 0],
+        rotation: [0, 0, 0, 1],
+        scale: [1, 1, 1],
+      },
+      material: null,
+      light: {
+        lightType: "directional",
+        direction: [-0.45, -1, -0.35],
+        color: [1, 1, 1, 1],
+        intensity: 3,
+        radius: 0,
+        enabled: true,
+        castsShadows: true,
+        attenuationRadius: null,
+        innerConeAngle: null,
+        outerConeAngle: null,
+      },
+    };
+  }
   return {
     id: nodeId,
     transform: {
@@ -378,6 +462,7 @@ function fixtureDetails(nodeId: string): SceneProjection["selected"] {
       scale: [1, 1, 1],
     },
     material: null,
+    light: null,
   };
 }
 

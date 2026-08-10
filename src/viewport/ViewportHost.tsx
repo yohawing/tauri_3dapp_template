@@ -149,6 +149,13 @@ export function ViewportHost({
     () => Boolean(import.meta.env.VITE_VIEWPORT_LIGHTING_MENU_SELF_TEST),
   );
 
+  const closeViewportSettings = useCallback(() => {
+    setShowMenu(false);
+    setShowCameraMenu(false);
+    setShowEnvironmentMenu(false);
+    setShowLightingMenu(false);
+  }, []);
+
   useEffect(() => {
     if (mode !== "native" || !("__TAURI_INTERNALS__" in window)) return;
     void safeInvoke("set_viewport_display", {
@@ -190,15 +197,31 @@ export function ViewportHost({
     if (!showMenu && !showCameraMenu && !showEnvironmentMenu && !showLightingMenu) return;
     const close = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        setShowMenu(false);
-        setShowCameraMenu(false);
-        setShowEnvironmentMenu(false);
-        setShowLightingMenu(false);
+        closeViewportSettings();
       }
     };
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
-  }, [showCameraMenu, showEnvironmentMenu, showLightingMenu, showMenu]);
+  }, [closeViewportSettings, showCameraMenu, showEnvironmentMenu, showLightingMenu, showMenu]);
+
+  useEffect(() => {
+    const blurViewportControlOnOutsidePointer = (event: PointerEvent) => {
+      const target = event.target;
+      const isViewportUi = target instanceof Element && target.closest("[data-viewport-ui]") !== null;
+      if (isViewportUi) return;
+
+      closeViewportSettings();
+      const activeElement = document.activeElement;
+      if (activeElement instanceof HTMLElement && hostRef.current?.contains(activeElement)) {
+        activeElement.blur();
+      }
+    };
+
+    // Capture outside clicks before the viewport toolbar's stopPropagation so
+    // a click on another panel or the viewport itself always clears focus.
+    document.addEventListener("pointerdown", blurViewportControlOnOutsidePointer, true);
+    return () => document.removeEventListener("pointerdown", blurViewportControlOnOutsidePointer, true);
+  }, [closeViewportSettings]);
 
   // Coalesces any number of triggers (ResizeObserver, window resize, DPI
   // change) into at most one measurement + invoke per animation frame.
@@ -347,6 +370,7 @@ export function ViewportHost({
     <div ref={hostRef} className={`viewport-host${browserNativePreview ? " viewport-host--browser-preview" : ""}`}>
       <div
         className="viewport-host__toolbar"
+        data-viewport-ui="true"
         onPointerDown={(event) => event.stopPropagation()}
         onPointerMove={(event) => event.stopPropagation()}
       >
@@ -374,12 +398,14 @@ export function ViewportHost({
           <button
             type="button"
             className={`viewport-host__tool-button${showCameraMenu ? " is-active" : ""}`}
+            aria-label={`Camera settings: ${cameraLabel}`}
             aria-expanded={showCameraMenu}
             aria-haspopup="menu"
+            title={cameraLabel}
             disabled={mode !== "native"}
             onClick={() => setShowCameraMenu((open) => !open)}
           >
-            Camera: {cameraLabel} ▾
+            Camera ▾
           </button>
           {showCameraMenu && (
             <div className="viewport-host__camera-popover" role="menu" aria-label="Camera settings">
@@ -438,12 +464,14 @@ export function ViewportHost({
           <button
             type="button"
             className={`viewport-host__tool-button${showLightingMenu ? " is-active" : ""}`}
+            aria-label={`Lighting settings: ${lightingLabel}`}
             aria-expanded={showLightingMenu}
             aria-haspopup="menu"
+            title={lightingLabel}
             disabled={mode !== "native"}
             onClick={() => setShowLightingMenu((open) => !open)}
           >
-            Lighting: {lightingLabel} ▾
+            Lighting ▾
           </button>
           {showLightingMenu && (
             <div className="viewport-host__lighting-popover" role="menu" aria-label="Lighting settings">
@@ -556,13 +584,14 @@ export function ViewportHost({
           <button
             type="button"
             className={`viewport-host__tool-button${showEnvironmentMenu ? " is-active" : ""}`}
+            aria-label={`Environment settings: ${environment.enabled ? environmentName : "Off"}`}
             aria-expanded={showEnvironmentMenu}
             aria-haspopup="menu"
             disabled={mode !== "native"}
             title={environment.path || "No environment selected"}
             onClick={() => setShowEnvironmentMenu((open) => !open)}
           >
-            Environment: {environment.enabled ? environmentName : "Off"} ▾
+            Environment ▾
           </button>
           {showEnvironmentMenu && (
             <div className="viewport-host__environment-popover" role="menu" aria-label="Environment settings">

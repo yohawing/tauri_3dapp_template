@@ -19,6 +19,38 @@ function projection(): SceneProjection {
         scale: [1, 1, 1],
       },
       material: { color: [1, 0, 0, 1], metallic: 0, roughness: 0.5 },
+      light: null,
+    },
+    lastProcessedSequence: 0,
+    commandResults: [],
+  };
+}
+
+function lightProjection(): SceneProjection {
+  return {
+    revision: 4,
+    selectedNodeId: "key-light",
+    nodes: [{ id: "key-light", parent: null, label: "Key Light", kind: "light", visible: true }],
+    selected: {
+      id: "key-light",
+      transform: {
+        translation: [0, 0, 0],
+        rotation: [0, 0, 0, 1],
+        scale: [1, 1, 1],
+      },
+      material: null,
+      light: {
+        lightType: "directional",
+        direction: [-0.45, -1, -0.35],
+        color: [1, 1, 1, 1],
+        intensity: 3,
+        radius: 0,
+        enabled: true,
+        castsShadows: true,
+        attenuationRadius: null,
+        innerConeAngle: null,
+        outerConeAngle: null,
+      },
     },
     lastProcessedSequence: 0,
     commandResults: [],
@@ -102,5 +134,14 @@ describe("scene projection synchronization", () => {
     );
     expect(reconciled.pending.size).toBe(0);
     expect(reconciled.projection.nodes.find((node) => node.id === "cube")?.visible).toBe(true);
+  });
+
+  it("optimistically edits the directional KeyLight payload", () => {
+    const command: SceneCommandEnvelope = {
+      sequence: 12,
+      command: { type: "setLightIntensity", nodeId: "key-light", value: 6.5 },
+    };
+    const next = applyOptimisticToProjection(lightProjection(), command);
+    expect(next.selected?.light?.intensity).toBe(6.5);
   });
 });

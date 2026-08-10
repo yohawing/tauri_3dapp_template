@@ -36,10 +36,10 @@ export function buildDefaultLayout(api: DockviewApi, mode: ViewportMode): void {
     component: "timeline",
     title: "Timeline",
     position: { direction: "below", referencePanel: "viewport" },
-    initialHeight: 240,
+    initialHeight: 112,
     params: { view: "timeline" },
   });
-  timeline.group.api.setSize({ height: 240 });
+  timeline.group.api.setSize({ height: 112 });
 
   api.addPanel({
     id: "outliner",

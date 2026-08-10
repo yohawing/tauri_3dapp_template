@@ -213,6 +213,11 @@
   background: rgba(255, 255, 255, 0.1);
 }
 
+.outliner-row__visibility--placeholder {
+  pointer-events: none;
+  cursor: default;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;

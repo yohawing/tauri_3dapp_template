@@ -1,49 +1,67 @@
-import { useEffect, useState } from "react";
-import { CheckboxInput, CompactSelect } from "../components/controls/CompactControls";
-import { ScalarBar } from "../components/controls/ScalarBar";
+import { useEffect, useRef } from "react";
+import { Pane } from "tweakpane";
+import type { BindingApi } from "@tweakpane/core";
 import {
   dispatchSceneCommand,
   useSceneProjection,
 } from "../scene/adapters/sceneProjectionDataSource";
-import type { SceneMaterial, SceneProjection, SceneTransform } from "../scene/core/projection";
+import type {
+  SceneNodeKind,
+  SceneProjection,
+  SelectedSceneNode,
+} from "../scene/core/projection";
 import "./Inspector.css";
 
-const format = (value: number) => value.toFixed(3);
+type Refreshable = { refresh(): void };
+type ColorValue = [number, number, number, number];
+type Point3Value = { x: number; y: number; z: number };
+type Point4Value = { x: number; y: number; z: number; w: number };
 
-function VectorField({ label, values, names }: { label: string; values: readonly number[]; names: readonly string[] }) {
-  return (
-    <div className="inspector-field">
-      <span className="inspector-field__label">{label}</span>
-      <div className="inspector-field__values">
-        {values.map((value, index) => (
-          <span className="inspector-value" key={`${label}-${names[index]}`}>
-            <span className={`inspector-value__axis inspector-value__axis--${names[index].toLowerCase()}`}>
-              {names[index]}
-            </span>
-            {format(value)}
-          </span>
-        ))}
-      </div>
-    </div>
-  );
+interface PaneModel {
+  transform: {
+    position: Point3Value;
+    rotation: Point4Value;
+    scale: Point3Value;
+  };
+  material?: {
+    color: string;
+    metallic: number;
+    roughness: number;
+  };
+  light?: {
+    type: string;
+    color: string;
+    intensity: number;
+    direction: Point3Value;
+    enabled: boolean;
+    castsShadows: boolean;
+  };
+  rendering: {
+    shading: "Smooth" | "Flat";
+    castShadows: boolean;
+    layer: "Default";
+  };
 }
-function TransformSection({ transform }: { transform: SceneTransform }) {
-  return (
-    <section className="inspector-section">
-      <div className="inspector-section__title"><span>▾</span>Transform</div>
-      <VectorField label="Position" values={transform.translation} names={["X", "Y", "Z"]} />
-      <VectorField label="Rotation" values={transform.rotation} names={["X", "Y", "Z", "W"]} />
-      <VectorField label="Scale" values={transform.scale} names={["X", "Y", "Z"]} />
-    </section>
-  );
+
+interface PaneSession {
+  pane: Pane;
+  nodeId: string;
+  model: PaneModel;
+  bindings: Refreshable[];
 }
 
-const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
-const componentToHex = (value: number) => Math.round(clamp01(value) * 255).toString(16).padStart(2, "0");
-const colorToHex = (color: SceneMaterial["color"]) =>
-  `#${componentToHex(color[0])}${componentToHex(color[1])}${componentToHex(color[2])}`;
+function componentToHex(value: number): string {
+  return Math.round(Math.min(1, Math.max(0, value)) * 255)
+    .toString(16)
+    .padStart(2, "0");
+}
 
-function hexToColor(hex: string, alpha: number): SceneMaterial["color"] {
+function colorToHex(color: readonly number[]): string {
+  return `#${componentToHex(color[0] ?? 0)}${componentToHex(color[1] ?? 0)}${componentToHex(color[2] ?? 0)}`;
+}
+
+function hexToColor(value: string, alpha: number): ColorValue {
+  const hex = /^#[0-9a-f]{6}$/i.test(value) ? value : "#000000";
   return [
     Number.parseInt(hex.slice(1, 3), 16) / 255,
     Number.parseInt(hex.slice(3, 5), 16) / 255,
@@ -52,85 +70,318 @@ function hexToColor(hex: string, alpha: number): SceneMaterial["color"] {
   ];
 }
 
-function MaterialSection({ nodeId, material, error }: { nodeId: string; material: SceneMaterial; error?: string }) {
-  const [draft, setDraft] = useState(material);
-
-  useEffect(() => setDraft(material), [nodeId, material]);
-
-  const setColor = (hex: string) => {
-    const color = hexToColor(hex, draft.color[3]);
-    setDraft((current) => ({ ...current, color }));
-    dispatchSceneCommand({ type: "setBaseColor", nodeId, color });
+function point3(values: readonly number[]): Point3Value {
+  return {
+    x: values[0] ?? 0,
+    y: values[1] ?? 0,
+    z: values[2] ?? 0,
   };
+}
 
-  const setScalar = (kind: "metallic" | "roughness", value: number) => {
-    const clamped = clamp01(value);
-    setDraft((current) => ({ ...current, [kind]: clamped }));
+function point4(values: readonly number[]): Point4Value {
+  return {
+    x: values[0] ?? 0,
+    y: values[1] ?? 0,
+    z: values[2] ?? 0,
+    w: values[3] ?? 1,
+  };
+}
+
+function point3ToTuple(value: Point3Value): [number, number, number] | null {
+  const result: [number, number, number] = [value.x, value.y, value.z];
+  if (!result.every(Number.isFinite) || result.every((component) => component === 0)) {
+    return null;
+  }
+  return result;
+}
+
+function createPaneModel(selected: SelectedSceneNode): PaneModel {
+  const { translation, rotation, scale } = selected.transform;
+  return {
+    transform: {
+      position: point3(translation),
+      rotation: point4(rotation),
+      scale: point3(scale),
+    },
+    material: selected.material
+      ? {
+          color: colorToHex(selected.material.color),
+          metallic: selected.material.metallic,
+          roughness: selected.material.roughness,
+        }
+      : undefined,
+    light: selected.light
+      ? {
+          type: selected.light.lightType,
+          color: colorToHex(selected.light.color),
+          intensity: selected.light.intensity,
+          direction: point3(selected.light.direction ?? [0, -1, 0]),
+          enabled: selected.light.enabled,
+          castsShadows: selected.light.castsShadows,
+        }
+      : undefined,
+    rendering: {
+      shading: "Smooth",
+      castShadows: true,
+      layer: "Default",
+    },
+  };
+}
+
+function track<T>(bindings: Refreshable[], binding: BindingApi<unknown, T>): BindingApi<unknown, T> {
+  bindings.push(binding);
+  return binding;
+}
+
+function listen<T>(binding: BindingApi<unknown, T>, handler: (value: T) => void): void {
+  binding.on("change", (event) => handler(event.value));
+}
+
+function addTransformFolder(pane: Pane, model: PaneModel, bindings: Refreshable[]): void {
+  const folder = pane.addFolder({ title: "Transform", expanded: true });
+  track(
+    bindings,
+    folder.addBinding(model.transform, "position", {
+      label: "Position",
+      disabled: true,
+      x: { step: 0.001 },
+      y: { step: 0.001 },
+      z: { step: 0.001 },
+    }),
+  );
+  track(
+    bindings,
+    folder.addBinding(model.transform, "rotation", {
+      label: "Rotation",
+      disabled: true,
+      x: { step: 0.001 },
+      y: { step: 0.001 },
+      z: { step: 0.001 },
+      w: { step: 0.001 },
+    }),
+  );
+  track(
+    bindings,
+    folder.addBinding(model.transform, "scale", {
+      label: "Scale",
+      disabled: true,
+      x: { step: 0.001 },
+      y: { step: 0.001 },
+      z: { step: 0.001 },
+    }),
+  );
+}
+
+function addMaterialFolder(
+  pane: Pane,
+  model: PaneModel,
+  selected: SelectedSceneNode,
+  bindings: Refreshable[],
+): void {
+  if (!selected.material || !model.material) return;
+
+  const nodeId = selected.id;
+  const alpha = selected.material.color[3];
+  const folder = pane.addFolder({ title: "Base Material", expanded: true });
+  const color = track(
+    bindings,
+    folder.addBinding(model.material, "color", {
+      label: "Color",
+      color: { alpha: false },
+    }),
+  );
+  listen(color, (value) => {
+    if (typeof value !== "string") return;
     dispatchSceneCommand({
-      type: kind === "metallic" ? "setMetallic" : "setRoughness",
+      type: "setBaseColor",
       nodeId,
-      value: clamped,
+      color: hexToColor(value, alpha),
     });
-  };
+  });
 
-  return (
-    <section className="inspector-section">
-      <div className="inspector-section__title"><span>▾</span>Base Material</div>
-      <label className="inspector-field">
-        <span className="inspector-field__label">Color</span>
-        <span className="inspector-color-editor">
-          <input
-            aria-label="Base color"
-            className="inspector-color-input"
-            type="color"
-            value={colorToHex(draft.color)}
-            onChange={(event) => setColor(event.currentTarget.value)}
-          />
-          <span>{colorToHex(draft.color).toUpperCase()}</span>
-        </span>
-      </label>
-      <MaterialSlider
-        label="Metallic"
-        value={draft.metallic}
-        onChange={(value) => setScalar("metallic", value)}
-      />
-      <MaterialSlider
-        label="Roughness"
-        value={draft.roughness}
-        onChange={(value) => setScalar("roughness", value)}
-      />
-      {error && <div className="inspector-material-error">{error}</div>}
-    </section>
+  const metallic = track(
+    bindings,
+    folder.addBinding(model.material, "metallic", {
+      label: "Metallic",
+      min: 0,
+      max: 1,
+      step: 0.01,
+    }),
+  );
+  listen(metallic, (value) => {
+    dispatchSceneCommand({ type: "setMetallic", nodeId, value });
+  });
+
+  const roughness = track(
+    bindings,
+    folder.addBinding(model.material, "roughness", {
+      label: "Roughness",
+      min: 0,
+      max: 1,
+      step: 0.01,
+    }),
+  );
+  listen(roughness, (value) => {
+    dispatchSceneCommand({ type: "setRoughness", nodeId, value });
+  });
+}
+
+function addLightFolder(
+  pane: Pane,
+  model: PaneModel,
+  selected: SelectedSceneNode,
+  bindings: Refreshable[],
+): void {
+  if (!selected.light || !model.light) return;
+
+  const nodeId = selected.id;
+  const light = selected.light;
+  const folder = pane.addFolder({ title: "Light", expanded: true });
+  track(bindings, folder.addBinding(model.light, "type", { label: "Type", readonly: true }));
+
+  const color = track(
+    bindings,
+    folder.addBinding(model.light, "color", {
+      label: "Color",
+      color: { alpha: false },
+    }),
+  );
+  listen(color, (value) => {
+    if (typeof value !== "string") return;
+    dispatchSceneCommand({
+      type: "setLightColor",
+      nodeId,
+      color: hexToColor(value, light.color[3]),
+    });
+  });
+
+  const intensity = track(
+    bindings,
+    folder.addBinding(model.light, "intensity", {
+      label: "Intensity",
+      min: 0,
+      max: 20,
+      step: 0.1,
+    }),
+  );
+  listen(intensity, (value) => {
+    dispatchSceneCommand({ type: "setLightIntensity", nodeId, value });
+  });
+
+  if (light.direction) {
+    const direction = track(
+      bindings,
+      folder.addBinding(model.light, "direction", {
+        label: "Direction",
+        x: { step: 0.01 },
+        y: { step: 0.01 },
+        z: { step: 0.01 },
+      }),
+    );
+    listen(direction, (value) => {
+      const next = point3ToTuple(value);
+      if (next) dispatchSceneCommand({ type: "setLightDirection", nodeId, direction: next });
+    });
+  }
+
+  const enabled = track(bindings, folder.addBinding(model.light, "enabled", { label: "Enabled" }));
+  listen(enabled, (value) => {
+    dispatchSceneCommand({ type: "setLightEnabled", nodeId, enabled: value });
+  });
+
+  const castsShadows = track(
+    bindings,
+    folder.addBinding(model.light, "castsShadows", { label: "Cast shadows" }),
+  );
+  listen(castsShadows, (value) => {
+    dispatchSceneCommand({ type: "setLightCastsShadows", nodeId, castsShadows: value });
+  });
+}
+
+function addRenderingFolder(pane: Pane, model: PaneModel, bindings: Refreshable[]): void {
+  const folder = pane.addFolder({ title: "Rendering", expanded: true });
+  track(
+    bindings,
+    folder.addBinding(model.rendering, "shading", {
+      label: "Shading",
+      options: { Smooth: "Smooth", Flat: "Flat" },
+    }),
+  );
+  track(bindings, folder.addBinding(model.rendering, "castShadows", { label: "Cast shadows" }));
+  track(
+    bindings,
+    folder.addBinding(model.rendering, "layer", {
+      label: "Layer",
+      options: { Default: "Default" },
+    }),
   );
 }
 
-function RenderingSection() {
-  return (
-    <section className="inspector-section">
-      <div className="inspector-section__title"><span>▾</span>Rendering</div>
-      <label className="inspector-field"><span className="inspector-field__label">Shading</span><CompactSelect defaultValue="Smooth"><option>Smooth</option><option>Flat</option></CompactSelect></label>
-      <label className="inspector-field"><span className="inspector-field__label">Cast shadows</span><CheckboxInput defaultChecked /></label>
-      <label className="inspector-field"><span className="inspector-field__label">Layer</span><CompactSelect defaultValue="Default"><option>Default</option></CompactSelect></label>
-    </section>
-  );
-}
+function TweakpaneInspector({
+  selected,
+  nodeKind,
+  materialError,
+}: {
+  selected: SelectedSceneNode;
+  nodeKind: SceneNodeKind;
+  materialError?: string;
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const sessionRef = useRef<PaneSession | null>(null);
+  const paneSignature = `${selected.id}:${nodeKind}:${selected.material ? "material" : ""}:${selected.light?.lightType ?? ""}:${selected.light?.direction ? "direction" : ""}`;
 
-function MaterialSlider({ label, value, onChange }: { label: string; value: number; onChange: (value: number) => void }) {
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const pane = new Pane({ container });
+    const model = createPaneModel(selected);
+    const bindings: Refreshable[] = [];
+
+    addTransformFolder(pane, model, bindings);
+    addLightFolder(pane, model, selected, bindings);
+    addMaterialFolder(pane, model, selected, bindings);
+    if (nodeKind === "mesh") addRenderingFolder(pane, model, bindings);
+
+    const session: PaneSession = { pane, nodeId: selected.id, model, bindings };
+    sessionRef.current = session;
+    return () => {
+      if (sessionRef.current?.pane === pane) sessionRef.current = null;
+      pane.dispose();
+    };
+  }, [paneSignature]);
+
+  useEffect(() => {
+    const session = sessionRef.current;
+    if (!session || session.nodeId !== selected.id) return;
+
+    const transform = session.model.transform;
+    transform.position = point3(selected.transform.translation);
+    transform.rotation = point4(selected.transform.rotation);
+    transform.scale = point3(selected.transform.scale);
+
+    if (selected.material && session.model.material) {
+      session.model.material.color = colorToHex(selected.material.color);
+      session.model.material.metallic = selected.material.metallic;
+      session.model.material.roughness = selected.material.roughness;
+    }
+    if (selected.light && session.model.light) {
+      session.model.light.type = selected.light.lightType;
+      session.model.light.color = colorToHex(selected.light.color);
+      session.model.light.intensity = selected.light.intensity;
+      session.model.light.direction = point3(selected.light.direction ?? [0, -1, 0]);
+      session.model.light.enabled = selected.light.enabled;
+      session.model.light.castsShadows = selected.light.castsShadows;
+    }
+
+    session.bindings.forEach((binding) => binding.refresh());
+  }, [selected]);
+
   return (
-    <label className="inspector-field">
-      <span className="inspector-field__label">{label}</span>
-      <span className="inspector-slider-editor">
-        <ScalarBar
-          aria-label={label}
-          min={0}
-          max={1}
-          step={0.01}
-          value={value}
-          onChange={onChange}
-        />
-        <span className="inspector-number">{value.toFixed(2)}</span>
-      </span>
-    </label>
+    <div className="inspector-pane-host">
+      <div ref={containerRef} className="inspector-pane" />
+      {materialError && <div className="inspector-material-error">{materialError}</div>}
+    </div>
   );
 }
 
@@ -156,13 +407,12 @@ export function Inspector() {
         {!selected || !summary ? (
           <div className="inspector-empty">No scene node selected</div>
         ) : (
-          <>
-            <TransformSection transform={selected.transform} />
-            {selected.material && (
-              <MaterialSection nodeId={selected.id} material={selected.material} error={materialError} />
-            )}
-            <RenderingSection />
-          </>
+          <TweakpaneInspector
+            key={selected.id}
+            selected={selected}
+            nodeKind={summary.kind}
+            materialError={materialError}
+          />
         )}
       </div>
     </div>
