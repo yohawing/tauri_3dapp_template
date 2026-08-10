@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use kiss3d::prelude::{RenderFrameStatus, SurfaceSkipReason, SurfaceUnavailableReason};
@@ -38,19 +39,36 @@ impl RendererStatus {
     }
 }
 
-pub struct RendererStatusStore(Mutex<RendererStatus>);
+pub struct RendererStatusStore {
+    status: Mutex<RendererStatus>,
+    /// Render-loop fast path. Every write occurs while `status` is locked so
+    /// an unavailable wire snapshot can never coexist with an active bit.
+    active: AtomicBool,
+}
 
 impl RendererStatusStore {
     pub fn new(status: RendererStatus) -> Self {
-        Self(Mutex::new(status))
+        let store = Self {
+            status: Mutex::new(status),
+            active: AtomicBool::new(false),
+        };
+        let active = store.status.lock().unwrap().native_active;
+        store.active.store(active, Ordering::Release);
+        store
     }
 
     pub fn status(&self) -> RendererStatus {
-        self.0.lock().unwrap().clone()
+        self.status.lock().unwrap().clone()
+    }
+
+    /// Lock-free render-loop read. Mutations are serialized with the status
+    /// mutex; Acquire pairs with the Release stores below.
+    pub fn is_active(&self) -> bool {
+        self.active.load(Ordering::Acquire)
     }
 
     pub fn set_active(&self, active: bool) -> Result<RendererStatus, String> {
-        let mut status = self.0.lock().unwrap();
+        let mut status = self.status.lock().unwrap();
         if active && !status.native_available {
             return Err(status
                 .fallback_reason
@@ -58,16 +76,21 @@ impl RendererStatusStore {
                 .unwrap_or_else(|| "Native renderer is unavailable".into()));
         }
         status.native_active = active;
+        self.active.store(active, Ordering::Release);
         Ok(status.clone())
     }
 
     /// Marks Native unavailable once. Repeated frame statuses do not produce
     /// duplicate state transitions or frontend events.
     pub fn mark_unavailable_once(&self, reason: impl Into<String>) -> Option<RendererStatus> {
-        let mut status = self.0.lock().unwrap();
+        let mut status = self.status.lock().unwrap();
         if !status.native_available && !status.native_active {
             return None;
         }
+        // Clear the hot path before publishing the unavailable snapshot. A
+        // concurrent render read can therefore only observe `false` while the
+        // mutex-protected status transitions to unavailable.
+        self.active.store(false, Ordering::Release);
         *status = RendererStatus::unavailable(reason);
         Some(status.clone())
     }
@@ -182,5 +205,28 @@ mod tests {
         assert!(store
             .mark_unavailable_once("Native surface unavailable: Lost")
             .is_none());
+    }
+
+    #[test]
+    fn active_fast_path_matches_each_lifecycle_snapshot() {
+        let store = RendererStatusStore::new(RendererStatus::available());
+        assert!(store.status().native_available);
+        assert!(store.is_active());
+
+        let inactive = store.set_active(false).unwrap();
+        assert!(!inactive.native_active);
+        assert!(!store.is_active());
+
+        let active = store.set_active(true).unwrap();
+        assert!(active.native_active);
+        assert!(store.is_active());
+
+        let unavailable = store
+            .mark_unavailable_once("surface lost")
+            .expect("first unavailable transition");
+        assert!(!unavailable.native_available);
+        assert!(!unavailable.native_active);
+        assert!(!store.is_active());
+        assert!(!store.status().native_available || !store.is_active());
     }
 }

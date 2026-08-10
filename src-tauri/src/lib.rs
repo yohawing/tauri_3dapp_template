@@ -12,7 +12,7 @@ mod timeline_playback;
 use std::cell::RefCell;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
@@ -31,11 +31,6 @@ thread_local! {
     /// command handlers.
     static NATIVE_RENDERER: RefCell<Option<Renderer>> = const { RefCell::new(None) };
 }
-
-/// Whether the native wgpu renderer should draw this frame. Flipped off when
-/// the frontend switches to its Canvas fallback; the surface is still kept
-/// reconfigured on resize so reactivation is seamless.
-struct RendererActive(AtomicBool);
 
 #[derive(Default)]
 struct RendererControl {
@@ -61,7 +56,7 @@ struct ViewportEnvironmentControl {
 /// The *previous raw `ViewportRect`* (for IPC-level dedup) and a log
 /// sequence number are purely a diagnostic concern of this command, not
 /// something the renderer needs to know about, so they get their own managed
-/// state — the same pattern already used for `RendererActive`.
+/// state independent from the renderer runtime.
 #[derive(Default)]
 struct ViewportRectLog {
     last: Mutex<Option<ViewportRect>>,
@@ -276,13 +271,10 @@ fn viewport_input(state: tauri::State<Mutex<OrbitCamera>>, input: ViewportInput)
 /// the surface so reactivation is clean.
 #[tauri::command]
 fn set_renderer_active(
-    state: tauri::State<RendererActive>,
     status: tauri::State<renderer_status::RendererStatusStore>,
     active: bool,
 ) -> Result<renderer_status::RendererStatus, String> {
-    let next = status.set_active(active)?;
-    state.0.store(active, Ordering::Relaxed);
-    Ok(next)
+    status.set_active(active)
 }
 
 #[tauri::command]
@@ -478,7 +470,7 @@ pub fn run() {
             };
             // Kiss3d owns thread-local GPU resources whose destruction must stay on
             // the event-loop thread. Even an unavailable renderer remains parked in
-            // this slot; RendererActive prevents drawing and RendererStatus rejects
+            // this slot; the lifecycle store prevents drawing and rejects
             // reactivation until the process is restarted without the fault.
             let initial_playback = renderer.timeline_playback_snapshot();
             NATIVE_RENDERER.with(|slot| {
@@ -487,9 +479,6 @@ pub fn run() {
             let mut camera = OrbitCamera::default();
             camera.set_state(initial_camera);
             app.manage(Mutex::new(camera));
-            app.manage(RendererActive(AtomicBool::new(
-                renderer_status.native_active,
-            )));
             app.manage(renderer_status::RendererStatusStore::new(renderer_status));
             let device = kiss3d::context::Context::get().device;
             let device_lost_handle = app.handle().clone();
@@ -499,10 +488,6 @@ pub fn run() {
                 } else {
                     format!("wgpu device lost ({reason:?}): {message}")
                 };
-                device_lost_handle
-                    .state::<RendererActive>()
-                    .0
-                    .store(false, Ordering::Relaxed);
                 let status_store = device_lost_handle
                     .state::<renderer_status::RendererStatusStore>();
                 if let Some(status) = status_store.mark_unavailable_once(detail) {
@@ -595,10 +580,8 @@ pub fn run() {
                     let environment = renderer_control.viewport_environment.lock().unwrap();
                     (environment.settings.clone(), environment.encoded.clone())
                 };
-                let active = app_handle
-                    .state::<RendererActive>()
-                    .0
-                    .load(Ordering::Relaxed);
+                let lifecycle_store = app_handle.state::<renderer_status::RendererStatusStore>();
+                let active = lifecycle_store.is_active();
                 let projection_store = app_handle.state::<SceneProjectionStore>();
                 let playback_store =
                     app_handle.state::<timeline_playback::TimelinePlaybackStore>();
@@ -607,6 +590,7 @@ pub fn run() {
                 let current_selection = projection_store.projection().selected_node_id;
                 let requested_selection = projection_store.take_selection();
                 let selected_id = requested_selection.or(current_selection);
+                let scene_file_state = app_handle.state::<scene_file::SceneFileState>();
 
                 NATIVE_RENDERER.with(|slot| {
                     if let Some(renderer) = slot.borrow_mut().as_mut() {
@@ -614,7 +598,29 @@ pub fn run() {
                             let node_id = envelope.command.node_id().to_string();
                             let property = envelope.command.property().to_string();
                             let sequence = envelope.sequence;
-                            let result = renderer.apply_scene_command(envelope.command);
+                            let result = match &envelope.command {
+                                scene_projection::SceneCommand::SetVisibility {
+                                    node_id,
+                                    visible,
+                                } if renderer.is_runtime_instance(node_id) => {
+                                    match scene_file_state.transact_instance_visibility(
+                                        node_id,
+                                        *visible,
+                                        || renderer.apply_scene_command(envelope.command.clone()),
+                                    ) {
+                                        Ok(scene_file::SceneVisibilityMutation::Updated {
+                                            ..
+                                        }) => Ok(()),
+                                        Ok(scene_file::SceneVisibilityMutation::NotPersistent) => {
+                                            Err(format!(
+                                                "renderer/document mismatch for runtime instance '{node_id}'"
+                                            ))
+                                        }
+                                        Err(error) => Err(error),
+                                    }
+                                }
+                                _ => renderer.apply_scene_command(envelope.command),
+                            };
                             projection_store.record_command_result(SceneCommandResult {
                                 sequence,
                                 node_id,
@@ -649,25 +655,13 @@ pub fn run() {
                             if let Some(reason) =
                                 renderer_status::frame_fallback_reason(frame_status)
                             {
-                                // Swap first so repeated statuses or a concurrent
-                                // Device Lost callback cannot render or emit twice.
-                                let was_active = app_handle
-                                    .state::<RendererActive>()
-                                    .0
-                                    .swap(false, Ordering::AcqRel);
-                                if was_active {
-                                    let status_store = app_handle
-                                        .state::<renderer_status::RendererStatusStore>();
-                                    if let Some(status) =
-                                        status_store.mark_unavailable_once(reason)
+                                if let Some(status) = lifecycle_store.mark_unavailable_once(reason) {
+                                    if let Err(error) =
+                                        app_handle.emit("renderer-status-changed", status)
                                     {
-                                        if let Err(error) = app_handle
-                                            .emit("renderer-status-changed", status)
-                                        {
-                                            eprintln!(
-                                                "failed to emit renderer status after SurfaceUnavailable: {error}"
-                                            );
-                                        }
+                                        eprintln!(
+                                            "failed to emit renderer status after SurfaceUnavailable: {error}"
+                                        );
                                     }
                                 }
                             }

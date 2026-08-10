@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { attachViewportInput, maybeRunViewportInputSelfTest } from "./input";
-import { mountCanvasBackend, type CameraState, type CanvasBackendHandle } from "./canvasBackend";
+import { mountCanvasBackend, type CameraState } from "./canvasBackend";
+import { BackendTransitionController } from "./backendTransition";
 import type { ViewportEnvironmentSettings, ViewportLightingSettings, ViewportTonemap } from "../settings/model";
 
 /**
@@ -97,6 +98,15 @@ interface ViewportHostProps {
   onLightingSettingsChange?: (patch: Partial<ViewportLightingSettings>) => void;
 }
 
+function reportBackendTransitionError(error: unknown): void {
+  console.error("[ViewportHost] backend transition failed:", error);
+  window.dispatchEvent(
+    new CustomEvent("tauri3d:backend-transition-error", {
+      detail: error,
+    }),
+  );
+}
+
 /**
  * Central transparent hole in the DOM. In "native" mode the native wgpu
  * renderer draws behind the WebView here and this component's only jobs are
@@ -137,6 +147,43 @@ export function ViewportHost({
 }: ViewportHostProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const rafIdRef = useRef<number | null>(null);
+  const lifecycleEpochRef = useRef(0);
+  const transitionControllerRef = useRef<BackendTransitionController | null>(null);
+  if (transitionControllerRef.current === null) {
+    const tauriAvailable = "__TAURI_INTERNALS__" in window;
+    transitionControllerRef.current = new BackendTransitionController({
+      deactivateNative: async () => {
+        if (tauriAvailable) {
+          await invoke("set_renderer_active", { active: false });
+        }
+      },
+      activateNative: async () => {
+        if (tauriAvailable) {
+          await invoke("set_renderer_active", { active: true });
+        }
+      },
+      readCamera: async () => {
+        if (!tauriAvailable) {
+          return DEFAULT_CAMERA;
+        }
+        return (await invoke<CameraState>("get_camera")) ?? DEFAULT_CAMERA;
+      },
+      writeCamera: async (camera) => {
+        if (tauriAvailable) {
+          await invoke("set_camera", { camera });
+        }
+      },
+      mountCanvas: (camera) => {
+        const host = hostRef.current;
+        if (!host) {
+          throw new Error("ViewportHost is not mounted");
+        }
+        return mountCanvasBackend(host, camera);
+      },
+      reportError: reportBackendTransitionError,
+    });
+  }
+  const transitionController = transitionControllerRef.current!;
   const [lastRect, setLastRect] = useState<ViewportRect | null>(null);
   const [showMenu, setShowMenu] = useState(false);
   const [showCameraMenu, setShowCameraMenu] = useState(
@@ -317,42 +364,26 @@ export function ViewportHost({
     return detach;
   }, [mode]);
 
-  // Mounts/tears down the three.js backend on mode transitions, handing
-  // camera state across the switch in both directions:
-  //   native -> canvas: pause the native renderer, read its camera, seed
-  //     the three.js OrbitControls with it.
-  //   canvas -> native: read back the (possibly user-manipulated) three.js
-  //     camera, push it into the native OrbitCamera, resume the native
-  //     renderer.
+  // The controller owns generation-safe Canvas mounting, camera handoff, and
+  // Native activation. Effect cleanup only cancels its own generation, so a
+  // stale React effect cannot reactivate Native after a newer mode transition.
   useEffect(() => {
-    if (mode !== "canvas") {
-      return;
-    }
-    let cancelled = false;
-    let handle: CanvasBackendHandle | null = null;
+    return transitionController.transition(mode);
+  }, [mode, transitionController]);
 
-    void (async () => {
-      await safeInvoke("set_renderer_active", { active: false });
-      const camera = (await safeInvoke<CameraState>("get_camera")) ?? DEFAULT_CAMERA;
-      if (cancelled) {
-        return;
-      }
-      const el = hostRef.current;
-      if (!el) {
-        return;
-      }
-      handle = mountCanvasBackend(el, camera);
-    })();
-
+  // StrictMode intentionally runs effect setup/cleanup twice in development.
+  // Defer disposal by one microtask so that probe cleanup does not permanently
+  // dispose the controller before the real effect setup runs.
+  useEffect(() => {
+    const epoch = ++lifecycleEpochRef.current;
     return () => {
-      cancelled = true;
-      if (handle) {
-        const finalCamera = handle.dispose();
-        void safeInvoke("set_camera", { camera: finalCamera });
-        void safeInvoke("set_renderer_active", { active: true });
-      }
+      queueMicrotask(() => {
+        if (lifecycleEpochRef.current === epoch) {
+          transitionController.dispose();
+        }
+      });
     };
-  }, [mode]);
+  }, [transitionController]);
 
   const browserNativePreview = mode === "native" && !("__TAURI_INTERNALS__" in window);
   const cameraLabel = `${viewPreset[0].toUpperCase()}${viewPreset.slice(1)} · ${

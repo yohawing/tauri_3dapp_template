@@ -22,6 +22,21 @@ import {
   type TimelinePlaybackCommand,
   type TimelinePlaybackSnapshot,
 } from "../timeline/playback";
+import {
+  acceptPlaybackSnapshot,
+  createPlaybackConnectionState,
+  playbackControlsEnabled,
+  type PlaybackConnectionState,
+} from "../timeline/playbackState";
+import {
+  clampTimelineTime,
+  formatCompactTimelineReadout,
+  formatTimelineReadout,
+  formatTimelineTick,
+  resolveTimelineSeekTime,
+  type TimelineDisplayMode,
+  type TimelineSeekPolicy,
+} from "../timeline/display";
 import "./Timeline.css";
 
 const ROW_HEIGHT = 26;
@@ -34,8 +49,6 @@ const NATIVE_PLAYBACK_EVENT_INTERVAL_MS = 250;
 let timelineSelfTestHasRun = false;
 let timelinePlaybackSelfTestHasRun = false;
 
-type TimelineDisplayMode = "frames" | "seconds";
-
 function isTimelineTextEditingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
 
@@ -45,35 +58,6 @@ function isTimelineTextEditingTarget(target: EventTarget | null): boolean {
   if (!input) return false;
   const type = input.getAttribute("type")?.toLowerCase() ?? "text";
   return ["text", "search", "email", "url", "tel", "password"].includes(type);
-}
-
-function snapTimelineTimeToFrame(time: number) {
-  return Math.round(time * TIMELINE_FPS) / TIMELINE_FPS;
-}
-
-function normalizeTimelineTime(time: number, timeEnd: number, displayMode: TimelineDisplayMode) {
-  const clamped = Math.min(timeEnd, Math.max(0, time));
-  if (displayMode !== "frames") return clamped;
-  return Math.min(timeEnd, Math.max(0, snapTimelineTimeToFrame(clamped)));
-}
-
-function formatTimelineReadout(time: number, timeEnd: number, displayMode: TimelineDisplayMode) {
-  if (displayMode === "frames") {
-    return `${String(Math.round(time * TIMELINE_FPS)).padStart(4, "0")} / ${String(Math.round(timeEnd * TIMELINE_FPS)).padStart(4, "0")}`;
-  }
-  return `${time.toFixed(2)} / ${timeEnd.toFixed(2)} s`;
-}
-
-function formatCompactTimelineReadout(time: number, displayMode: TimelineDisplayMode) {
-  return displayMode === "frames"
-    ? `${String(Math.round(time * TIMELINE_FPS)).padStart(4, "0")} f`
-    : `${time.toFixed(2)} s`;
-}
-
-function formatTimelineTick(time: number, displayMode: TimelineDisplayMode) {
-  return displayMode === "frames"
-    ? String(Math.round(time * TIMELINE_FPS)).padStart(4, "0")
-    : `${time.toFixed(1)}s`;
 }
 
 function LoopIcon() {
@@ -369,17 +353,6 @@ function paintTimeline(
 
 }
 
-function hasSamePlaybackMetadata(
-  current: TimelinePlaybackSnapshot | null,
-  next: TimelinePlaybackSnapshot,
-): boolean {
-  return current !== null &&
-    current.available === next.available &&
-    current.instanceId === next.instanceId &&
-    current.clipIndex === next.clipIndex &&
-    current.duration === next.duration;
-}
-
 export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "compact" }: TimelineProps) {
   const revision = useSyncExternalStore(
     dataSource.subscribe,
@@ -405,7 +378,14 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
   const [timeDisplayMode, setTimeDisplayMode] = useState<TimelineDisplayMode>("frames");
   const [isPlaying, setIsPlaying] = useState(false);
   const [loop, setLoop] = useState(false);
-  const [nativePlayback, setNativePlayback] = useState<TimelinePlaybackSnapshot | null>(null);
+  const hasTauriRuntime = "__TAURI_INTERNALS__" in window;
+  const [playbackConnection, setPlaybackConnection] = useState<PlaybackConnectionState>(() =>
+    createPlaybackConnectionState(hasTauriRuntime),
+  );
+  const playbackConnectionRef = useRef<PlaybackConnectionState>(playbackConnection);
+  const nativePlayback = playbackConnection.kind === "native-available" ? playbackConnection.snapshot : null;
+  const browserPreview = playbackConnection.kind === "browser-preview";
+  const controlsEnabled = playbackControlsEnabled(playbackConnection);
   const nativePlaybackRef = useRef<TimelinePlaybackSnapshot | null>(null);
   const playheadTimeRef = useRef(PLAYHEAD_TIME);
   const [rangeEnabled, setRangeEnabled] = useState(true);
@@ -470,7 +450,7 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
     [dataSource, revision],
   );
   const presentPlayhead = useCallback((time: number) => {
-    const normalized = normalizeTimelineTime(time, timeEnd, timeDisplayModeRef.current);
+    const normalized = clampTimelineTime(time, timeEnd);
     playheadTimeRef.current = normalized;
     const offset = `${normalized * pixelsPerSecond}px`;
     if (canvasPlayheadRef.current) canvasPlayheadRef.current.style.transform = `translateX(${offset})`;
@@ -488,6 +468,7 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
     if (timeReadoutRef.current) {
       timeReadoutRef.current.textContent = formatCompactTimelineReadout(
         normalized,
+        timeEnd,
         timeDisplayModeRef.current,
       );
     }
@@ -531,6 +512,7 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
   }, [canvasWindow, displayRange, items, keyColumns, keys, pixelsPerSecond, rows, timeEnd]);
 
   useEffect(() => {
+    if (!hasTauriRuntime) return;
     let disposed = false;
     let unlisten: (() => void) | undefined;
     const deliveryAges: number[] = [];
@@ -542,7 +524,6 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
     let previousSnapshotRevision: number | undefined;
     let eventSequenceGaps = 0;
     let revisionGaps = 0;
-    let latestRevision = 0;
     const measurementStartedAt = performance.now();
     const sampleTarget = import.meta.env.VITE_TIMELINE_PLAYBACK_SYNC_SELF_TEST ? 100 : 0;
     const applySnapshot = (snapshot: TimelinePlaybackSnapshot, measure: boolean) => {
@@ -554,16 +535,29 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
         eventSequenceGaps += timelineSequenceGap(previousEventSequence, snapshot.eventSequence);
         previousEventSequence = snapshot.eventSequence;
       }
-      if (!snapshot.available || snapshot.revision < latestRevision) return;
-      latestRevision = snapshot.revision;
-      nativePlaybackRef.current = snapshot;
-      setNativePlayback((current) => hasSamePlaybackMetadata(current, snapshot) ? current : snapshot);
-      const projectedTime = projectTimelinePlaybackTime(snapshot);
-      const presentedTime = presentPlayhead(projectedTime);
-      if (!snapshot.playing) setPlayheadTime(presentedTime);
-      setIsPlaying(snapshot.playing);
-      setLoop(snapshot.looping);
-      setRangeEnabled(false);
+      const currentConnection = playbackConnectionRef.current;
+      const acceptance = acceptPlaybackSnapshot(currentConnection, snapshot);
+      if (!acceptance.accepted) return;
+      const nextConnection = acceptance.state;
+      if (nextConnection !== currentConnection) {
+        playbackConnectionRef.current = nextConnection;
+        setPlaybackConnection(nextConnection);
+      }
+      if (snapshot.available) {
+        nativePlaybackRef.current = snapshot;
+        const projectedTime = projectTimelinePlaybackTime(snapshot);
+        const presentedTime = presentPlayhead(projectedTime);
+        if (!snapshot.playing) setPlayheadTime(presentedTime);
+        setIsPlaying(snapshot.playing);
+        setLoop(snapshot.looping);
+        setRangeEnabled(false);
+      } else {
+        nativePlaybackRef.current = null;
+        setIsPlaying(false);
+        setLoop(false);
+        setPlayheadTime(0);
+        presentPlayhead(0);
+      }
       if (!measureEvent) return;
       const receivedAt = performance.now();
       const ages = timelineEventAges(snapshot);
@@ -610,14 +604,20 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
         return getTimelinePlayback();
       })
       .then((snapshot) => applySnapshot(snapshot, false))
-      .catch(() => {
-        // Browser-only design stories keep the local preview clock below.
+      .catch((error) => {
+        window.dispatchEvent(new CustomEvent("tauri3d:diagnostic", {
+          detail: {
+            level: "error",
+            source: "timeline",
+            message: `Native Timeline playback unavailable: ${String(error)}`,
+          },
+        }));
       });
     return () => {
       disposed = true;
       unlisten?.();
     };
-  }, [presentPlayhead]);
+  }, [hasTauriRuntime, presentPlayhead]);
 
   useEffect(() => {
     if (!isPlaying || !nativePlayback) return;
@@ -632,7 +632,7 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
   }, [isPlaying, presentPlayhead]);
 
   useEffect(() => {
-    if (nativePlayback || !isPlaying) return;
+    if (!browserPreview || !isPlaying) return;
     let current = playheadTimeRef.current;
     const timer = window.setInterval(() => {
       const next = current + 1 / TIMELINE_FPS;
@@ -651,7 +651,7 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
       presentPlayhead(current);
     }, 1000 / TIMELINE_FPS);
     return () => window.clearInterval(timer);
-  }, [nativePlayback, isPlaying, loop, rangeEnabled, rangeStart, rangeEnd, timeEnd, presentPlayhead]);
+  }, [browserPreview, isPlaying, loop, rangeEnabled, rangeStart, rangeEnd, timeEnd, presentPlayhead]);
 
   useEffect(() => {
     const viewport = canvasViewportRef.current;
@@ -783,6 +783,7 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
     return true;
   }, [nativePlayback]);
   const togglePlayback = useCallback(() => {
+    if (!controlsEnabled) return;
     const next = !isPlaying;
     const snapshot = nativePlaybackRef.current;
     if (snapshot) {
@@ -796,7 +797,7 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
     if (!next) setPlayheadTime(playheadTimeRef.current);
     setIsPlaying(next);
     sendNative(next ? "play" : "pause");
-  }, [isPlaying, sendNative]);
+  }, [controlsEnabled, isPlaying, sendNative]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -813,8 +814,9 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
     return () => window.removeEventListener("keydown", handleKeyDown, true);
   }, [togglePlayback]);
 
-  const seekTo = (time: number) => {
-    const normalized = normalizeTimelineTime(time, timeEnd, timeDisplayModeRef.current);
+  const seekTo = (time: number, policy: TimelineSeekPolicy = "unsnapped") => {
+    if (!controlsEnabled) return;
+    const normalized = resolveTimelineSeekTime(time, timeEnd, policy, TIMELINE_FPS);
     const snapshot = nativePlaybackRef.current;
     if (snapshot) {
       nativePlaybackRef.current = { ...snapshot, time: normalized, sampledAtUnixMs: Date.now() };
@@ -827,26 +829,22 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
     const next = timeDisplayModeRef.current === "frames" ? "seconds" : "frames";
     timeDisplayModeRef.current = next;
     setTimeDisplayMode(next);
-    const normalized = normalizeTimelineTime(playheadTimeRef.current, timeEnd, next);
-    if (Math.abs(normalized - playheadTimeRef.current) > 0.000001) {
-      seekTo(normalized);
-    } else {
-      presentPlayhead(normalized);
-      setPlayheadTime(normalized);
-    }
+    presentPlayhead(playheadTimeRef.current);
   };
   const seekFromTimelinePosition = (clientX: number, target: HTMLElement) => {
     const rect = target.getBoundingClientRect();
     const scrollLeft = canvasViewportRef.current?.scrollLeft ?? 0;
-    seekTo((clientX - rect.left + scrollLeft) / pixelsPerSecond);
+    const policy: TimelineSeekPolicy = timeDisplayModeRef.current === "frames" ? "frame-snap" : "unsnapped";
+    seekTo((clientX - rect.left + scrollLeft) / pixelsPerSecond, policy);
   };
   const seekFromCompactPosition = (clientX: number, target: HTMLElement) => {
     const rect = target.getBoundingClientRect();
     if (rect.width <= 0) return;
-    seekTo(((clientX - rect.left) / rect.width) * timeEnd);
+    const policy: TimelineSeekPolicy = timeDisplayModeRef.current === "frames" ? "frame-snap" : "unsnapped";
+    seekTo(((clientX - rect.left) / rect.width) * timeEnd, policy);
   };
   const beginTimelineScrub = (event: PointerEvent<HTMLElement>) => {
-    if (event.button !== 0) return;
+    if (!controlsEnabled || event.button !== 0) return;
     scrubbingRef.current = true;
     event.currentTarget.setPointerCapture(event.pointerId);
     seekFromTimelinePosition(event.clientX, event.currentTarget);
@@ -857,7 +855,7 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
     seekFromTimelinePosition(event.clientX, event.currentTarget);
   };
   const beginCompactScrub = (event: PointerEvent<HTMLElement>) => {
-    if (event.button !== 0) return;
+    if (!controlsEnabled || event.button !== 0) return;
     scrubbingRef.current = true;
     event.currentTarget.setPointerCapture(event.pointerId);
     seekFromCompactPosition(event.clientX, event.currentTarget);
@@ -907,19 +905,20 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
           </div>
           <div className="timeline-panel__toolbar timeline-panel__compact-toolbar">
             <div className="timeline-panel__compact-controls">
-              <button className="timeline-transport" type="button" aria-label="Go to start" onClick={() => jumpTo(0)}>◀|</button>
-              <button className="timeline-transport" type="button" aria-label="Previous frame" onClick={() => nudgePlayhead(-1 / TIMELINE_FPS)}>◀</button>
+              <button className="timeline-transport" type="button" aria-label="Go to start" disabled={!controlsEnabled} onClick={() => jumpTo(0)}>◀|</button>
+              <button className="timeline-transport" type="button" aria-label="Previous frame" disabled={!controlsEnabled} onClick={() => nudgePlayhead(-1 / TIMELINE_FPS)}>◀</button>
               <button
                 className="timeline-transport timeline-transport--play"
                 type="button"
                 aria-label={isPlaying ? "Pause" : "Play"}
                 aria-pressed={isPlaying}
+                disabled={!controlsEnabled}
                 onClick={togglePlayback}
               >
                 {isPlaying ? "Ⅱ" : "▶"}
               </button>
-              <button className="timeline-transport" type="button" aria-label="Next frame" onClick={() => nudgePlayhead(1 / TIMELINE_FPS)}>▶</button>
-              <button className="timeline-transport" type="button" aria-label="Go to end" onClick={() => jumpTo(timeEnd)}>▶|</button>
+              <button className="timeline-transport" type="button" aria-label="Next frame" disabled={!controlsEnabled} onClick={() => nudgePlayhead(1 / TIMELINE_FPS)}>▶</button>
+              <button className="timeline-transport" type="button" aria-label="Go to end" disabled={!controlsEnabled} onClick={() => jumpTo(timeEnd)}>▶|</button>
               <button
                 className="timeline-panel__compact-readout timeline-panel__time-toggle"
                 type="button"
@@ -928,7 +927,7 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
                 title="Click to switch between frames and seconds"
                 onClick={toggleTimeDisplayMode}
               >
-                {formatCompactTimelineReadout(playheadTime, timeDisplayMode)}
+                {formatCompactTimelineReadout(playheadTime, timeEnd, timeDisplayMode)}
               </button>
               <span className="timeline-panel__fps">{TIMELINE_FPS} fps</span>
               <button
@@ -937,7 +936,9 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
                 aria-label="Loop"
                 title={loop ? "Loop: On" : "Loop: Off"}
                 aria-pressed={loop}
+                disabled={!controlsEnabled}
                 onClick={() => {
+                  if (!controlsEnabled) return;
                   const next = !loop;
                   const snapshot = nativePlaybackRef.current;
                   if (snapshot) nativePlaybackRef.current = { ...snapshot, looping: next };
@@ -1065,28 +1066,31 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
         </div>
         <div className="timeline-panel__toolbar">
           <div className="timeline-panel__tools">
-          <button className="timeline-transport" type="button" aria-label="Go to start" onClick={() => jumpTo(0)}>◀|</button>
-          <button className="timeline-transport" type="button" aria-label="Previous key" onClick={jumpToPreviousKey}>◆◀</button>
-          <button className="timeline-transport" type="button" aria-label="Previous frame" onClick={() => nudgePlayhead(-1 / TIMELINE_FPS)}>◀</button>
+          <button className="timeline-transport" type="button" aria-label="Go to start" disabled={!controlsEnabled} onClick={() => jumpTo(0)}>◀|</button>
+          <button className="timeline-transport" type="button" aria-label="Previous key" disabled={!controlsEnabled} onClick={jumpToPreviousKey}>◆◀</button>
+          <button className="timeline-transport" type="button" aria-label="Previous frame" disabled={!controlsEnabled} onClick={() => nudgePlayhead(-1 / TIMELINE_FPS)}>◀</button>
           <button
             className="timeline-transport timeline-transport--play"
             type="button"
             aria-label={isPlaying ? "Pause" : "Play"}
             aria-pressed={isPlaying}
+            disabled={!controlsEnabled}
             onClick={togglePlayback}
           >
             {isPlaying ? "Ⅱ" : "▶"}
           </button>
-          <button className="timeline-transport" type="button" aria-label="Next frame" onClick={() => nudgePlayhead(1 / TIMELINE_FPS)}>▶</button>
-          <button className="timeline-transport" type="button" aria-label="Next key" onClick={jumpToNextKey}>▶◆</button>
-          <button className="timeline-transport" type="button" aria-label="Go to end" onClick={() => jumpTo(timeEnd)}>▶|</button>
+          <button className="timeline-transport" type="button" aria-label="Next frame" disabled={!controlsEnabled} onClick={() => nudgePlayhead(1 / TIMELINE_FPS)}>▶</button>
+          <button className="timeline-transport" type="button" aria-label="Next key" disabled={!controlsEnabled} onClick={jumpToNextKey}>▶◆</button>
+          <button className="timeline-transport" type="button" aria-label="Go to end" disabled={!controlsEnabled} onClick={() => jumpTo(timeEnd)}>▶|</button>
           <button
             className={`timeline-transport timeline-tool--loop${loop ? " timeline-tool--active" : ""}`}
             type="button"
             aria-label="Loop"
             title={loop ? "Loop: On" : "Loop: Off"}
             aria-pressed={loop}
+            disabled={!controlsEnabled}
             onClick={() => {
+              if (!controlsEnabled) return;
               const next = !loop;
               const snapshot = nativePlaybackRef.current;
               if (snapshot) nativePlaybackRef.current = { ...snapshot, looping: next };
@@ -1111,7 +1115,7 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
             className={`timeline-tool timeline-tool--range${rangeEnabled ? " timeline-tool--active" : ""}`}
             type="button"
             aria-pressed={rangeEnabled}
-            disabled={nativePlayback !== null}
+            disabled={!controlsEnabled || nativePlayback !== null}
             title={nativePlayback ? "Range playback is not connected to the Native player yet" : undefined}
             onClick={() => setRangeEnabled((enabled) => !enabled)}
           >
@@ -1138,7 +1142,7 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
                 max={rangeEnd}
                 step="0.1"
                 value={rangeStart}
-                disabled={!rangeEnabled}
+                disabled={!rangeEnabled || !controlsEnabled}
                 onChange={(event) => setRangeStart(Math.max(0, Math.min(rangeEnd - 0.1, event.currentTarget.valueAsNumber || 0)))}
               />
               <span>–</span>
@@ -1148,7 +1152,7 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
                 max={timeEnd}
                 step="0.1"
                 value={rangeEnd}
-                disabled={!rangeEnabled}
+                disabled={!rangeEnabled || !controlsEnabled}
                 onChange={(event) => setRangeEnd(Math.min(timeEnd, Math.max(rangeStart + 0.1, event.currentTarget.valueAsNumber || timeEnd)))}
               />
             </label>

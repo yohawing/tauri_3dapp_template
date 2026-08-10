@@ -6,7 +6,6 @@ import {
   useSceneProjection,
 } from "../scene/adapters/sceneProjectionDataSource";
 import type {
-  SceneNodeKind,
   SceneProjection,
   SelectedSceneNode,
 } from "../scene/core/projection";
@@ -35,11 +34,6 @@ interface PaneModel {
     direction: Point3Value;
     enabled: boolean;
     castsShadows: boolean;
-  };
-  rendering: {
-    shading: "Smooth" | "Flat";
-    castShadows: boolean;
-    layer: "Default";
   };
 }
 
@@ -120,11 +114,6 @@ function createPaneModel(selected: SelectedSceneNode): PaneModel {
           castsShadows: selected.light.castsShadows,
         }
       : undefined,
-    rendering: {
-      shading: "Smooth",
-      castShadows: true,
-      layer: "Default",
-    },
   };
 }
 
@@ -298,37 +287,16 @@ function addLightFolder(
   });
 }
 
-function addRenderingFolder(pane: Pane, model: PaneModel, bindings: Refreshable[]): void {
-  const folder = pane.addFolder({ title: "Rendering", expanded: true });
-  track(
-    bindings,
-    folder.addBinding(model.rendering, "shading", {
-      label: "Shading",
-      options: { Smooth: "Smooth", Flat: "Flat" },
-    }),
-  );
-  track(bindings, folder.addBinding(model.rendering, "castShadows", { label: "Cast shadows" }));
-  track(
-    bindings,
-    folder.addBinding(model.rendering, "layer", {
-      label: "Layer",
-      options: { Default: "Default" },
-    }),
-  );
-}
-
 function TweakpaneInspector({
   selected,
-  nodeKind,
   materialError,
 }: {
   selected: SelectedSceneNode;
-  nodeKind: SceneNodeKind;
   materialError?: string;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const sessionRef = useRef<PaneSession | null>(null);
-  const paneSignature = `${selected.id}:${nodeKind}:${selected.material ? "material" : ""}:${selected.light?.lightType ?? ""}:${selected.light?.direction ? "direction" : ""}`;
+  const paneSignature = `${selected.id}:${selected.material ? "material" : ""}:${selected.light?.lightType ?? ""}:${selected.light?.direction ? "direction" : ""}`;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -341,7 +309,6 @@ function TweakpaneInspector({
     addTransformFolder(pane, model, bindings);
     addLightFolder(pane, model, selected, bindings);
     addMaterialFolder(pane, model, selected, bindings);
-    if (nodeKind === "mesh") addRenderingFolder(pane, model, bindings);
 
     const session: PaneSession = { pane, nodeId: selected.id, model, bindings };
     sessionRef.current = session;
@@ -395,7 +362,6 @@ export function Inspector() {
     <div className="inspector-panel">
       <div className="inspector-panel__header" role="tablist" aria-label="Inspector view">
         <button className="inspector-panel__tab inspector-panel__tab--active" type="button" role="tab" aria-selected="true">Inspector</button>
-        <button className="inspector-panel__tab" type="button" role="tab" aria-selected="false">Render</button>
       </div>
       {!selected || !summary ? null : (
         <div className="inspector-selection">
@@ -410,7 +376,6 @@ export function Inspector() {
           <TweakpaneInspector
             key={selected.id}
             selected={selected}
-            nodeKind={summary.kind}
             materialError={materialError}
           />
         )}

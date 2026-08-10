@@ -29,6 +29,15 @@ pub struct SceneFileState {
     inner: Mutex<SceneFileInner>,
 }
 
+/// Result of the narrow persistent visibility mutation. Built-in nodes,
+/// bones, and IDs that are not present in the open document intentionally
+/// return `NotPersistent` so callers can keep those edits renderer-only.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SceneVisibilityMutation {
+    Updated { previous: bool },
+    NotPersistent,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SceneFileStatus {
@@ -49,6 +58,63 @@ impl SceneFileState {
 
     pub fn status(&self) -> SceneFileStatus {
         status_from_inner(&self.inner.lock().unwrap())
+    }
+
+    /// Update the visibility of one existing document-backed runtime
+    /// instance. No new IDs are accepted and transient renderer nodes are not
+    /// represented by this state. A successful update bumps the document
+    /// revision exactly once.
+    #[allow(dead_code)]
+    pub(crate) fn set_instance_visibility(
+        &self,
+        instance_id: &str,
+        visible: bool,
+    ) -> SceneVisibilityMutation {
+        let mut inner = self.inner.lock().unwrap();
+        set_instance_visibility_locked(&mut inner, instance_id, visible)
+    }
+
+    /// Apply a document visibility update and renderer mutation while holding
+    /// the document lock. This keeps rollback atomic with respect to Save and
+    /// other SceneFileState callers: a renderer rejection restores both the
+    /// previous value and the revision before returning the error.
+    pub(crate) fn transact_instance_visibility<F>(
+        &self,
+        instance_id: &str,
+        visible: bool,
+        apply_renderer: F,
+    ) -> Result<SceneVisibilityMutation, String>
+    where
+        F: FnOnce() -> Result<(), String>,
+    {
+        let mut inner = self.inner.lock().unwrap();
+        let mutation = set_instance_visibility_locked(&mut inner, instance_id, visible);
+        let SceneVisibilityMutation::Updated { previous } = mutation else {
+            return Ok(mutation);
+        };
+
+        if let Err(error) = apply_renderer() {
+            let current = inner
+                .current
+                .as_mut()
+                .and_then(|document| {
+                    document
+                        .document
+                        .instances
+                        .iter_mut()
+                        .find(|instance| instance.id == instance_id)
+                })
+                .ok_or_else(|| {
+                    format!(
+                        "Scene instance '{instance_id}' disappeared while rolling back visibility"
+                    )
+                })?;
+            current.visible = previous;
+            inner.revision = inner.revision.saturating_sub(1);
+            return Err(error);
+        }
+
+        Ok(SceneVisibilityMutation::Updated { previous })
     }
 
     fn document_snapshot(&self) -> Option<(Scene, Option<PathBuf>)> {
@@ -94,6 +160,27 @@ impl SceneFileState {
         inner.revision = inner.revision.saturating_add(1);
         Ok(status_from_inner(&inner))
     }
+}
+
+fn set_instance_visibility_locked(
+    inner: &mut SceneFileInner,
+    instance_id: &str,
+    visible: bool,
+) -> SceneVisibilityMutation {
+    let Some(instance) = inner.current.as_mut().and_then(|current| {
+        current
+            .document
+            .instances
+            .iter_mut()
+            .find(|instance| instance.id == instance_id)
+    }) else {
+        return SceneVisibilityMutation::NotPersistent;
+    };
+
+    let previous = instance.visible;
+    instance.visible = visible;
+    inner.revision = inner.revision.saturating_add(1);
+    SceneVisibilityMutation::Updated { previous }
 }
 
 #[tauri::command]
@@ -444,6 +531,46 @@ mod tests {
         }
     }
 
+    fn document_with_instances() -> Scene {
+        Scene {
+            version: 1,
+            name: Some("Visibility".into()),
+            assets: vec![SceneAsset {
+                id: "hero".into(),
+                kind: "gltf".into(),
+                path: "hero.glb".into(),
+            }],
+            instances: vec![
+                SceneInstance {
+                    id: "hero-1".into(),
+                    asset: "hero".into(),
+                    transform: SceneTransform {
+                        translation: [0.0; 3],
+                        rotation: [0.0, 0.0, 0.0, 1.0],
+                        scale: [1.0; 3],
+                    },
+                    visible: true,
+                },
+                SceneInstance {
+                    id: "hero-2".into(),
+                    asset: "hero".into(),
+                    transform: SceneTransform {
+                        translation: [1.0, 0.0, 0.0],
+                        rotation: [0.0, 0.0, 0.0, 1.0],
+                        scale: [1.0; 3],
+                    },
+                    visible: true,
+                },
+            ],
+            camera: Some(SceneCamera {
+                target: [3.0, 2.0, 1.0],
+                yaw: -0.4,
+                pitch: 0.2,
+                distance: 6.0,
+            }),
+        }
+    }
+
     #[test]
     fn scene_camera_state_converts_and_preserves_values() {
         let state = scene_camera_state(&document(SceneCamera {
@@ -631,6 +758,91 @@ mod tests {
         assert_eq!(state.status().revision, before.revision);
         assert_eq!(state.status().display_name, "Current");
         fs::remove_dir_all(root).expect("remove temp directory");
+    }
+
+    #[test]
+    fn instance_visibility_mutation_updates_only_existing_instance_and_revision() {
+        let state = SceneFileState::default();
+        let opened = state.set_document(document_with_instances(), None);
+
+        assert_eq!(
+            state.set_instance_visibility("hero-1", false),
+            SceneVisibilityMutation::Updated { previous: true }
+        );
+        assert_eq!(state.status().revision, opened.revision + 1);
+        let (document, _) = state.document_snapshot().expect("document remains open");
+        assert!(!document.instances[0].visible);
+        assert!(document.instances[1].visible);
+        assert_eq!(document.camera.as_ref().unwrap().target, [3.0, 2.0, 1.0]);
+
+        assert_eq!(
+            state.set_instance_visibility("does-not-exist", false),
+            SceneVisibilityMutation::NotPersistent
+        );
+        assert_eq!(state.status().revision, opened.revision + 1);
+        let (after_missing, _) = state.document_snapshot().expect("document remains open");
+        assert_eq!(after_missing, document);
+    }
+
+    #[test]
+    fn instance_visibility_save_reload_preserves_false_without_other_document_changes() {
+        let root = temp_path("visibility-round-trip");
+        fs::create_dir_all(&root).expect("create temp directory");
+        let asset = root.join("hero.glb");
+        fs::write(&asset, b"fixture").expect("create asset fixture");
+        let path = root.join("visibility.scene.json");
+        let mut source = document_with_instances();
+        source.assets[0].path = asset.to_string_lossy().into_owned();
+        let state = SceneFileState::default();
+        state.set_document(source.clone(), Some(path.clone()));
+        assert_eq!(
+            state.set_instance_visibility("hero-1", false),
+            SceneVisibilityMutation::Updated { previous: true }
+        );
+        let before_save = state.document_snapshot().expect("document remains open").0;
+
+        state
+            .save(None, camera_state())
+            .expect("save changed visibility");
+        let reloaded = Scene::load(&path).expect("reload saved scene");
+        assert!(!reloaded.instances[0].visible);
+        assert!(reloaded.instances[1].visible);
+        assert_eq!(reloaded.assets, before_save.assets);
+        assert_eq!(reloaded.camera, Some(document_camera()));
+        assert_eq!(
+            reloaded.instances[0].transform,
+            before_save.instances[0].transform
+        );
+        fs::remove_dir_all(root).expect("remove temp directory");
+    }
+
+    #[test]
+    fn rejected_renderer_visibility_rolls_back_value_and_revision() {
+        let state = SceneFileState::default();
+        let opened = state.set_document(document_with_instances(), None);
+        let error = state
+            .transact_instance_visibility("hero-1", false, || Err("renderer rejected".into()))
+            .expect_err("renderer rejection must fail transaction");
+        assert_eq!(error, "renderer rejected");
+        assert_eq!(state.status().revision, opened.revision);
+        let (document, _) = state.document_snapshot().expect("document remains open");
+        assert!(document.instances[0].visible);
+        assert!(document.instances[1].visible);
+    }
+
+    #[test]
+    fn missing_instance_never_invokes_renderer_transaction() {
+        let state = SceneFileState::default();
+        state.set_document(document_with_instances(), None);
+        let mut renderer_called = false;
+        let outcome = state
+            .transact_instance_visibility("missing", false, || {
+                renderer_called = true;
+                Ok(())
+            })
+            .expect("missing instance is a non-persistent no-op");
+        assert_eq!(outcome, SceneVisibilityMutation::NotPersistent);
+        assert!(!renderer_called);
     }
 
     fn document_camera() -> SceneCamera {

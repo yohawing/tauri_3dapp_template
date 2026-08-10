@@ -482,6 +482,14 @@ impl Renderer {
             || self.runtime_bone(node_id).is_some()
     }
 
+    /// Return true only for top-level runtime instances loaded from the
+    /// current Scene document. Built-in nodes and generated bone IDs are
+    /// intentionally excluded so callers can persist only document-backed
+    /// visibility edits.
+    pub fn is_runtime_instance(&self, node_id: &str) -> bool {
+        is_runtime_instance_id(&self.instances, node_id)
+    }
+
     pub fn default_node_id(&self) -> &str {
         &self.default_node_id
     }
@@ -734,6 +742,21 @@ impl Renderer {
             light: project_light(node),
         })
     }
+}
+
+fn is_runtime_instance_id(instances: &[RuntimeInstance], node_id: &str) -> bool {
+    if matches!(node_id, SCENE_ID | KEY_LIGHT_ID | CUBE_ID) {
+        return false;
+    }
+    if instances.iter().any(|instance| {
+        instance
+            .bones
+            .iter()
+            .any(|bone| runtime_bone_id(&instance.id, bone.source_index) == node_id)
+    }) {
+        return false;
+    }
+    instances.iter().any(|instance| instance.id == node_id)
 }
 
 fn project_light(node: &SceneNode3d) -> Option<SceneLight> {
@@ -1403,6 +1426,37 @@ mod tests {
         assert_eq!(summaries[1].kind, "bone");
         assert_eq!(summaries[2].id, "character::bone::9");
         assert_eq!(summaries[2].parent.as_deref(), Some("character::bone::4"));
+    }
+
+    #[test]
+    fn runtime_instance_classifier_excludes_builtins_and_bones() {
+        let instances = vec![
+            RuntimeInstance {
+                id: "character".to_string(),
+                root: SceneNode3d::empty(),
+                player: AnimationPlayer::new(Vec::new()),
+                bone_edges: Vec::new(),
+                bones: vec![RuntimeBone {
+                    source_index: 4,
+                    parent_source_index: None,
+                    label: "Root".to_string(),
+                    node: SceneNode3d::empty(),
+                }],
+            },
+            RuntimeInstance {
+                id: CUBE_ID.to_string(),
+                root: SceneNode3d::empty(),
+                player: AnimationPlayer::new(Vec::new()),
+                bone_edges: Vec::new(),
+                bones: Vec::new(),
+            },
+        ];
+
+        assert!(is_runtime_instance_id(&instances, "character"));
+        assert!(!is_runtime_instance_id(&instances, "character::bone::4"));
+        assert!(!is_runtime_instance_id(&instances, SCENE_ID));
+        assert!(!is_runtime_instance_id(&instances, KEY_LIGHT_ID));
+        assert!(!is_runtime_instance_id(&instances, CUBE_ID));
     }
 
     #[test]

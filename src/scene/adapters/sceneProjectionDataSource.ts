@@ -70,31 +70,55 @@ export class SceneProjectionDataSource {
         }, 2500);
       }
       if (import.meta.env.VITE_VISIBILITY_SELF_TEST) {
-        this.scheduleVisibilitySelfTest();
+        this.scheduleVisibilitySelfTest(import.meta.env.VITE_VISIBILITY_SELF_TEST === "instance-hide");
       }
     }
   }
 
-  private scheduleVisibilitySelfTest(): void {
+  private scheduleVisibilitySelfTest(instanceMode: boolean): void {
+    if (instanceMode) {
+      const maxAttempts = 12;
+      const retryDelayMs = 250;
+      const findInstance = (attempt: number): void => {
+        const nodeId = this.snapshot.nodes.find(
+          (node) => node.parent === "scene" && node.kind === "mesh" && node.id !== "cube",
+        )?.id;
+        if (nodeId) {
+          console.log(`[visibility-self-test] step=hide instance=${nodeId}`);
+          void this.dispatch({ type: "setVisibility", nodeId, visible: false });
+          window.setTimeout(() => this.logVisibilitySelfTestResult("hide", nodeId), 1500);
+          return;
+        }
+        if (attempt < maxAttempts) {
+          window.setTimeout(() => findInstance(attempt + 1), retryDelayMs);
+          return;
+        }
+        console.log("[visibility-self-test] step=hide instance=missing");
+      };
+      window.setTimeout(() => findInstance(0), 2500);
+      return;
+    }
+
     window.setTimeout(() => {
-      console.log("[visibility-self-test] step=hide cube");
-      void this.dispatch({ type: "setVisibility", nodeId: "cube", visible: false });
+      const nodeId = "cube";
+      console.log(`[visibility-self-test] step=hide cube=${nodeId}`);
+      void this.dispatch({ type: "setVisibility", nodeId, visible: false });
+      window.setTimeout(() => this.logVisibilitySelfTestResult("hide", nodeId), 1500);
+      window.setTimeout(() => {
+        console.log(`[visibility-self-test] step=show cube=${nodeId}`);
+        void this.dispatch({ type: "setVisibility", nodeId, visible: true });
+      }, 1500);
+      window.setTimeout(() => this.logVisibilitySelfTestResult("show", nodeId), 3000);
     }, 2500);
-    window.setTimeout(() => {
-      this.logVisibilitySelfTestResult("hide");
-      console.log("[visibility-self-test] step=show cube");
-      void this.dispatch({ type: "setVisibility", nodeId: "cube", visible: true });
-    }, 4000);
-    window.setTimeout(() => this.logVisibilitySelfTestResult("show"), 5500);
   }
 
-  private logVisibilitySelfTestResult(step: string): void {
+  private logVisibilitySelfTestResult(step: string, nodeId: string): void {
     const result = [...this.snapshot.commandResults]
       .reverse()
-      .find((candidate) => candidate.nodeId === "cube" && candidate.property === "visibility");
-    const visible = this.snapshot.nodes.find((node) => node.id === "cube")?.visible;
+      .find((candidate) => candidate.nodeId === nodeId && candidate.property === "visibility");
+    const visible = this.snapshot.nodes.find((node) => node.id === nodeId)?.visible;
     const message =
-      `[visibility-self-test] step=${step} sequence=${result?.sequence ?? "pending"} ` +
+      `[visibility-self-test] step=${step} node=${nodeId} sequence=${result?.sequence ?? "pending"} ` +
       `applied=${result?.applied ?? "pending"} visible=${visible ?? "missing"}`;
     console.log(message);
     window.dispatchEvent(
