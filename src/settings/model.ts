@@ -1,5 +1,8 @@
+import { isBoundedUtf8String, isFiniteF32 } from "../wireValidation";
+
 export const SETTINGS_STORAGE_KEY = "tauri3d.settings";
 export const SETTINGS_VERSION = 4;
+const MAX_SETTINGS_STORAGE_BYTES = 256 * 1024;
 const LEGACY_SETTINGS_VERSIONS = [1, 2, 3] as const;
 
 export const CONSOLE_LEVELS = ["info", "warn", "error"] as const;
@@ -10,6 +13,32 @@ export interface ViewportEnvironmentSettings {
   path: string;
   rotationDegrees: number;
   intensity: number;
+}
+
+/**
+ * Validate a value returned across the Tauri environment-settings boundary.
+ * Persisted settings are normalized field-by-field, but an IPC response is
+ * accepted atomically so a malformed acknowledgement cannot poison the live
+ * viewport state.
+ */
+export function normalizeViewportEnvironmentSettings(
+  value: unknown,
+): ViewportEnvironmentSettings | null {
+  if (!isRecord(value)) return null;
+  const { enabled, path, rotationDegrees, intensity } = value;
+  if (
+    typeof enabled !== "boolean" ||
+    typeof path !== "string" ||
+    !isFiniteF32(rotationDegrees) ||
+    rotationDegrees < -180 ||
+    rotationDegrees > 180 ||
+    !isFiniteF32(intensity) ||
+    intensity < 0 ||
+    intensity > 8
+  ) {
+    return null;
+  }
+  return { enabled, path, rotationDegrees, intensity };
 }
 
 export type ViewportTonemap = "none" | "reinhard" | "aces";
@@ -163,33 +192,31 @@ export function normalizeSettings(value: unknown): Settings {
   if (typeof environment?.enabled === "boolean") {
     defaults.viewport.environment.enabled = environment.enabled;
   }
-  if (typeof environment?.path === "string") {
+  if (isBoundedUtf8String(environment?.path, 4_096, true)) {
     defaults.viewport.environment.path = environment.path;
   }
   if (
-    typeof environment?.rotationDegrees === "number" &&
-    Number.isFinite(environment.rotationDegrees) &&
+    isFiniteF32(environment?.rotationDegrees) &&
     environment.rotationDegrees >= -180 &&
     environment.rotationDegrees <= 180
   ) {
     defaults.viewport.environment.rotationDegrees = environment.rotationDegrees;
   }
   if (
-    typeof environment?.intensity === "number" &&
-    Number.isFinite(environment.intensity) &&
+    isFiniteF32(environment?.intensity) &&
     environment.intensity >= 0 &&
     environment.intensity <= 8
   ) {
     defaults.viewport.environment.intensity = environment.intensity;
   }
   const lighting = isRecord(viewport?.lighting) ? viewport.lighting : undefined;
-  if (typeof lighting?.exposure === "number" && Number.isFinite(lighting.exposure) && lighting.exposure >= 0 && lighting.exposure <= 16) {
+  if (isFiniteF32(lighting?.exposure) && lighting.exposure >= 0 && lighting.exposure <= 16) {
     defaults.viewport.lighting.exposure = lighting.exposure;
   }
   if (isTonemap(lighting?.tonemap)) {
     defaults.viewport.lighting.tonemap = lighting.tonemap;
   }
-  if (typeof lighting?.ambientIntensity === "number" && Number.isFinite(lighting.ambientIntensity) && lighting.ambientIntensity >= 0 && lighting.ambientIntensity <= 4) {
+  if (isFiniteF32(lighting?.ambientIntensity) && lighting.ambientIntensity >= 0 && lighting.ambientIntensity <= 4) {
     defaults.viewport.lighting.ambientIntensity = lighting.ambientIntensity;
   }
   if (isHexColor(lighting?.ambientColor)) {
@@ -201,7 +228,7 @@ export function normalizeSettings(value: unknown): Settings {
   if (isShadowResolution(lighting?.shadowResolution)) {
     defaults.viewport.lighting.shadowResolution = lighting.shadowResolution;
   }
-  if (typeof lighting?.shadowSoftness === "number" && Number.isFinite(lighting.shadowSoftness) && lighting.shadowSoftness >= 0 && lighting.shadowSoftness <= 8) {
+  if (isFiniteF32(lighting?.shadowSoftness) && lighting.shadowSoftness >= 0 && lighting.shadowSoftness <= 8) {
     defaults.viewport.lighting.shadowSoftness = lighting.shadowSoftness;
   }
   if (isBackgroundMode(lighting?.backgroundMode)) {
@@ -249,6 +276,12 @@ export function loadSettings(storage?: SettingsStorage | null): Settings {
     return cloneDefaults();
   }
   if (serialized === null) return cloneDefaults();
+  if (
+    serialized.length > MAX_SETTINGS_STORAGE_BYTES ||
+    new TextEncoder().encode(serialized).byteLength > MAX_SETTINGS_STORAGE_BYTES
+  ) {
+    return cloneDefaults();
+  }
 
   try {
     const payload: unknown = JSON.parse(serialized);

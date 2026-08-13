@@ -20,15 +20,16 @@ function deferred<T>() {
 }
 
 async function settle(): Promise<void> {
-  for (let index = 0; index < 5; index += 1) {
-    await Promise.resolve();
-  }
+  // Let the transition's promise chain drain without coupling assertions to
+  // an implementation-specific number of microtasks.
+  await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
 function makeDependencies(overrides: Partial<BackendTransitionDependencies> = {}) {
   const calls = {
     deactivate: 0,
     activate: 0,
+    prepares: 0,
     read: 0,
     writes: [] as CameraState[],
     mounts: 0,
@@ -55,9 +56,13 @@ function makeDependencies(overrides: Partial<BackendTransitionDependencies> = {}
     writeCamera: vi.fn(async (camera: CameraState) => {
       calls.writes.push(camera);
     }),
-    mountCanvas: vi.fn(() => {
-      calls.mounts += 1;
-      return handle;
+    prepareCanvas: vi.fn(async () => {
+      calls.prepares += 1;
+      return (camera: CameraState) => {
+        void camera;
+        calls.mounts += 1;
+        return handle;
+      };
     }),
     reportError: vi.fn((error: unknown) => {
       calls.errors.push(error);
@@ -85,6 +90,46 @@ describe("BackendTransitionController", () => {
     expect(calls.errors).toEqual([]);
   });
 
+  it("waits for the previous Native input tail before deactivating", async () => {
+    const inputIdle = deferred<void>();
+    const { calls, dependencies } = makeDependencies({
+      waitForViewportInputIdle: vi.fn(() => inputIdle.promise),
+    });
+    const controller = new BackendTransitionController(dependencies);
+
+    controller.transition("canvas");
+    await settle();
+
+    expect(calls.deactivate).toBe(0);
+    expect(calls.mounts).toBe(0);
+
+    inputIdle.resolve();
+    await settle();
+
+    expect(calls.deactivate).toBe(1);
+    expect(calls.mounts).toBe(1);
+    expect(calls.errors).toEqual([]);
+  });
+
+  it("abandons a Canvas transition if Native wins while input is draining", async () => {
+    const inputIdle = deferred<void>();
+    const { calls, dependencies } = makeDependencies({
+      waitForViewportInputIdle: vi.fn(() => inputIdle.promise),
+    });
+    const controller = new BackendTransitionController(dependencies);
+
+    controller.transition("canvas");
+    await settle();
+    controller.transition("native");
+    inputIdle.resolve();
+    await settle();
+
+    expect(calls.deactivate).toBe(0);
+    expect(calls.mounts).toBe(0);
+    expect(calls.activate).toBe(1);
+    expect(calls.errors).toEqual([]);
+  });
+
   it("restores Native when cancelled after deactivation but before camera read", async () => {
     const read = deferred<CameraState>();
     const { calls, dependencies } = makeDependencies({
@@ -106,6 +151,99 @@ describe("BackendTransitionController", () => {
     expect(calls.mounts).toBe(0);
     expect(calls.activate).toBe(1);
     expect(calls.writes).toEqual([]);
+  });
+
+  it("does not mount when cancelled while Canvas module preparation is pending", async () => {
+    const prepare = deferred<(camera: CameraState) => CanvasBackendHandle>();
+    const { calls, dependencies, handle } = makeDependencies({
+      prepareCanvas: vi.fn(() => {
+        calls.prepares += 1;
+        return prepare.promise;
+      }),
+    });
+    const controller = new BackendTransitionController(dependencies);
+    const cleanup = controller.transition("canvas");
+    await settle();
+    expect(calls.prepares).toBe(1);
+
+    cleanup();
+    prepare.resolve(() => {
+      calls.mounts += 1;
+      return handle;
+    });
+    await settle();
+
+    expect(calls.mounts).toBe(0);
+    expect(calls.activate).toBe(1);
+    expect(calls.errors).toEqual([]);
+  });
+
+  it("does not mount a stale Canvas module after switching to Native", async () => {
+    const prepare = deferred<(camera: CameraState) => CanvasBackendHandle>();
+    const { calls, dependencies, handle } = makeDependencies({
+      prepareCanvas: vi.fn(() => {
+        calls.prepares += 1;
+        return prepare.promise;
+      }),
+    });
+    const controller = new BackendTransitionController(dependencies);
+    controller.transition("canvas");
+    await settle();
+    controller.transition("native");
+    await settle();
+
+    prepare.resolve(() => {
+      calls.mounts += 1;
+      return handle;
+    });
+    await settle();
+
+    expect(calls.mounts).toBe(0);
+    expect(calls.activate).toBe(1);
+    expect(calls.errors).toEqual([]);
+  });
+
+  it("restores Native when current Canvas module preparation rejects", async () => {
+    const prepare = deferred<(camera: CameraState) => CanvasBackendHandle>();
+    const error = new Error("canvas module load failed");
+    const { calls, dependencies } = makeDependencies({
+      prepareCanvas: vi.fn(() => {
+        calls.prepares += 1;
+        return prepare.promise;
+      }),
+    });
+    const controller = new BackendTransitionController(dependencies);
+    controller.transition("canvas");
+    await settle();
+
+    prepare.reject(error);
+    await settle();
+
+    expect(calls.mounts).toBe(0);
+    expect(calls.activate).toBe(1);
+    expect(calls.errors).toEqual([error]);
+  });
+
+  it("ignores a stale Canvas module preparation rejection", async () => {
+    const prepare = deferred<(camera: CameraState) => CanvasBackendHandle>();
+    const error = new Error("stale canvas module load failed");
+    const { calls, dependencies } = makeDependencies({
+      prepareCanvas: vi.fn(() => {
+        calls.prepares += 1;
+        return prepare.promise;
+      }),
+    });
+    const controller = new BackendTransitionController(dependencies);
+    controller.transition("canvas");
+    await settle();
+    controller.transition("native");
+    await settle();
+
+    prepare.reject(error);
+    await settle();
+
+    expect(calls.mounts).toBe(0);
+    expect(calls.errors).toEqual([]);
   });
 
   it("restores Native when cancellation wins before deactivation resolves", async () => {
@@ -166,12 +304,26 @@ describe("BackendTransitionController", () => {
     expect(calls.errors).toEqual([error]);
   });
 
+  it("does not prepare Canvas during a Native transition", async () => {
+    const { calls, dependencies } = makeDependencies();
+    const controller = new BackendTransitionController(dependencies);
+
+    controller.transition("native");
+    await settle();
+
+    expect(calls.prepares).toBe(0);
+    expect(calls.activate).toBe(1);
+  });
+
   it("reactivates the current generation when Canvas mounting throws", async () => {
     const error = new Error("mount failed");
     const { calls, dependencies } = makeDependencies({
-      mountCanvas: vi.fn(() => {
-        calls.mounts += 1;
-        throw error;
+      prepareCanvas: vi.fn(async () => {
+        calls.prepares += 1;
+        return () => {
+          calls.mounts += 1;
+          throw error;
+        };
       }),
     });
     const controller = new BackendTransitionController(dependencies);
@@ -249,6 +401,97 @@ describe("BackendTransitionController", () => {
     expect(calls.mounts).toBe(0);
   });
 
+  it("compensates a delayed Native activation after Canvas has mounted", async () => {
+    const activate = deferred<void>();
+    let activationCount = 0;
+    const { calls, dependencies } = makeDependencies({
+      activateNative: vi.fn(() => {
+        calls.activate += 1;
+        activationCount += 1;
+        return activationCount === 1 ? activate.promise : Promise.resolve();
+      }),
+    });
+    const controller = new BackendTransitionController(dependencies);
+
+    controller.transition("native");
+    await settle();
+    controller.transition("canvas");
+    await settle();
+
+    expect(calls.deactivate).toBe(1);
+    expect(calls.mounts).toBe(1);
+
+    activate.resolve();
+    await settle();
+
+    expect(calls.deactivate).toBe(2);
+    expect(calls.mounts).toBe(1);
+    expect(calls.errors).toEqual([]);
+  });
+
+  it("deduplicates late Native compensation with the current Canvas deactivation", async () => {
+    const activate = deferred<void>();
+    const deactivate = deferred<void>();
+    const { calls, dependencies } = makeDependencies({
+      activateNative: vi.fn(() => {
+        calls.activate += 1;
+        return activate.promise;
+      }),
+      deactivateNative: vi.fn(() => {
+        calls.deactivate += 1;
+        return deactivate.promise;
+      }),
+    });
+    const controller = new BackendTransitionController(dependencies);
+
+    controller.transition("native");
+    await settle();
+    controller.transition("canvas");
+    await settle();
+
+    expect(calls.deactivate).toBe(1);
+    expect(calls.mounts).toBe(0);
+
+    activate.resolve();
+    await settle();
+    expect(calls.deactivate).toBe(1);
+
+    deactivate.resolve();
+    await settle();
+
+    expect(calls.mounts).toBe(1);
+    expect(calls.errors).toEqual([]);
+  });
+
+  it("keeps late Native compensation behind the input idle fence", async () => {
+    const inputIdle = deferred<void>();
+    const activate = deferred<void>();
+    const { calls, dependencies } = makeDependencies({
+      waitForViewportInputIdle: vi.fn(() => inputIdle.promise),
+      activateNative: vi.fn(() => {
+        calls.activate += 1;
+        return activate.promise;
+      }),
+    });
+    const controller = new BackendTransitionController(dependencies);
+
+    controller.transition("native");
+    await settle();
+    controller.transition("canvas");
+    await settle();
+
+    activate.resolve();
+    await settle();
+    expect(calls.deactivate).toBe(0);
+
+    inputIdle.resolve();
+    await settle();
+
+    expect(calls.deactivate).toBe(1);
+    expect(calls.mounts).toBe(1);
+    expect(calls.errors).toEqual([]);
+  });
+
   it("makes a newer Canvas generation wait for late Native compensation", async () => {
     const firstDeactivate = deferred<void>();
     const compensationActivate = deferred<void>();
@@ -285,6 +528,7 @@ describe("BackendTransitionController", () => {
     expect(calls.mounts).toBe(0);
 
     compensationActivate.resolve();
+    await settle();
     await settle();
     expect(calls.deactivate).toBe(2);
     expect(calls.mounts).toBe(1);

@@ -24,4 +24,7 @@ artifacts/
 *.sln
 *.sw?
 
-TODO.md
+
+**/*.md
+!/README.md
+!docs/IDEA.md

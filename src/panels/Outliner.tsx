@@ -6,13 +6,17 @@ import {
   useSceneProjection,
 } from "../scene/adapters/sceneProjectionDataSource";
 import type { SceneNodeSummary } from "../scene/core/projection";
+import { boundSearchQuery, MAX_SEARCH_QUERY_BYTES, normalizeSearchQuery } from "../searchQuery";
 import "./Outliner.css";
 
 interface SceneNode extends SceneNodeSummary {
   children?: SceneNode[];
   uiHidden?: boolean;
-  toggleVisibility?: () => void;
+  toggleVisibility?: (node: SceneNodeSummary) => void;
 }
+
+export const MAX_OUTLINER_QUERY_BYTES = MAX_SEARCH_QUERY_BYTES;
+export const normalizeOutlinerQuery = normalizeSearchQuery;
 
 const kindMeta = {
   scene: { tag: "ROOT", color: "#d7a448" },
@@ -36,13 +40,15 @@ function VisibilityIcon({ hidden }: { hidden: boolean }) {
 
 function toTree(
   nodes: SceneNodeSummary[],
-  toggleVisibility: (nodeId: string) => void,
+  toggleVisibility: (node: SceneNodeSummary) => void,
   query: string,
 ): SceneNode[] {
   const byId = new Map(nodes.map((node) => [node.id, { ...node } as SceneNode]));
   byId.forEach((node) => {
     node.uiHidden = !node.visible;
-    node.toggleVisibility = () => toggleVisibility(node.id);
+    // Reuse one callback for every row; large scenes should not allocate one
+    // closure per node just to pass the id already present in the row data.
+    node.toggleVisibility = toggleVisibility;
   });
   const roots: SceneNode[] = [];
   byId.forEach((node) => {
@@ -56,7 +62,7 @@ function toTree(
     }
   });
 
-  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const normalizedQuery = normalizeOutlinerQuery(query);
   if (normalizedQuery.length === 0) return roots;
 
   const filterBranch = (node: SceneNode): SceneNode | null => {
@@ -86,15 +92,22 @@ function Node({ node, style, dragHandle }: NodeRendererProps<SceneNode>) {
         selectSceneNode(node.data.id);
       }}
     >
-      <span
-        className="outliner-row__caret"
-        onClick={(e) => {
-          e.stopPropagation();
-          node.toggle();
-        }}
-      >
-        {node.isInternal ? (node.isOpen ? "▾" : "▸") : ""}
-      </span>
+      {node.isInternal ? (
+        <button
+          type="button"
+          className="outliner-row__caret"
+          aria-label={`${node.isOpen ? "Collapse" : "Expand"} ${node.data.label}`}
+          aria-expanded={node.isOpen}
+          onClick={(event) => {
+            event.stopPropagation();
+            node.toggle();
+          }}
+        >
+          {node.isOpen ? "▾" : "▸"}
+        </button>
+      ) : (
+        <span className="outliner-row__caret" aria-hidden="true" />
+      )}
       <span className="outliner-row__kind" style={{ backgroundColor: meta.color }} />
       <span className="outliner-row__label">{node.data.label}</span>
       <span className="outliner-row__tag">{meta.tag}</span>
@@ -106,7 +119,7 @@ function Node({ node, style, dragHandle }: NodeRendererProps<SceneNode>) {
           title="Toggle visibility"
           onClick={(event) => {
             event.stopPropagation();
-            node.data.toggleVisibility?.();
+            node.data.toggleVisibility?.(node.data);
           }}
         >
           <VisibilityIcon hidden={hidden} />
@@ -153,10 +166,8 @@ export function Outliner() {
   const tree = useMemo(
     () => toTree(
       projection.nodes,
-      (nodeId) => {
-        const node = projection.nodes.find((candidate) => candidate.id === nodeId);
-        if (!node) return;
-        dispatchSceneCommand({ type: "setVisibility", nodeId, visible: !node.visible });
+      (node) => {
+        dispatchSceneCommand({ type: "setVisibility", nodeId: node.id, visible: !node.visible });
       },
       query,
     ),
@@ -192,13 +203,14 @@ export function Outliner() {
           value={query}
           placeholder="Search…"
           aria-label="Search scene nodes"
-          onChange={(event) => setQuery(event.currentTarget.value)}
+          onChange={(event) => setQuery(boundSearchQuery(event.currentTarget.value))}
         />
       </label>
       <div className="outliner-panel__body" ref={bodyRef}>
         {size && size.width > 0 && size.height > 0 && (
           <Tree<SceneNode>
             data={tree}
+            aria-label="Scene nodes"
             width={size.width}
             height={size.height}
             rowHeight={18}

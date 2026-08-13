@@ -1,7 +1,12 @@
 import * as THREE from "three";
 import { invoke } from "@tauri-apps/api/core";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { CanvasPerformanceSampler, parsePerformanceTarget } from "./performanceSampler";
+import {
+  CanvasPerformanceSampler,
+  parsePerformanceSampleFrames,
+  parsePerformanceTarget,
+  type PerformanceSummary,
+} from "./performanceSampler";
 
 /**
  * Fixed IPC shape shared with the Rust side (see src-tauri/src/protocol.rs
@@ -12,6 +17,29 @@ export interface CameraState {
   yaw: number;
   pitch: number;
   distance: number;
+}
+
+// Keep Canvas OrbitControls inside the Rust camera validator's handoff range.
+// CameraState is a shared wire contract; changing these values requires
+// coordinating src-tauri/src/camera.rs as well.
+export const CAMERA_PITCH_LIMIT = 1.55;
+export const CAMERA_MIN_DISTANCE = 0.5;
+export const CAMERA_MAX_DISTANCE = 100;
+export const CAMERA_MIN_POLAR_ANGLE = Math.PI / 2 - CAMERA_PITCH_LIMIT;
+export const CAMERA_MAX_POLAR_ANGLE = Math.PI / 2 + CAMERA_PITCH_LIMIT;
+
+interface OrbitControlBounds {
+  minDistance: number;
+  maxDistance: number;
+  minPolarAngle: number;
+  maxPolarAngle: number;
+}
+
+export function applyCanvasOrbitBounds(controls: OrbitControlBounds): void {
+  controls.minDistance = CAMERA_MIN_DISTANCE;
+  controls.maxDistance = CAMERA_MAX_DISTANCE;
+  controls.minPolarAngle = CAMERA_MIN_POLAR_ANGLE;
+  controls.maxPolarAngle = CAMERA_MAX_POLAR_ANGLE;
 }
 
 // Mirrors OrbitCamera::eye() in src-tauri/src/camera.rs exactly:
@@ -68,6 +96,90 @@ export interface CanvasBackendHandle {
   dispose: () => CameraState;
 }
 
+export interface CanvasRenderScheduler {
+  /** Render one frame for an explicit invalidation (or a control/resize event). */
+  invalidate: () => void;
+  /** Starts the continuous RAF loop used by the performance sampler. */
+  start: () => void;
+  /** Stops future frames, including callbacks already queued by the browser. */
+  dispose: () => void;
+}
+
+/** Keep optional performance reporting from escaping the render/RAF callback. */
+export function reportCanvasPerformanceSummary(
+  summary: PerformanceSummary,
+  report: (summary: PerformanceSummary) => unknown = (value) =>
+    invoke("report_performance_summary", { summary: value }),
+  onError: (error: unknown) => void = (error) =>
+    console.warn("[perf] failed to report Canvas performance summary:", error),
+): void {
+  const reportError = (error: unknown) => {
+    try {
+      onError(error);
+    } catch {
+      // Diagnostics must not create a second unhandled rejection.
+    }
+  };
+  try {
+    void Promise.resolve(report(summary)).catch(reportError);
+  } catch (error) {
+    reportError(error);
+  }
+}
+
+interface CanvasRenderSchedulerOptions {
+  render: (rafTimestamp?: number) => void;
+  continuous: boolean;
+  requestFrame?: (callback: FrameRequestCallback) => number;
+  cancelFrame?: (handle: number) => void;
+}
+
+/**
+ * Keeps the normal Canvas fallback invalidation-driven while retaining the
+ * continuous RAF required by the opt-in performance sampler. The injected RAF
+ * functions make the lifecycle deterministic without constructing WebGL in
+ * unit tests.
+ */
+export function createCanvasRenderScheduler({
+  render,
+  continuous,
+  requestFrame = window.requestAnimationFrame.bind(window),
+  cancelFrame = window.cancelAnimationFrame.bind(window),
+}: CanvasRenderSchedulerOptions): CanvasRenderScheduler {
+  let disposed = false;
+  let started = false;
+  let rafId: number | null = null;
+
+  const schedule = () => {
+    if (disposed || !continuous || rafId !== null) return;
+    rafId = requestFrame((timestamp) => {
+      rafId = null;
+      if (disposed) return;
+      render(timestamp);
+      schedule();
+    });
+  };
+
+  return {
+    invalidate: () => {
+      if (!disposed) render();
+    },
+    start: () => {
+      if (disposed || started) return;
+      started = true;
+      schedule();
+    },
+    dispose: () => {
+      if (disposed) return;
+      disposed = true;
+      if (rafId !== null) {
+        cancelFrame(rafId);
+        rafId = null;
+      }
+    },
+  };
+}
+
 /**
  * Mounts a three.js canvas filling `host`, rendering the same colored cube as
  * the native wgpu renderer, seeded from `initialCamera`. OrbitControls owns
@@ -115,6 +227,7 @@ export function mountCanvasBackend(
   renderer.domElement.style.height = "100%";
   renderer.domElement.style.display = "block";
   renderer.domElement.style.zIndex = "0";
+  renderer.domElement.setAttribute("aria-label", "Canvas viewport preview");
   host.appendChild(renderer.domElement);
 
   const materials = FACE_COLORS.map(
@@ -126,41 +239,39 @@ export function mountCanvasBackend(
   scene.add(grid, axes, cube);
 
   const controls = new OrbitControls(camera, renderer.domElement);
+  applyCanvasOrbitBounds(controls);
   controls.target.copy(target);
   controls.update();
 
   let disposed = false;
-  const performanceSampleFrames = Number.parseInt(import.meta.env.VITE_PERF_SAMPLE_FRAMES ?? "", 10);
+  const performanceSampleFrames = parsePerformanceSampleFrames(import.meta.env.VITE_PERF_SAMPLE_FRAMES);
   const performanceSampler =
-    performanceTarget && Number.isFinite(performanceSampleFrames) && performanceSampleFrames > 0
+    performanceTarget && performanceSampleFrames !== null
       ? new CanvasPerformanceSampler(
           performanceTarget[0],
           performanceTarget[1],
           performanceSampleFrames,
-        )
+      )
       : null;
+  const canReportPerformance = "__TAURI_INTERNALS__" in window;
 
   function render(rafTimestamp?: number) {
+    if (disposed) return;
     const startedAt = performance.now();
     renderer.render(scene, camera);
     const summary = performanceSampler?.observe(startedAt, performance.now() - startedAt, rafTimestamp);
     if (summary) {
       console.info(`[perf] ${JSON.stringify(summary)}`);
-      void invoke("report_performance_summary", { summary }).catch((error) =>
-        console.warn("[perf] failed to report Canvas performance summary:", error),
-      );
+      if (canReportPerformance) reportCanvasPerformanceSummary(summary);
     }
   }
-  const renderOnControlChange = () => render();
+  const scheduler = createCanvasRenderScheduler({
+    render,
+    continuous: performanceSampler !== null,
+  });
+  const renderOnControlChange = () => scheduler.invalidate();
   controls.addEventListener("change", renderOnControlChange);
-
-  let rafId: number | null = null;
-  function tick(rafTimestamp: number) {
-    if (disposed) return;
-    render(rafTimestamp);
-    rafId = requestAnimationFrame(tick);
-  }
-  rafId = requestAnimationFrame(tick);
+  scheduler.start();
 
   const resizeObserver = new ResizeObserver(() => {
     const w = Math.max(host.clientWidth, 1);
@@ -168,19 +279,16 @@ export function mountCanvasBackend(
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
     if (!performanceTarget) renderer.setSize(w, h);
-    render();
+    scheduler.invalidate();
   });
   resizeObserver.observe(host);
 
-  render();
+  scheduler.invalidate();
 
   function dispose(): CameraState {
     const final = cameraFromEye(camera.position, controls.target);
     disposed = true;
-    if (rafId !== null) {
-      cancelAnimationFrame(rafId);
-      rafId = null;
-    }
+    scheduler.dispose();
     resizeObserver.disconnect();
     controls.removeEventListener("change", renderOnControlChange);
     controls.dispose();

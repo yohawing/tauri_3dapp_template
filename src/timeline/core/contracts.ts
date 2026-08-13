@@ -27,6 +27,11 @@ export type MarkerId = TimelineId<"marker">;
 export type ChannelId = TimelineId<"channel">;
 export type KeyId = TimelineId<"key">;
 
+export interface TimelinePlaybackTarget {
+  instanceId: string;
+  clipIndex: number;
+}
+
 export function timelineId<Kind extends string>(value: string): TimelineId<Kind> {
   return value as TimelineId<Kind>;
 }
@@ -133,7 +138,11 @@ export interface TimelineDataSource {
   getRange(): TimeRange;
   getGroups(): readonly TimelineGroup[];
   getBindings(): readonly TimelineBinding[];
+  /** Total row count; rows themselves are queried in virtualized ranges. */
+  getRowCount(): number;
   getRows(query: RowRangeQuery): readonly TimelineRow[];
+  /** Resolves a clip playback target for a row, when the row belongs to one. */
+  getPlaybackTarget?(rowId: RowId): TimelinePlaybackTarget | null;
   getItems(query: VisibleTimeQuery): readonly TimelineItem[];
   getKeys(query: VisibleTimeQuery): readonly TimelineKey[];
   getKeyColumns?(

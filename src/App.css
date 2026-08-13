@@ -75,14 +75,6 @@
   background: rgba(255, 255, 255, 0.12);
 }
 
-.menu-bar__backend {
-  margin-left: auto;
-  padding: 0 4px 0 12px;
-  color: #a1a1aa;
-  font-size: 11px;
-  white-space: nowrap;
-}
-
 .menu-popup {
   position: absolute;
   z-index: 1001;
@@ -222,7 +214,10 @@
   top: 8px;
   right: 8px;
   display: flex;
+  max-width: calc(100% - 16px);
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: 4px;
   padding: 3px;
   color: #d7d7dc;
@@ -240,6 +235,11 @@
 .viewport-host__lighting-menu {
   display: flex;
   position: relative;
+}
+
+.viewport-host__mode-group {
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
 .viewport-host__tool-button {
@@ -593,7 +593,6 @@
 }
 
 .console-drawer__header,
-.console-drawer__title,
 .console-drawer__controls {
   display: flex;
   align-items: center;
@@ -606,12 +605,6 @@
   padding: 0 10px;
   background: #202026;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.console-drawer__title {
-  gap: 7px;
-  color: #f4f4f5;
-  font-weight: 600;
 }
 
 .console-drawer__count {
@@ -832,11 +825,6 @@
   background: rgba(255, 255, 255, 0.07);
 }
 
-.menu-bar__backend {
-  color: var(--text-muted);
-  font-size: 9px;
-}
-
 .menu-bar__renderer-toggle {
   display: flex;
   gap: 2px;
@@ -900,9 +888,6 @@
     white-space: nowrap;
   }
 
-  .menu-bar__backend {
-    display: none;
-  }
 }
 
 /* Console is an integrated bottom panel when opened from the View menu or
@@ -1149,16 +1134,14 @@
   outline: none;
 }
 
-.settings-modal__checkbox,
-.inspector-field input[type="checkbox"] {
+.settings-modal__checkbox {
   width: 13px;
   height: 13px;
   margin: 0;
   accent-color: var(--accent-strong);
 }
 
-.settings-modal__checkbox:focus-visible,
-.inspector-field input[type="checkbox"]:focus-visible {
+.settings-modal__checkbox:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
 }

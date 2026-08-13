@@ -20,6 +20,10 @@ export interface RangeViewportProps {
 
 type Handle = "start" | "end";
 
+export function isActiveRangePointer(activePointerId: number | null, pointerId: number): boolean {
+  return activePointerId === pointerId;
+}
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
@@ -41,6 +45,7 @@ export function RangeViewport({
 }: RangeViewportProps) {
   const trackRef = useRef<HTMLDivElement>(null);
   const activeHandle = useRef<Handle | null>(null);
+  const activePointerId = useRef<number | null>(null);
   const span = Math.max(step, max - min);
   const safeStart = clamp(start, min, max - step);
   const safeEnd = clamp(end, safeStart + step, max);
@@ -63,26 +68,37 @@ export function RangeViewport({
   };
 
   const handlePointerDown = (handle: Handle) => (event: PointerEvent<HTMLButtonElement>) => {
-    if (disabled) return;
+    if (disabled || activePointerId.current !== null) return;
     event.preventDefault();
     activeHandle.current = handle;
+    activePointerId.current = event.pointerId;
     event.currentTarget.setPointerCapture(event.pointerId);
   };
 
   const handlePointerMove = (event: PointerEvent<HTMLButtonElement>) => {
     const handle = activeHandle.current;
-    if (handle) emit(handle, valueFromPointer(event as unknown as PointerEvent<HTMLDivElement>));
+    if (handle && isActiveRangePointer(activePointerId.current, event.pointerId)) {
+      emit(handle, valueFromPointer(event as unknown as PointerEvent<HTMLDivElement>));
+    }
   };
 
   const handlePointerUp = (event: PointerEvent<HTMLButtonElement>) => {
+    if (!isActiveRangePointer(activePointerId.current, event.pointerId)) return;
     activeHandle.current = null;
+    activePointerId.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
   };
 
+  const handleLostPointerCapture = (event: PointerEvent<HTMLButtonElement>) => {
+    if (!isActiveRangePointer(activePointerId.current, event.pointerId)) return;
+    activeHandle.current = null;
+    activePointerId.current = null;
+  };
+
   const handleTrackPointerDown = (event: PointerEvent<HTMLDivElement>) => {
-    if (disabled || event.target !== event.currentTarget) return;
+    if (disabled || activePointerId.current !== null || event.target !== event.currentTarget) return;
     const value = valueFromPointer(event);
     const handle = Math.abs(value - safeStart) <= Math.abs(value - safeEnd) ? "start" : "end";
     emit(handle, value);
@@ -124,7 +140,7 @@ export function RangeViewport({
           aria-valuemin={min}
           aria-valuemax={max}
           aria-valuenow={safeStart}
-          aria-valuetext={`${safeStart.toFixed(1)}%`}
+          aria-valuetext={safeStart.toFixed(1)}
           tabIndex={disabled ? -1 : 0}
           disabled={disabled}
           style={{ left: `${startPercent}%` }}
@@ -132,6 +148,7 @@ export function RangeViewport({
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           onPointerCancel={handlePointerUp}
+          onLostPointerCapture={handleLostPointerCapture}
           onKeyDown={handleKeyDown("start")}
         />
         <button
@@ -142,7 +159,7 @@ export function RangeViewport({
           aria-valuemin={min}
           aria-valuemax={max}
           aria-valuenow={safeEnd}
-          aria-valuetext={`${safeEnd.toFixed(1)}%`}
+          aria-valuetext={safeEnd.toFixed(1)}
           tabIndex={disabled ? -1 : 0}
           disabled={disabled}
           style={{ left: `${endPercent}%` }}
@@ -150,6 +167,7 @@ export function RangeViewport({
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           onPointerCancel={handlePointerUp}
+          onLostPointerCapture={handleLostPointerCapture}
           onKeyDown={handleKeyDown("end")}
         />
       </div>

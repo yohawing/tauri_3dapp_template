@@ -1,15 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type Dispatch, type MouseEvent as ReactMouseEvent, type SetStateAction } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { attachViewportInput, maybeRunViewportInputSelfTest } from "./input";
-import { mountCanvasBackend, type CameraState } from "./canvasBackend";
+import type { CameraState } from "./canvasBackend";
 import { BackendTransitionController } from "./backendTransition";
 import type { ViewportEnvironmentSettings, ViewportLightingSettings, ViewportTonemap } from "../settings/model";
+import { isFiniteF32 } from "../wireValidation";
 
 /**
  * Fixed IPC contract shared with the Rust side. Do not change field names or
  * shape without coordinating — src-tauri is coding against exactly this.
  */
-interface ViewportRect {
+export interface ViewportRect {
   x: number;
   y: number;
   width: number;
@@ -17,10 +18,49 @@ interface ViewportRect {
   scaleFactor: number;
 }
 
+/** Drop malformed details before internal viewport diagnostics format values. */
+export function normalizeViewportRect(value: unknown): ViewportRect | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const { x, y, width, height, scaleFactor } = record;
+  if (
+    !isFiniteF32(x) ||
+    !isFiniteF32(y) ||
+    !isFiniteF32(width) ||
+    width < 0 ||
+    !isFiniteF32(height) ||
+    height < 0 ||
+    !isFiniteF32(scaleFactor) ||
+    scaleFactor <= 0
+  ) {
+    return null;
+  }
+  return { x, y, width, height, scaleFactor };
+}
+
+export function areViewportRectsEqual(
+  left: ViewportRect | null,
+  right: ViewportRect,
+): boolean {
+  return left !== null &&
+    left.x === right.x &&
+    left.y === right.y &&
+    left.width === right.width &&
+    left.height === right.height &&
+    left.scaleFactor === right.scaleFactor;
+}
+
 export type ViewportMode = "native" | "canvas";
+export type ManipulatorMode = "translate" | "rotate" | "scale";
+export type ManipulatorOrientation = "world" | "local";
 export type CameraProjection = "perspective" | "orthographic";
 export type CameraViewPreset = "front" | "right" | "top" | "perspective";
 export type CameraFov = 30 | 45 | 60 | 90;
+
+function initialManipulatorMode(): ManipulatorMode {
+  const selfTest = import.meta.env.VITE_MANIPULATOR_SELF_TEST;
+  return selfTest === "rotate" || selfTest === "scale" ? selfTest : "translate";
+}
 
 // Escape hatch for the dock shell: dockview's onDidLayoutChange fires when a
 // panel is moved without being resized (e.g. swapping left/right groups),
@@ -39,6 +79,75 @@ const DEFAULT_CAMERA: CameraState = {
   pitch: 0.35,
   distance: 4.0,
 };
+
+const DEFAULT_ENVIRONMENT: ViewportEnvironmentSettings = {
+  enabled: false,
+  path: "",
+  rotationDegrees: 0,
+  intensity: 1,
+};
+
+const DEFAULT_LIGHTING: ViewportLightingSettings = {
+  exposure: 1,
+  tonemap: "none",
+  ambientIntensity: 0.2,
+  ambientColor: "#ffffff",
+  shadowsEnabled: true,
+  shadowResolution: 2048,
+  shadowSoftness: 1,
+  backgroundMode: "transparent",
+  backgroundColor: "#000000",
+};
+
+// Keep this wire guard aligned with `validate_camera_state` in camera.rs.
+// These limits are intentionally local so the transparent Native host does
+// not eagerly pull the Three.js Canvas backend into the initial chunk.
+const CAMERA_PITCH_LIMIT = 1.55;
+const CAMERA_MIN_DISTANCE = 0.5;
+const CAMERA_MAX_DISTANCE = 100;
+const CAMERA_BASIS_EPSILON_SQ = 1.1920929e-7; // f32::EPSILON
+/** Validate a CameraState returned by the Native IPC boundary. */
+export function normalizeCameraState(value: unknown): CameraState | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const target = record.target;
+  const yaw = record.yaw;
+  const pitch = record.pitch;
+  const distance = record.distance;
+  if (
+    !Array.isArray(target) ||
+    target.length !== 3 ||
+    !target.every(isFiniteF32) ||
+    !isFiniteF32(yaw) ||
+    !isFiniteF32(pitch) ||
+    Math.abs(pitch) > CAMERA_PITCH_LIMIT ||
+    !isFiniteF32(distance) ||
+    distance < CAMERA_MIN_DISTANCE ||
+    distance > CAMERA_MAX_DISTANCE
+  ) {
+    return null;
+  }
+
+  const [targetX, targetY, targetZ] = target as [number, number, number];
+  const [sinYaw, cosYaw] = [Math.sin(yaw), Math.cos(yaw)];
+  const [sinPitch, cosPitch] = [Math.sin(pitch), Math.cos(pitch)];
+  const offset = [
+    distance * cosPitch * cosYaw,
+    distance * sinPitch,
+    distance * cosPitch * sinYaw,
+  ];
+  const eye = [targetX + offset[0], targetY + offset[1], targetZ + offset[2]];
+  const separation = [eye[0] - targetX, eye[1] - targetY, eye[2] - targetZ];
+  const separationSquared = separation.reduce((sum, component) => sum + component * component, 0);
+  if (
+    eye.some((component) => !Number.isFinite(component)) ||
+    !Number.isFinite(separationSquared) ||
+    separationSquared <= CAMERA_BASIS_EPSILON_SQ
+  ) {
+    return null;
+  }
+  return { target: [targetX, targetY, targetZ], yaw, pitch, distance };
+}
 
 // Outside a real Tauri runtime (e.g. plain `vite dev` in a browser tab)
 // `invoke` rejects for every call. Log once instead of spamming the console
@@ -60,9 +169,159 @@ async function sendViewportRect(rect: ViewportRect): Promise<void> {
   }
 }
 
+type InvokeDependency = <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+
+/** Maximum ordered commands retained, including the in-flight command. */
+export const MAX_SERIAL_INVOKES = 256;
+
+/** Serialize ordered IPC and reject commands after the bounded queue is full. */
+export function createSerialInvoker(dependency: InvokeDependency) {
+  let tail: Promise<void> = Promise.resolve();
+  let queued = 0;
+  return function serialInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+    if (queued >= MAX_SERIAL_INVOKES) {
+      return Promise.reject(new Error("serial invoke queue is full; command was rejected"));
+    }
+    queued += 1;
+    let result!: T;
+    const current = tail.then(async () => {
+      result = await dependency<T>(cmd, args);
+    });
+    tail = current.then(
+      () => {
+        queued -= 1;
+      },
+      () => {
+        queued -= 1;
+      },
+    );
+    return current.then(() => result);
+  };
+}
+
+interface LatestCommandState {
+  inFlight: boolean;
+  pending?: {
+    args?: Record<string, unknown>;
+    resolve: (value: unknown) => void;
+    reject: (error: unknown) => void;
+  };
+}
+
+/**
+ * Keeps one in-flight and one latest pending snapshot for each command.
+ * Superseded or disposed pending calls resolve with `undefined` without
+ * reaching the transport, so callers should treat this as best-effort state
+ * synchronization rather than a delivery acknowledgement.
+ */
+export function createLatestCommandInvoker(dependency: InvokeDependency) {
+  const states = new Map<string, LatestCommandState>();
+
+  const drain = async <T,>(cmd: string, state: LatestCommandState): Promise<void> => {
+    if (state.inFlight || !state.pending) return;
+    const next = state.pending;
+    state.pending = undefined;
+    state.inFlight = true;
+    try {
+      next.resolve(await dependency<T>(cmd, next.args));
+    } catch (error) {
+      next.reject(error);
+    } finally {
+      state.inFlight = false;
+      if (state.pending) {
+        void drain<T>(cmd, state);
+      } else if (states.get(cmd) === state) {
+        states.delete(cmd);
+      }
+    }
+  };
+
+  const latestInvoke = function latestInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+    const state = states.get(cmd) ?? { inFlight: false };
+    states.set(cmd, state);
+    return new Promise<T>((resolve, reject) => {
+      if (state.pending) {
+        state.pending.resolve(undefined);
+      }
+      state.pending = { args, resolve: resolve as (value: unknown) => void, reject };
+      void drain<T>(cmd, state);
+    });
+  };
+  latestInvoke.dispose = () => {
+    for (const state of states.values()) {
+      state.pending?.resolve(undefined);
+      state.pending = undefined;
+    }
+    states.clear();
+  };
+  return latestInvoke;
+}
+
+export interface LatestSerialSender<T> {
+  /** Resolves on transport completion, superseding, or disposal. */
+  send(value: T): Promise<void>;
+  dispose(): void;
+}
+
+/** Serializes rect updates while retaining only the latest pending value. */
+export function createLatestSerialSender<T>(
+  dependency: (value: T) => Promise<void>,
+): LatestSerialSender<T> {
+  let inFlight = false;
+  let pending: { value: T; waiter: { resolve: () => void; reject: (error: unknown) => void } } | null = null;
+  let disposed = false;
+
+  const drain = async () => {
+    if (inFlight || disposed || !pending) return;
+    const next = pending;
+    pending = null;
+    inFlight = true;
+    try {
+      await dependency(next.value);
+      next.waiter.resolve();
+    } catch (error) {
+      next.waiter.reject(error);
+    } finally {
+      inFlight = false;
+      if (!disposed) void drain();
+    }
+  };
+
+  return {
+    send: (value) => {
+      if (disposed) return Promise.resolve();
+      return new Promise<void>((resolve, reject) => {
+        if (pending) {
+          // The previous value will not reach the transport. Its caller only
+          // needs to know that it was superseded, so resolve it now instead
+          // of retaining an unbounded waiter list during a stalled invoke.
+          pending.waiter.resolve();
+          pending.value = value;
+          pending.waiter = { resolve, reject };
+        } else {
+          pending = { value, waiter: { resolve, reject } };
+        }
+        void drain();
+      });
+    },
+    dispose: () => {
+      disposed = true;
+      pending?.waiter.resolve();
+      pending = null;
+    },
+  };
+}
+
+/** Clamp numeric viewport controls to the same finite ranges as Rust. */
+export function clampFinite(value: number, min: number, max: number, fallback: number): number {
+  return Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
+}
+
+const latestCommandInvoke = createLatestCommandInvoker(invoke);
+
 async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T | undefined> {
   try {
-    return await invoke<T>(cmd, args);
+    return await latestCommandInvoke<T>(cmd, args);
   } catch (err) {
     console.warn(`[ViewportHost] ${cmd} invoke failed (expected outside the Tauri shell):`, err);
     return undefined;
@@ -125,18 +384,8 @@ export function ViewportHost({
   projection = "perspective",
   fov = 45,
   viewPreset = "perspective",
-  environment = { enabled: false, path: "", rotationDegrees: 0, intensity: 1 },
-  lighting = {
-    exposure: 1,
-    tonemap: "none",
-    ambientIntensity: 0.2,
-    ambientColor: "#ffffff",
-    shadowsEnabled: true,
-    shadowResolution: 2048,
-    shadowSoftness: 1,
-    backgroundMode: "transparent",
-    backgroundColor: "#000000",
-  },
+  environment = DEFAULT_ENVIRONMENT,
+  lighting = DEFAULT_LIGHTING,
   onDisplaySettingsChange,
   onCameraSettingsChange,
   onCameraViewChange,
@@ -147,6 +396,8 @@ export function ViewportHost({
 }: ViewportHostProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const rafIdRef = useRef<number | null>(null);
+  const viewportRectSenderRef = useRef<LatestSerialSender<ViewportRect> | null>(null);
+  const inputIdleRef = useRef<Promise<void>>(Promise.resolve());
   const lifecycleEpochRef = useRef(0);
   const transitionControllerRef = useRef<BackendTransitionController | null>(null);
   if (transitionControllerRef.current === null) {
@@ -157,6 +408,7 @@ export function ViewportHost({
           await invoke("set_renderer_active", { active: false });
         }
       },
+      waitForViewportInputIdle: () => inputIdleRef.current,
       activateNative: async () => {
         if (tauriAvailable) {
           await invoke("set_renderer_active", { active: true });
@@ -166,25 +418,36 @@ export function ViewportHost({
         if (!tauriAvailable) {
           return DEFAULT_CAMERA;
         }
-        return (await invoke<CameraState>("get_camera")) ?? DEFAULT_CAMERA;
+        const camera = normalizeCameraState(await invoke<unknown>("get_camera"));
+        if (!camera) {
+          throw new Error("get_camera returned malformed camera state");
+        }
+        return camera;
       },
       writeCamera: async (camera) => {
         if (tauriAvailable) {
           await invoke("set_camera", { camera });
         }
       },
-      mountCanvas: (camera) => {
-        const host = hostRef.current;
-        if (!host) {
-          throw new Error("ViewportHost is not mounted");
-        }
-        return mountCanvasBackend(host, camera);
+      prepareCanvas: async () => {
+        const { mountCanvasBackend } = await import("./canvasBackend");
+        return (camera: CameraState) => {
+          const host = hostRef.current;
+          if (!host) {
+            throw new Error("ViewportHost is not mounted");
+          }
+          return mountCanvasBackend(host, camera);
+        };
       },
       reportError: reportBackendTransitionError,
     });
   }
   const transitionController = transitionControllerRef.current!;
   const [lastRect, setLastRect] = useState<ViewportRect | null>(null);
+  const lastRectRef = useRef<ViewportRect | null>(null);
+  const [manipulatorMode, setManipulatorMode] = useState<ManipulatorMode>(initialManipulatorMode);
+  const [manipulatorOrientation, setManipulatorOrientation] = useState<ManipulatorOrientation>("world");
+  const [snapEnabled, setSnapEnabled] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [showCameraMenu, setShowCameraMenu] = useState(
     () => Boolean(import.meta.env.VITE_VIEWPORT_CAMERA_MENU_SELF_TEST),
@@ -195,13 +458,79 @@ export function ViewportHost({
   const [showLightingMenu, setShowLightingMenu] = useState(
     () => Boolean(import.meta.env.VITE_VIEWPORT_LIGHTING_MENU_SELF_TEST),
   );
+  const popoverTriggerRef = useRef<HTMLButtonElement | null>(null);
 
-  const closeViewportSettings = useCallback(() => {
+  const restorePopoverFocus = useCallback(() => {
+    const trigger = popoverTriggerRef.current;
+    popoverTriggerRef.current = null;
+    if (!trigger?.isConnected) return;
+    queueMicrotask(() => trigger.focus());
+  }, []);
+
+  const closeViewportSettings = useCallback((restoreFocus = false) => {
     setShowMenu(false);
     setShowCameraMenu(false);
     setShowEnvironmentMenu(false);
     setShowLightingMenu(false);
-  }, []);
+    if (restoreFocus) restorePopoverFocus();
+    else popoverTriggerRef.current = null;
+  }, [restorePopoverFocus]);
+
+  const toggleViewportPopover = useCallback((
+    event: ReactMouseEvent<HTMLButtonElement>,
+    setOpen: Dispatch<SetStateAction<boolean>>,
+    isOpen: boolean,
+  ) => {
+    const trigger = event.currentTarget;
+    if (isOpen) {
+      setOpen(false);
+      popoverTriggerRef.current = null;
+      if (trigger.isConnected) queueMicrotask(() => trigger.focus());
+      return;
+    }
+    closeViewportSettings();
+    popoverTriggerRef.current = trigger;
+    setOpen(true);
+  }, [closeViewportSettings]);
+
+  useEffect(() => {
+    if (mode !== "native" || !("__TAURI_INTERNALS__" in window)) return;
+    void safeInvoke("set_manipulator_mode", { mode: manipulatorMode });
+  }, [manipulatorMode, mode]);
+
+  useEffect(() => {
+    if (mode !== "native" || !("__TAURI_INTERNALS__" in window)) return;
+    void safeInvoke("set_manipulator_orientation", { orientation: manipulatorOrientation });
+  }, [manipulatorOrientation, mode]);
+
+  useEffect(() => {
+    if (mode !== "native" || !("__TAURI_INTERNALS__" in window)) return;
+    void safeInvoke("set_manipulator_snap", {
+      settings: {
+        enabled: snapEnabled,
+        translateIncrement: 1,
+        rotateDegrees: 15,
+        scaleIncrement: 0.1,
+      },
+    });
+  }, [mode, snapEnabled]);
+
+  useEffect(() => {
+    if (mode !== "native") return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        (target instanceof HTMLElement && target.isContentEditable)
+      ) return;
+      const next = ({ w: "translate", e: "rotate", r: "scale" } as const)[event.key.toLowerCase() as "w" | "e" | "r"];
+      if (next) setManipulatorMode(next);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [mode]);
 
   useEffect(() => {
     if (mode !== "native" || !("__TAURI_INTERNALS__" in window)) return;
@@ -244,7 +573,7 @@ export function ViewportHost({
     if (!showMenu && !showCameraMenu && !showEnvironmentMenu && !showLightingMenu) return;
     const close = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        closeViewportSettings();
+        closeViewportSettings(true);
       }
     };
     window.addEventListener("keydown", close);
@@ -290,13 +619,18 @@ export function ViewportHost({
         height: domRect.height,
         scaleFactor: window.devicePixelRatio,
       };
+      if (areViewportRectsEqual(lastRectRef.current, rect)) return;
+      lastRectRef.current = rect;
       setLastRect(rect);
       window.dispatchEvent(
         new CustomEvent("tauri3d:viewport-rect", {
           detail: rect,
         }),
       );
-      void sendViewportRect(rect);
+      const sender =
+        viewportRectSenderRef.current ??
+        (viewportRectSenderRef.current = createLatestSerialSender(sendViewportRect));
+      void sender.send(rect);
     });
   }, []);
 
@@ -345,6 +679,9 @@ export function ViewportHost({
         cancelAnimationFrame(rafIdRef.current);
         rafIdRef.current = null;
       }
+      viewportRectSenderRef.current?.dispose();
+      viewportRectSenderRef.current = null;
+      lastRectRef.current = null;
     };
   }, [scheduleMeasure]);
 
@@ -352,24 +689,38 @@ export function ViewportHost({
   // native orbit camera can be driven. Only wired up in native mode — in
   // canvas mode OrbitControls handles input itself, directly on its canvas.
   useEffect(() => {
-    if (mode !== "native") {
-      return;
+    let attachment: ReturnType<typeof attachViewportInput> | null = null;
+    let inputSelfTest: ReturnType<typeof maybeRunViewportInputSelfTest> | null = null;
+    if (mode === "native") {
+      const el = hostRef.current;
+      if (el) {
+        attachment = attachViewportInput(el);
+        inputSelfTest = maybeRunViewportInputSelfTest(el);
+      }
     }
-    const el = hostRef.current;
-    if (!el) {
-      return;
-    }
-    const detach = attachViewportInput(el);
-    maybeRunViewportInputSelfTest(el);
-    return detach;
-  }, [mode]);
+    const transitionCleanup = transitionController.transition(mode);
 
-  // The controller owns generation-safe Canvas mounting, camera handoff, and
-  // Native activation. Effect cleanup only cancels its own generation, so a
-  // stale React effect cannot reactivate Native after a newer mode transition.
-  useEffect(() => {
-    return transitionController.transition(mode);
+    // Keep input teardown and backend transition in one effect so React's
+    // cleanup order is explicit: detach + capture the IPC tail, then cancel
+    // the previous transition. Canvas deactivation waits on that tail.
+    return () => {
+      inputSelfTest?.cancel();
+      if (attachment) {
+        attachment.detach();
+        inputIdleRef.current = Promise.all([
+          attachment.idle(),
+          inputSelfTest?.idle() ?? Promise.resolve(),
+        ]).then(() => undefined);
+      } else {
+        inputIdleRef.current = inputSelfTest?.idle() ?? Promise.resolve();
+      }
+      transitionCleanup();
+    };
   }, [mode, transitionController]);
+
+  useEffect(() => () => {
+    latestCommandInvoke.dispose();
+  }, []);
 
   // StrictMode intentionally runs effect setup/cleanup twice in development.
   // Defer disposal by one microtask so that probe cleanup does not permanently
@@ -393,7 +744,7 @@ export function ViewportHost({
   const lightingLabel = `${lighting.exposure}× · ${lighting.tonemap.toUpperCase()} · ${lighting.shadowsEnabled ? "Shadows" : "No shadows"}`;
 
   const chooseCameraView = (preset: CameraViewPreset) => {
-    setShowCameraMenu(false);
+    closeViewportSettings(true);
     onCameraViewChange?.(preset);
   };
 
@@ -405,6 +756,58 @@ export function ViewportHost({
         onPointerDown={(event) => event.stopPropagation()}
         onPointerMove={(event) => event.stopPropagation()}
       >
+        <div className="viewport-host__mode-group" role="group" aria-label="Transform manipulator">
+          {([
+            ["translate", "W", "Move"],
+            ["rotate", "E", "Rotate"],
+            ["scale", "R", "Scale"],
+          ] as const).map(([tool, shortcut, label]) => (
+            <button
+              key={tool}
+              type="button"
+              className={`viewport-host__tool-button${manipulatorMode === tool ? " is-active" : ""}`}
+              aria-label={`${label} manipulator (${shortcut})`}
+              aria-pressed={manipulatorMode === tool}
+              title={`${label} (${shortcut})`}
+              disabled={mode !== "native"}
+              onClick={() => setManipulatorMode(tool)}
+            >
+              {shortcut}
+            </button>
+          ))}
+        </div>
+        <div className="viewport-host__mode-group" role="group" aria-label="Manipulator orientation and snapping">
+          <button
+            type="button"
+            className={`viewport-host__tool-button${manipulatorOrientation === "world" ? " is-active" : ""}`}
+            aria-label="World orientation"
+            aria-pressed={manipulatorOrientation === "world"}
+            disabled={mode !== "native"}
+            onClick={() => setManipulatorOrientation("world")}
+          >
+            World
+          </button>
+          <button
+            type="button"
+            className={`viewport-host__tool-button${manipulatorOrientation === "local" ? " is-active" : ""}`}
+            aria-label="Local orientation"
+            aria-pressed={manipulatorOrientation === "local"}
+            disabled={mode !== "native"}
+            onClick={() => setManipulatorOrientation("local")}
+          >
+            Local
+          </button>
+          <button
+            type="button"
+            className={`viewport-host__tool-button${snapEnabled ? " is-active" : ""}`}
+            aria-label="Toggle transform snapping"
+            aria-pressed={snapEnabled}
+            disabled={mode !== "native"}
+            onClick={() => setSnapEnabled((value) => !value)}
+          >
+            Snap
+          </button>
+        </div>
         <div className="viewport-host__mode-group" role="group" aria-label="Viewport display mode">
           <button
             type="button"
@@ -431,23 +834,24 @@ export function ViewportHost({
             className={`viewport-host__tool-button${showCameraMenu ? " is-active" : ""}`}
             aria-label={`Camera settings: ${cameraLabel}`}
             aria-expanded={showCameraMenu}
-            aria-haspopup="menu"
+            aria-haspopup="dialog"
             title={cameraLabel}
             disabled={mode !== "native"}
-            onClick={() => setShowCameraMenu((open) => !open)}
+            onClick={(event) => toggleViewportPopover(event, setShowCameraMenu, showCameraMenu)}
           >
             Camera ▾
           </button>
           {showCameraMenu && (
-            <div className="viewport-host__camera-popover" role="menu" aria-label="Camera settings">
+            <div className="viewport-host__camera-popover" role="dialog" aria-label="Camera settings">
               <div className="viewport-host__camera-section">
                 <span className="viewport-host__camera-heading">Projection</span>
-                <div className="viewport-host__camera-options">
+                <div className="viewport-host__camera-options" role="group" aria-label="Projection">
                   {(["perspective", "orthographic"] as const).map((option) => (
                     <button
                       key={option}
                       type="button"
                       className={`viewport-host__camera-option${projection === option ? " is-active" : ""}`}
+                      aria-pressed={projection === option}
                       disabled={mode !== "native"}
                       onClick={() => onCameraSettingsChange?.({ projection: option })}
                     >
@@ -458,12 +862,13 @@ export function ViewportHost({
               </div>
               <div className="viewport-host__camera-section">
                 <span className="viewport-host__camera-heading">FOV</span>
-                <div className="viewport-host__camera-options">
+                <div className="viewport-host__camera-options" role="group" aria-label="FOV">
                   {([30, 45, 60, 90] as const).map((option) => (
                     <button
                       key={option}
                       type="button"
                       className={`viewport-host__camera-option${fov === option ? " is-active" : ""}`}
+                      aria-pressed={fov === option}
                       disabled={mode !== "native"}
                       onClick={() => onCameraSettingsChange?.({ fov: option })}
                     >
@@ -474,12 +879,13 @@ export function ViewportHost({
               </div>
               <div className="viewport-host__camera-section">
                 <span className="viewport-host__camera-heading">View</span>
-                <div className="viewport-host__camera-options viewport-host__camera-options--views">
+                <div className="viewport-host__camera-options viewport-host__camera-options--views" role="group" aria-label="View preset">
                   {(["front", "right", "top", "perspective"] as const).map((option) => (
                     <button
                       key={option}
                       type="button"
                       className={`viewport-host__camera-option${viewPreset === option ? " is-active" : ""}`}
+                      aria-pressed={viewPreset === option}
                       disabled={mode !== "native"}
                       onClick={() => chooseCameraView(option)}
                     >
@@ -497,15 +903,15 @@ export function ViewportHost({
             className={`viewport-host__tool-button${showLightingMenu ? " is-active" : ""}`}
             aria-label={`Lighting settings: ${lightingLabel}`}
             aria-expanded={showLightingMenu}
-            aria-haspopup="menu"
+            aria-haspopup="dialog"
             title={lightingLabel}
             disabled={mode !== "native"}
-            onClick={() => setShowLightingMenu((open) => !open)}
+            onClick={(event) => toggleViewportPopover(event, setShowLightingMenu, showLightingMenu)}
           >
             Lighting ▾
           </button>
           {showLightingMenu && (
-            <div className="viewport-host__lighting-popover" role="menu" aria-label="Lighting settings">
+            <div className="viewport-host__lighting-popover" role="dialog" aria-label="Lighting settings">
               <label className="viewport-host__environment-field">
                 <span>Exposure</span>
                 <input
@@ -515,17 +921,20 @@ export function ViewportHost({
                   step={0.1}
                   value={lighting.exposure}
                   disabled={mode !== "native"}
-                  onChange={(event) => onLightingSettingsChange?.({ exposure: Number(event.currentTarget.value) })}
+                  onChange={(event) => onLightingSettingsChange?.({
+                    exposure: clampFinite(Number(event.currentTarget.value), 0, 16, lighting.exposure),
+                  })}
                 />
               </label>
               <div className="viewport-host__camera-section">
                 <span className="viewport-host__camera-heading">Tonemap</span>
-                <div className="viewport-host__camera-options">
+                <div className="viewport-host__camera-options" role="group" aria-label="Tonemap">
                   {(["none", "reinhard", "aces"] as const).map((option: ViewportTonemap) => (
                     <button
                       key={option}
                       type="button"
                       className={`viewport-host__camera-option${lighting.tonemap === option ? " is-active" : ""}`}
+                      aria-pressed={lighting.tonemap === option}
                       disabled={mode !== "native"}
                       onClick={() => onLightingSettingsChange?.({ tonemap: option })}
                     >
@@ -543,10 +952,13 @@ export function ViewportHost({
                   step={0.1}
                   value={lighting.ambientIntensity}
                   disabled={mode !== "native"}
-                  onChange={(event) => onLightingSettingsChange?.({ ambientIntensity: Number(event.currentTarget.value) })}
+                  onChange={(event) => onLightingSettingsChange?.({
+                    ambientIntensity: clampFinite(Number(event.currentTarget.value), 0, 4, lighting.ambientIntensity),
+                  })}
                 />
                 <input
                   type="color"
+                  aria-label="Ambient color"
                   value={lighting.ambientColor}
                   disabled={mode !== "native"}
                   onChange={(event) => onLightingSettingsChange?.({ ambientColor: event.currentTarget.value })}
@@ -580,17 +992,20 @@ export function ViewportHost({
                   step={0.1}
                   value={lighting.shadowSoftness}
                   disabled={mode !== "native" || !lighting.shadowsEnabled}
-                  onChange={(event) => onLightingSettingsChange?.({ shadowSoftness: Number(event.currentTarget.value) })}
+                  onChange={(event) => onLightingSettingsChange?.({
+                    shadowSoftness: clampFinite(Number(event.currentTarget.value), 0, 8, lighting.shadowSoftness),
+                  })}
                 />
               </label>
               <div className="viewport-host__camera-section">
                 <span className="viewport-host__camera-heading">Background</span>
-                <div className="viewport-host__camera-options">
+                <div className="viewport-host__camera-options" role="group" aria-label="Background mode">
                   {(["transparent", "solid"] as const).map((option) => (
                     <button
                       key={option}
                       type="button"
                       className={`viewport-host__camera-option${lighting.backgroundMode === option ? " is-active" : ""}`}
+                      aria-pressed={lighting.backgroundMode === option}
                       disabled={mode !== "native"}
                       onClick={() => onLightingSettingsChange?.({ backgroundMode: option })}
                     >
@@ -600,6 +1015,7 @@ export function ViewportHost({
                 </div>
                 <input
                   type="color"
+                  aria-label="Background color"
                   value={lighting.backgroundColor}
                   disabled={mode !== "native" || lighting.backgroundMode !== "solid"}
                   onChange={(event) => onLightingSettingsChange?.({ backgroundColor: event.currentTarget.value })}
@@ -617,15 +1033,15 @@ export function ViewportHost({
             className={`viewport-host__tool-button${showEnvironmentMenu ? " is-active" : ""}`}
             aria-label={`Environment settings: ${environment.enabled ? environmentName : "Off"}`}
             aria-expanded={showEnvironmentMenu}
-            aria-haspopup="menu"
+            aria-haspopup="dialog"
             disabled={mode !== "native"}
             title={environment.path || "No environment selected"}
-            onClick={() => setShowEnvironmentMenu((open) => !open)}
+            onClick={(event) => toggleViewportPopover(event, setShowEnvironmentMenu, showEnvironmentMenu)}
           >
             Environment ▾
           </button>
           {showEnvironmentMenu && (
-            <div className="viewport-host__environment-popover" role="menu" aria-label="Environment settings">
+            <div className="viewport-host__environment-popover" role="dialog" aria-label="Environment settings">
               <div className="viewport-host__environment-actions">
                 <button
                   type="button"
@@ -665,7 +1081,9 @@ export function ViewportHost({
                   step={15}
                   value={environment.rotationDegrees}
                   disabled={mode !== "native" || !environment.enabled}
-                  onChange={(event) => onEnvironmentSettingsChange?.({ rotationDegrees: Number(event.currentTarget.value) })}
+                  onChange={(event) => onEnvironmentSettingsChange?.({
+                    rotationDegrees: clampFinite(Number(event.currentTarget.value), -180, 180, environment.rotationDegrees),
+                  })}
                 />
                 <small>deg</small>
               </label>
@@ -678,7 +1096,9 @@ export function ViewportHost({
                   step={0.1}
                   value={environment.intensity}
                   disabled={mode !== "native" || !environment.enabled}
-                  onChange={(event) => onEnvironmentSettingsChange?.({ intensity: Number(event.currentTarget.value) })}
+                  onChange={(event) => onEnvironmentSettingsChange?.({
+                    intensity: clampFinite(Number(event.currentTarget.value), 0, 8, environment.intensity),
+                  })}
                 />
               </label>
             </div>
@@ -689,13 +1109,13 @@ export function ViewportHost({
             type="button"
             className={`viewport-host__tool-button${showMenu ? " is-active" : ""}`}
             aria-expanded={showMenu}
-            aria-haspopup="menu"
-            onClick={() => setShowMenu((open) => !open)}
+            aria-haspopup="dialog"
+            onClick={(event) => toggleViewportPopover(event, setShowMenu, showMenu)}
           >
             Show ▾
           </button>
           {showMenu && (
-            <div className="viewport-host__show-popover" role="menu">
+            <div className="viewport-host__show-popover" role="dialog" aria-label="Display options">
               <label className={`viewport-host__show-item${mode !== "native" ? " is-disabled" : ""}`}>
                 <input
                   type="checkbox"

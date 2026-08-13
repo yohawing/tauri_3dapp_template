@@ -1,5 +1,14 @@
 import { useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { waitForViewportInputIdle } from "../../viewport/input";
+import { boundedDiagnosticText, safeDiagnosticText } from "../../console/contracts";
+import { installSceneProjectionSelfTests } from "./sceneProjectionSelfTests";
+import {
+  isBoundedUtf8String,
+  isFiniteF32,
+  isSafeNonNegativeInteger,
+  isWireRecord,
+} from "../../wireValidation";
 import type {
   SceneCommand,
   SceneCommandEnvelope,
@@ -7,10 +16,274 @@ import type {
   SceneLight,
   SceneMaterial,
   SceneCommandProperty,
+  SceneNodeSummary,
   SceneProjection,
+  SceneTransform,
 } from "../core/projection";
 
+// Generated bone IDs append `::bone::<index>` to a valid Scene instance ID,
+// so runtime node IDs use a wider wire cap than persisted IDs/labels.
+const MAX_RUNTIME_ID_BYTES = 2048;
+const MAX_RUNTIME_LABEL_BYTES = 1024;
+const MAX_DIAGNOSTIC_TEXT_BYTES = 4096;
+const MAX_SCENE_NODES = 262_144;
+const MAX_NODE_DEPTH = 512;
+const MAX_COMMAND_RESULTS = 32;
+/** Must match SceneCommand::SetLightIntensity's native 0..=1000 f32 bound. */
+const MAX_LIGHT_INTENSITY = 1_000;
+/** Must match renderer's pre-load runtime projection text budget. */
+export const MAX_RUNTIME_PROJECTION_TEXT_BYTES = 64 * 1024 * 1024;
+const F32_EPSILON = 1.1920929e-7;
+const projectionTextEncoder = new TextEncoder();
+const projectionTextScratch = new Uint8Array(MAX_RUNTIME_ID_BYTES);
+
+function projectionTextByteLength(value: string): number {
+  const encoded = projectionTextEncoder.encodeInto(value, projectionTextScratch);
+  // Each caller is already bounded to MAX_RUNTIME_ID_BYTES or less.
+  return encoded.read === value.length ? encoded.written : projectionTextEncoder.encode(value).byteLength;
+}
+
+function isRuntimeString(value: unknown, allowEmpty = false): value is string {
+  return isBoundedUtf8String(value, MAX_RUNTIME_ID_BYTES, allowEmpty);
+}
+
+function isRuntimeLabel(value: unknown, allowEmpty = false): value is string {
+  return isBoundedUtf8String(value, MAX_RUNTIME_LABEL_BYTES, allowEmpty);
+}
+
+function isDiagnosticText(value: unknown): value is string {
+  return isBoundedUtf8String(value, MAX_DIAGNOSTIC_TEXT_BYTES, true);
+}
+
+function numberTuple(value: unknown, length: number): number[] | null {
+  if (!Array.isArray(value) || value.length !== length) return null;
+  return value.every(isFiniteF32)
+    ? value as number[]
+    : null;
+}
+
+function normalizeTransform(value: unknown): SceneTransform | null {
+  if (!isWireRecord(value)) return null;
+  const translation = numberTuple(value.translation, 3);
+  const rotation = numberTuple(value.rotation, 4);
+  const scale = numberTuple(value.scale, 3);
+  if (!translation || !rotation || !scale) return null;
+  const rotationLengthSquared = rotation.reduce(
+    (sum, item) => Math.fround(sum + Math.fround(item * item)),
+    0,
+  );
+  if (!Number.isFinite(rotationLengthSquared) || rotationLengthSquared <= F32_EPSILON) return null;
+  if (scale.some((item) => item <= 0)) return null;
+  return {
+    translation: translation as SceneTransform["translation"],
+    rotation: rotation as SceneTransform["rotation"],
+    scale: scale as SceneTransform["scale"],
+  };
+}
+
+function normalizedColor(value: unknown): [number, number, number, number] | null {
+  const color = numberTuple(value, 4);
+  return color && color.every((item) => item >= 0 && item <= 1)
+    ? color as [number, number, number, number]
+    : null;
+}
+
+function nonNegativeFinite(value: unknown): number | null {
+  return isFiniteF32(value) && value >= 0 ? value : null;
+}
+
+function normalizeMaterial(value: unknown): SceneMaterial | null {
+  if (!isWireRecord(value)) return null;
+  const color = normalizedColor(value.color);
+  const metallic = value.metallic;
+  const roughness = value.roughness;
+  if (
+    !color || !isFiniteF32(metallic) || metallic < 0 || metallic > 1 ||
+    !isFiniteF32(roughness) || roughness < 0 || roughness > 1
+  ) return null;
+  return { color, metallic, roughness };
+}
+
+function normalizeLight(value: unknown): SceneLight | null {
+  if (!isWireRecord(value)) return null;
+  const lightType = value.lightType;
+  if (lightType !== "point" && lightType !== "directional" && lightType !== "spot") return null;
+  const direction = value.direction === null ? null : numberTuple(value.direction, 3);
+  if (value.direction !== null && !direction) return null;
+  if ((lightType === "directional") !== (direction !== null)) return null;
+  const directionLengthSquared = direction?.reduce(
+    (sum, item) => Math.fround(sum + Math.fround(item * item)),
+    0,
+  );
+  if (direction &&
+    (directionLengthSquared === undefined ||
+      !Number.isFinite(directionLengthSquared) || directionLengthSquared <= F32_EPSILON)
+  ) return null;
+  const color = normalizedColor(value.color);
+  const intensity = nonNegativeFinite(value.intensity);
+  const radius = nonNegativeFinite(value.radius);
+  const attenuationRadius = value.attenuationRadius === null ? null : nonNegativeFinite(value.attenuationRadius);
+  const innerConeAngle = value.innerConeAngle === null ? null : nonNegativeFinite(value.innerConeAngle);
+  const outerConeAngle = value.outerConeAngle === null ? null : nonNegativeFinite(value.outerConeAngle);
+  if (
+    !color || intensity === null || radius === null ||
+    intensity > MAX_LIGHT_INTENSITY ||
+    (value.attenuationRadius !== null && attenuationRadius === null) ||
+    (value.innerConeAngle !== null && innerConeAngle === null) ||
+    (value.outerConeAngle !== null && outerConeAngle === null) ||
+    typeof value.enabled !== "boolean" || typeof value.castsShadows !== "boolean"
+  ) return null;
+  return {
+    lightType,
+    direction: direction as SceneLight["direction"],
+    color,
+    intensity,
+    radius,
+    enabled: value.enabled,
+    castsShadows: value.castsShadows,
+    attenuationRadius,
+    innerConeAngle,
+    outerConeAngle,
+  };
+}
+
+function normalizeSelected(value: unknown): SceneProjection["selected"] | null {
+  if (!isWireRecord(value)) return null;
+  const id = value.id;
+  const transform = normalizeTransform(value.transform);
+  const material = value.material === null ? null : normalizeMaterial(value.material);
+  const light = value.light === null ? null : normalizeLight(value.light);
+  if (!isRuntimeString(id) || !transform || (value.material !== null && !material) || (value.light !== null && !light)) {
+    return null;
+  }
+  if (typeof value.transformEditable !== "boolean") return null;
+  return { id, transform, transformEditable: value.transformEditable, material, light };
+}
+
+function validCommandProperty(value: unknown): value is SceneCommandProperty {
+  return value === "baseColor" || value === "metallic" || value === "roughness" || value === "lightColor" ||
+    value === "lightIntensity" || value === "lightDirection" || value === "lightEnabled" ||
+    value === "lightCastsShadows" || value === "transform" || value === "visibility";
+}
+
+function normalizeCommandResult(value: unknown): SceneCommandResult | null {
+  if (!isWireRecord(value)) return null;
+  if (
+    !isSafeNonNegativeInteger(value.sequence) || value.sequence < 1 || !isRuntimeString(value.nodeId) ||
+    !validCommandProperty(value.property) || typeof value.applied !== "boolean" ||
+    (value.error !== null && !isDiagnosticText(value.error))
+  ) return null;
+  return {
+    sequence: value.sequence,
+    nodeId: value.nodeId,
+    property: value.property,
+    applied: value.applied,
+    error: value.error,
+  };
+}
+
+export function validNodeTree(nodes: SceneNodeSummary[]): boolean {
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const ids = new Set(byId.keys());
+  if (ids.size !== nodes.length || nodes.length > MAX_SCENE_NODES) return false;
+  if (nodes.some((node) => node.parent !== null && !ids.has(node.parent))) return false;
+  const states = new Map<string, 1 | 2>();
+  const depths = new Map<string, number>();
+  for (const node of nodes) {
+    if (states.get(node.id) === 2) continue;
+    const path: string[] = [];
+    let currentId = node.id;
+    while (true) {
+      const state = states.get(currentId);
+      if (state === 1) return false;
+      if (state === 2) {
+        let depth = depths.get(currentId);
+        if (depth === undefined) return false;
+        for (let index = path.length - 1; index >= 0; index -= 1) {
+          depth += 1;
+          if (depth > MAX_NODE_DEPTH) return false;
+          depths.set(path[index], depth);
+          states.set(path[index], 2);
+        }
+        break;
+      }
+      const current = byId.get(currentId);
+      if (!current) return false;
+      states.set(currentId, 1);
+      path.push(currentId);
+      if (current.parent === null) {
+        let depth = 0;
+        for (let index = path.length - 1; index >= 0; index -= 1) {
+          if (depth > MAX_NODE_DEPTH) return false;
+          depths.set(path[index], depth);
+          states.set(path[index], 2);
+          depth += 1;
+        }
+        break;
+      }
+      currentId = current.parent;
+    }
+  }
+  return true;
+}
+
+/** Reject malformed Native scene snapshots before they affect UI state. */
+export function normalizeSceneProjection(value: unknown): SceneProjection | null {
+  if (!isWireRecord(value)) return null;
+  const epoch = value.epoch;
+  const revision = value.revision;
+  const selectedNodeId = value.selectedNodeId;
+  const rawNodes = value.nodes;
+  const selected = value.selected;
+  const lastProcessedSequence = value.lastProcessedSequence;
+  const rawResults = value.commandResults;
+  if (
+    !isSafeNonNegativeInteger(epoch) || epoch < 1 || !isSafeNonNegativeInteger(revision) ||
+    (selectedNodeId !== null && !isRuntimeString(selectedNodeId)) || !Array.isArray(rawNodes) ||
+    rawNodes.length > MAX_SCENE_NODES || (selected !== null && !isWireRecord(selected)) ||
+    !isSafeNonNegativeInteger(lastProcessedSequence) || !Array.isArray(rawResults) ||
+    rawResults.length > MAX_COMMAND_RESULTS
+  ) return null;
+  const nodes: SceneNodeSummary[] = [];
+  let projectionTextBytes = 0;
+  const addProjectionText = (value: string): boolean => {
+    projectionTextBytes += projectionTextByteLength(value);
+    return projectionTextBytes <= MAX_RUNTIME_PROJECTION_TEXT_BYTES;
+  };
+  for (const value of rawNodes) {
+    if (!isWireRecord(value) || !isRuntimeString(value.id) ||
+      (value.parent !== null && !isRuntimeString(value.parent)) || !isRuntimeLabel(value.label, true) ||
+      (value.kind !== "scene" && value.kind !== "light" && value.kind !== "mesh" && value.kind !== "bone") ||
+      typeof value.visible !== "boolean") return null;
+    if (!addProjectionText(value.id) ||
+      (value.parent !== null && !addProjectionText(value.parent)) ||
+      !addProjectionText(value.label) || !addProjectionText(value.kind)) return null;
+    nodes.push({ id: value.id, parent: value.parent, label: value.label, kind: value.kind, visible: value.visible });
+  }
+  if (!validNodeTree(nodes)) return null;
+  const normalizedSelected = selected === null ? null : normalizeSelected(selected);
+  if ((selectedNodeId === null) !== (normalizedSelected === null) ||
+    (selectedNodeId !== null && normalizedSelected?.id !== selectedNodeId) ||
+    (selectedNodeId !== null && !nodes.some((node) => node.id === selectedNodeId))) return null;
+  const commandResults: SceneCommandResult[] = [];
+  for (const result of rawResults) {
+    const normalized = normalizeCommandResult(result);
+    if (!normalized) return null;
+    commandResults.push(normalized);
+  }
+  return {
+    epoch,
+    revision,
+    selectedNodeId,
+    nodes,
+    selected: normalizedSelected,
+    lastProcessedSequence,
+    commandResults,
+  };
+}
+
 const FIXTURE_PROJECTION: SceneProjection = {
+  epoch: 1,
   revision: 1,
   selectedNodeId: "cube",
   nodes: [
@@ -20,6 +293,7 @@ const FIXTURE_PROJECTION: SceneProjection = {
   ],
   selected: {
     id: "cube",
+    transformEditable: true,
     transform: {
       translation: [0, 0, 0],
       rotation: [0, 0, 0, 1],
@@ -32,108 +306,97 @@ const FIXTURE_PROJECTION: SceneProjection = {
   commandResults: [],
 };
 
+const EMPTY_RUNTIME_PROJECTION: SceneProjection = {
+  epoch: 1,
+  revision: 0,
+  selectedNodeId: null,
+  nodes: [],
+  selected: null,
+  lastProcessedSequence: 0,
+  commandResults: [],
+};
+
 const POLL_INTERVAL_MS = 100;
+/** Keep frontend optimistic state bounded to the Native queue capacity. */
+export const MAX_PENDING_SCENE_COMMANDS = 256;
 
 function hasTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
+function reportSceneError(context: string, error: unknown): void {
+  const message = `[SceneProjection] ${context}: ${safeDiagnosticText(error)}`;
+  console.warn(message);
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(
+    new CustomEvent("tauri3d:diagnostic", {
+      detail: { level: "error", source: "scene", message },
+    }),
+  );
+  window.dispatchEvent(new CustomEvent("tauri3d:console-toggle", { detail: { open: true } }));
+}
+
 type Listener = () => void;
+type WarningKey = "poll" | "select" | "dispatch";
+
+interface SceneCommandFlight {
+  active: boolean;
+  queued?: SceneCommandEnvelope;
+  detach?: () => void;
+}
 
 export class SceneProjectionDataSource {
-  private snapshot: SceneProjection = FIXTURE_PROJECTION;
+  private snapshot: SceneProjection;
+  private canonicalSnapshot: SceneProjection;
   private readonly listeners = new Set<Listener>();
   private pollId: number | undefined;
   private pollInFlight: Promise<void> | undefined;
+  private pollGeneration = 0;
+  private commandGeneration = 0;
+  private disposed = false;
   private nativeSnapshotAccepted = false;
   // Keep sequences monotonic across ordinary WebView reloads as well as
   // within one module instance. Date.now() leaves ample integer headroom.
   private nextSequence = Date.now() * 1000;
   private readonly pendingCommands = new Map<string, SceneCommandEnvelope>();
-  private readonly commandFlights = new Map<string, { active: boolean; queued?: SceneCommandEnvelope }>();
-  private warned = false;
+  private readonly commandFlights = new Map<string, SceneCommandFlight>();
+  private readonly commandKeys = new Set<string>();
+  private selfTestCleanup: (() => void) | undefined;
+  private readonly warned: Record<WarningKey, boolean> = {
+    poll: false,
+    select: false,
+    dispatch: false,
+  };
 
-  constructor() {
-    if (hasTauriRuntime()) {
-      if (import.meta.env.VITE_SCENE_SELF_TEST) {
-        window.setTimeout(() => {
-          console.log("[scene-self-test] select=key-light");
-          void this.select("key-light");
-        }, 2500);
-      }
-      if (import.meta.env.VITE_MATERIAL_SELF_TEST) {
-        window.setTimeout(() => {
-          console.log("[material-self-test] color=#2dc8ff metallic=0.8 roughness=0.2");
-          void this.dispatch({ type: "setBaseColor", nodeId: "cube", color: [0.176, 0.784, 1, 1] });
-          void this.dispatch({ type: "setMetallic", nodeId: "cube", value: 0.8 });
-          void this.dispatch({ type: "setRoughness", nodeId: "cube", value: 0.2 });
-        }, 2500);
-      }
-      if (import.meta.env.VITE_VISIBILITY_SELF_TEST) {
-        this.scheduleVisibilitySelfTest(import.meta.env.VITE_VISIBILITY_SELF_TEST === "instance-hide");
-      }
+  constructor(private readonly runtime = hasTauriRuntime()) {
+    const initial = runtime ? EMPTY_RUNTIME_PROJECTION : FIXTURE_PROJECTION;
+    this.snapshot = initial;
+    this.canonicalSnapshot = initial;
+    if (runtime && import.meta.env.DEV) {
+      this.selfTestCleanup = installSceneProjectionSelfTests(this, {
+        scene: import.meta.env.VITE_SCENE_SELF_TEST,
+        material: import.meta.env.VITE_MATERIAL_SELF_TEST,
+        visibility: import.meta.env.VITE_VISIBILITY_SELF_TEST,
+      });
     }
-  }
-
-  private scheduleVisibilitySelfTest(instanceMode: boolean): void {
-    if (instanceMode) {
-      const maxAttempts = 12;
-      const retryDelayMs = 250;
-      const findInstance = (attempt: number): void => {
-        const nodeId = this.snapshot.nodes.find(
-          (node) => node.parent === "scene" && node.kind === "mesh" && node.id !== "cube",
-        )?.id;
-        if (nodeId) {
-          console.log(`[visibility-self-test] step=hide instance=${nodeId}`);
-          void this.dispatch({ type: "setVisibility", nodeId, visible: false });
-          window.setTimeout(() => this.logVisibilitySelfTestResult("hide", nodeId), 1500);
-          return;
-        }
-        if (attempt < maxAttempts) {
-          window.setTimeout(() => findInstance(attempt + 1), retryDelayMs);
-          return;
-        }
-        console.log("[visibility-self-test] step=hide instance=missing");
-      };
-      window.setTimeout(() => findInstance(0), 2500);
-      return;
-    }
-
-    window.setTimeout(() => {
-      const nodeId = "cube";
-      console.log(`[visibility-self-test] step=hide cube=${nodeId}`);
-      void this.dispatch({ type: "setVisibility", nodeId, visible: false });
-      window.setTimeout(() => this.logVisibilitySelfTestResult("hide", nodeId), 1500);
-      window.setTimeout(() => {
-        console.log(`[visibility-self-test] step=show cube=${nodeId}`);
-        void this.dispatch({ type: "setVisibility", nodeId, visible: true });
-      }, 1500);
-      window.setTimeout(() => this.logVisibilitySelfTestResult("show", nodeId), 3000);
-    }, 2500);
-  }
-
-  private logVisibilitySelfTestResult(step: string, nodeId: string): void {
-    const result = [...this.snapshot.commandResults]
-      .reverse()
-      .find((candidate) => candidate.nodeId === nodeId && candidate.property === "visibility");
-    const visible = this.snapshot.nodes.find((node) => node.id === nodeId)?.visible;
-    const message =
-      `[visibility-self-test] step=${step} node=${nodeId} sequence=${result?.sequence ?? "pending"} ` +
-      `applied=${result?.applied ?? "pending"} visible=${visible ?? "missing"}`;
-    console.log(message);
-    window.dispatchEvent(
-      new CustomEvent("tauri3d:diagnostic", {
-        detail: { level: "info", source: "scene", message },
-      }),
-    );
-    window.dispatchEvent(new CustomEvent("tauri3d:console-toggle", { detail: { open: true } }));
   }
 
   getSnapshot = (): SceneProjection => this.snapshot;
 
+  private warnOnce(key: WarningKey, report: () => void): void {
+    if (this.warned[key]) return;
+    this.warned[key] = true;
+    report();
+  }
+
+  private resetWarning(key: WarningKey): void {
+    this.warned[key] = false;
+  }
+
   subscribe = (listener: Listener): (() => void) => {
+    if (this.listeners.size === 0) this.disposed = false;
     this.listeners.add(listener);
-    if (this.listeners.size === 1 && hasTauriRuntime()) {
+    if (this.listeners.size === 1 && this.runtime) {
       void this.poll();
       this.pollId = window.setInterval(() => void this.poll(), POLL_INTERVAL_MS);
     }
@@ -146,6 +409,17 @@ export class SceneProjectionDataSource {
   };
 
   dispose(): void {
+    this.selfTestCleanup?.();
+    this.selfTestCleanup = undefined;
+    this.disposed = true;
+    this.pollGeneration += 1;
+    this.commandGeneration += 1;
+    this.pollInFlight = undefined;
+    for (const flight of this.commandFlights.values()) flight.detach?.();
+    this.pendingCommands.clear();
+    this.commandFlights.clear();
+    this.commandKeys.clear();
+    this.listeners.clear();
     if (this.pollId !== undefined) {
       window.clearInterval(this.pollId);
       this.pollId = undefined;
@@ -153,7 +427,8 @@ export class SceneProjectionDataSource {
   }
 
   async select(nodeId: string): Promise<void> {
-    if (!hasTauriRuntime()) {
+    if (this.disposed) return;
+    if (!this.runtime) {
       const selected = this.snapshot.nodes.some((node) => node.id === nodeId) ? nodeId : null;
       if (selected === null) return;
       this.snapshot = {
@@ -166,19 +441,27 @@ export class SceneProjectionDataSource {
       return;
     }
 
+    const generation = this.commandGeneration;
     try {
       await invoke("select_scene_node", { nodeId });
+      if (this.disposed || generation !== this.commandGeneration) return;
+      this.resetWarning("select");
     } catch (error) {
-      if (!this.warned) {
-        this.warned = true;
-        console.warn("[SceneProjection] select_scene_node invoke failed:", error);
-      }
+      if (this.disposed || generation !== this.commandGeneration) return;
+      this.warnOnce("select", () => {
+        reportSceneError("select_scene_node invoke failed", error);
+      });
     }
   }
 
   async dispatch(command: SceneCommand): Promise<void> {
-    const envelope: SceneCommandEnvelope = { sequence: ++this.nextSequence, command };
-    if (!hasTauriRuntime()) {
+    if (this.disposed) return;
+    const envelope: SceneCommandEnvelope = {
+      epoch: this.snapshot.epoch,
+      sequence: ++this.nextSequence,
+      command,
+    };
+    if (!this.runtime) {
       if (command.type === "setVisibility") {
         const node = this.snapshot.nodes.find((candidate) => candidate.id === command.nodeId);
         if (!node) return;
@@ -195,6 +478,18 @@ export class SceneProjectionDataSource {
         return;
       }
       const selected = this.snapshot.selected;
+      if (command.type === "setTransform") {
+        if (!selected || selected.id !== command.nodeId || !selected.transformEditable) return;
+        this.snapshot = {
+          ...this.snapshot,
+          revision: this.snapshot.revision + 1,
+          selected: { ...selected, transform: command.transform },
+          lastProcessedSequence: envelope.sequence,
+          commandResults: [...this.snapshot.commandResults, resultFor(envelope, true)].slice(-32),
+        };
+        this.emit();
+        return;
+      }
       if (isLightCommand(command) && (!selected?.light || selected.id !== command.nodeId)) return;
       const light = selected?.light;
       if (selected && light && selected.id === command.nodeId && isLightCommand(command)) {
@@ -223,34 +518,84 @@ export class SceneProjectionDataSource {
     }
 
     const key = commandKey(command);
+    if (!this.commandKeys.has(key) && this.commandKeys.size >= MAX_PENDING_SCENE_COMMANDS) {
+      this.warnOnce("dispatch", () => {
+        console.warn(
+          `[SceneProjection] scene command capacity is full (${MAX_PENDING_SCENE_COMMANDS}); command was dropped`,
+        );
+      });
+      return;
+    }
+    this.commandKeys.add(key);
     this.pendingCommands.set(key, envelope);
     this.applyOptimistic(envelope);
 
-    const flight = this.commandFlights.get(key);
-    if (flight?.active) {
-      flight.queued = envelope;
+    const activeFlight = this.commandFlights.get(key);
+    if (activeFlight?.active) {
+      activeFlight.queued = envelope;
       return;
     }
-    this.commandFlights.set(key, { active: true });
-    await this.sendCommand(key, envelope);
+    const flight: SceneCommandFlight = { active: true };
+    this.commandFlights.set(key, flight);
+    this.commandKeys.add(key);
+    await this.sendCommand(key, envelope, flight, this.commandGeneration);
+  }
+
+  async undoTransform(): Promise<void> {
+    if (!this.runtime) return;
+    try {
+      await waitForViewportInputIdle();
+      await invoke("undo_transform");
+    } catch (error) {
+      this.warnOnce("dispatch", () => reportSceneError("undo_transform invoke failed", error));
+    }
+  }
+
+  async redoTransform(): Promise<void> {
+    if (!this.runtime) return;
+    try {
+      await waitForViewportInputIdle();
+      await invoke("redo_transform");
+    } catch (error) {
+      this.warnOnce("dispatch", () => reportSceneError("redo_transform invoke failed", error));
+    }
   }
 
   private async poll(): Promise<void> {
+    if (this.disposed || this.listeners.size === 0) return;
     if (this.pollInFlight) return this.pollInFlight;
+    const generation = this.pollGeneration;
     const request = (async () => {
       try {
-        const projection = await invoke<SceneProjection>("get_scene_projection");
+        const rawProjection = await invoke<unknown>("get_scene_projection");
+        if (this.disposed || generation !== this.pollGeneration) return;
+        const projection = normalizeSceneProjection(rawProjection);
+        if (!projection) {
+          this.warnOnce("poll", () => {
+            reportSceneError("get_scene_projection returned an invalid projection payload", "malformed payload");
+          });
+          return;
+        }
+        this.resetWarning("poll");
         // The first native snapshot is authoritative even when its revision is
         // lower than the browser fixture.  Later rollbacks are rejected.
-        if (shouldAcceptSceneProjection(this.nativeSnapshotAccepted, this.snapshot.revision, projection.revision)) {
+        if (
+          shouldAcceptSceneProjection(
+            this.nativeSnapshotAccepted,
+            this.canonicalSnapshot.revision,
+            projection.revision,
+            this.canonicalSnapshot.epoch,
+            projection.epoch,
+          )
+        ) {
           this.nativeSnapshotAccepted = true;
           this.applyProjection(projection);
         }
       } catch (error) {
-        if (!this.warned) {
-          this.warned = true;
-          console.warn("[SceneProjection] get_scene_projection invoke failed; using fixture:", error);
-        }
+        if (this.disposed || generation !== this.pollGeneration) return;
+        this.warnOnce("poll", () => {
+          reportSceneError("get_scene_projection invoke failed; runtime projection unavailable", error);
+        });
       }
     })();
     this.pollInFlight = request;
@@ -261,34 +606,93 @@ export class SceneProjectionDataSource {
     }
   }
 
-  private async sendCommand(key: string, envelope: SceneCommandEnvelope): Promise<void> {
-    try {
-      await invoke("dispatch_scene_command", { command: envelope });
-    } catch (error) {
-      if (this.pendingCommands.get(key)?.sequence === envelope.sequence) {
-        this.pendingCommands.delete(key);
-        this.recordCommandResult(resultFor(envelope, false, String(error)));
+  private async sendCommand(
+    key: string,
+    envelope: SceneCommandEnvelope,
+    flight: SceneCommandFlight,
+    generation: number,
+  ): Promise<void> {
+    let resolveDetached!: () => void;
+    let detached = false;
+    const detachedCompletion = new Promise<void>((resolve) => {
+      resolveDetached = () => {
+        if (detached) return;
+        detached = true;
+        resolve();
+      };
+    });
+    flight.detach = resolveDetached;
+
+    const invokeTask = (async () => {
+      try {
+        await invoke("dispatch_scene_command", { command: envelope });
+        if (
+          !this.disposed &&
+          generation === this.commandGeneration &&
+          this.commandFlights.get(key) === flight &&
+          envelope.epoch === this.snapshot.epoch
+        ) {
+          this.resetWarning("dispatch");
+        }
+      } catch (error) {
+        const current =
+          !this.disposed &&
+          generation === this.commandGeneration &&
+          this.commandFlights.get(key) === flight &&
+          envelope.epoch === this.snapshot.epoch;
+        if (current && this.pendingCommands.get(key)?.sequence === envelope.sequence) {
+          const rollback = rollbackRejectedCommand(this.canonicalSnapshot, this.pendingCommands, envelope);
+          this.pendingCommands.clear();
+          rollback.pending.forEach((next, nextKey) => this.pendingCommands.set(nextKey, next));
+          this.pruneCommandKeys();
+          this.snapshot = {
+            ...rollback.projection,
+            revision: Math.max(this.snapshot.revision, this.canonicalSnapshot.revision) + 1,
+            lastProcessedSequence: Math.max(this.snapshot.lastProcessedSequence, envelope.sequence),
+            commandResults: [...this.snapshot.commandResults, resultFor(envelope, false, boundedDiagnosticText(error))].slice(-32),
+          };
+          this.emit();
+        }
+        if (current) {
+          this.warnOnce("dispatch", () => {
+            console.warn("[SceneProjection] dispatch_scene_command invoke failed:", error);
+          });
+        }
+      } finally {
+        flight.detach = undefined;
+        // A Scene replacement clears old flights.  Do not let an old invoke's
+        // finally block observe a newly-created flight for the same key.
+        if (generation !== this.commandGeneration || this.commandFlights.get(key) !== flight) return;
+        if (flight.queued) {
+          const next = flight.queued;
+          flight.queued = undefined;
+          await this.sendCommand(key, next, flight, generation);
+        } else {
+          this.commandFlights.delete(key);
+          this.pruneCommandKeys();
+        }
       }
-      if (!this.warned) {
-        this.warned = true;
-        console.warn("[SceneProjection] dispatch_scene_command invoke failed:", error);
-      }
-    } finally {
-      const flight = this.commandFlights.get(key);
-      if (flight?.queued) {
-        const next = flight.queued;
-        flight.queued = undefined;
-        await this.sendCommand(key, next);
-      } else {
-        this.commandFlights.delete(key);
-      }
-    }
+    })();
+    await Promise.race([invokeTask, detachedCompletion]);
   }
 
   private applyProjection(projection: SceneProjection): void {
+    if (projection.epoch !== this.snapshot.epoch) {
+      // Pending values and queued invokes belong to the previous Scene.  The
+      // active invoke cannot be canceled, but its completion is fenced by the
+      // flight identity check in sendCommand.  Release local callers now so a
+      // stalled old transport cannot retain the replaced Scene.
+      this.commandGeneration += 1;
+      for (const flight of this.commandFlights.values()) flight.detach?.();
+      this.pendingCommands.clear();
+      this.commandFlights.clear();
+      this.commandKeys.clear();
+    }
+    this.canonicalSnapshot = projection;
     const reconciled = reconcileSceneProjection(projection, this.pendingCommands);
     this.pendingCommands.clear();
     reconciled.pending.forEach((envelope, key) => this.pendingCommands.set(key, envelope));
+    this.pruneCommandKeys();
     const next = reconciled.projection;
     if (next !== this.snapshot || next.revision !== this.snapshot.revision) {
       this.snapshot = next;
@@ -304,18 +708,28 @@ export class SceneProjectionDataSource {
     }
   }
 
-  private recordCommandResult(result: SceneCommandResult): void {
-    this.snapshot = {
-      ...this.snapshot,
-      revision: this.snapshot.revision + 1,
-      lastProcessedSequence: Math.max(this.snapshot.lastProcessedSequence, result.sequence),
-      commandResults: [...this.snapshot.commandResults, result].slice(-32),
-    };
-    this.emit();
+  private pruneCommandKeys(): void {
+    for (const key of this.commandKeys) {
+      if (!this.pendingCommands.has(key) && !this.commandFlights.has(key)) {
+        this.commandKeys.delete(key);
+      }
+    }
   }
 
   private emit(): void {
-    this.listeners.forEach((listener) => listener());
+    this.listeners.forEach((listener) => {
+      try {
+        listener();
+      } catch (error) {
+        // One consumer must not abort the remaining subscription fanout or
+        // turn an otherwise successful poll into a transport failure.
+        try {
+          console.error("[SceneProjection] subscriber failed:", error);
+        } catch {
+          // Console implementations can be replaced by embedding hosts.
+        }
+      }
+    });
   }
 }
 
@@ -323,8 +737,10 @@ export function shouldAcceptSceneProjection(
   nativeSnapshotAccepted: boolean,
   currentRevision: number,
   nextRevision: number,
+  currentEpoch = 1,
+  nextEpoch = currentEpoch,
 ): boolean {
-  return !nativeSnapshotAccepted || nextRevision > currentRevision;
+  return !nativeSnapshotAccepted || nextEpoch > currentEpoch || (nextEpoch === currentEpoch && nextRevision > currentRevision);
 }
 
 function commandKey(command: SceneCommand): string {
@@ -333,6 +749,8 @@ function commandKey(command: SceneCommand): string {
 
 function commandProperty(command: SceneCommand): SceneCommandProperty {
   switch (command.type) {
+    case "setTransform":
+      return "transform";
     case "setBaseColor":
       return "baseColor";
     case "setMetallic":
@@ -365,6 +783,7 @@ function resultFor(envelope: SceneCommandEnvelope, applied: boolean, error: stri
 }
 
 export function applyOptimisticToProjection(projection: SceneProjection, envelope: SceneCommandEnvelope): SceneProjection {
+  if (envelope.epoch !== projection.epoch) return projection;
   if (envelope.command.type === "setVisibility") {
     const visibility = envelope.command;
     const node = projection.nodes.find((candidate) => candidate.id === visibility.nodeId);
@@ -379,6 +798,13 @@ export function applyOptimisticToProjection(projection: SceneProjection, envelop
     };
   }
   const selected = projection.selected;
+  if (envelope.command.type === "setTransform") {
+    if (!selected || selected.id !== envelope.command.nodeId || !selected.transformEditable) return projection;
+    return {
+      ...projection,
+      selected: { ...selected, transform: envelope.command.transform },
+    };
+  }
   if (isLightCommand(envelope.command)) {
     if (!selected || selected.id !== envelope.command.nodeId || !selected.light) return projection;
     return {
@@ -405,6 +831,9 @@ export function reconcileSceneProjection(
   pendingCommands: ReadonlyMap<string, SceneCommandEnvelope>,
 ): { projection: SceneProjection; pending: Map<string, SceneCommandEnvelope> } {
   const pending = new Map(pendingCommands);
+  for (const [key, envelope] of pending) {
+    if (envelope.epoch !== projection.epoch) pending.delete(key);
+  }
   for (const result of projection.commandResults) {
     const key = `${result.nodeId}/${result.property}`;
     if (pending.get(key)?.sequence === result.sequence) pending.delete(key);
@@ -414,8 +843,22 @@ export function reconcileSceneProjection(
   return { projection: next, pending };
 }
 
+/** Rebuilds the optimistic view after a transport-level command rejection. */
+export function rollbackRejectedCommand(
+  canonical: SceneProjection,
+  pendingCommands: ReadonlyMap<string, SceneCommandEnvelope>,
+  rejected: SceneCommandEnvelope,
+): { projection: SceneProjection; pending: Map<string, SceneCommandEnvelope> } {
+  const pending = new Map(pendingCommands);
+  const key = commandKey(rejected.command);
+  if (pending.get(key)?.sequence === rejected.sequence) pending.delete(key);
+  return reconcileSceneProjection(canonical, pending);
+}
+
 function applyFixtureCommand(material: SceneMaterial, command: SceneCommand): SceneMaterial {
   switch (command.type) {
+    case "setTransform":
+      return material;
     case "setBaseColor":
       return { ...material, color: command.color };
     case "setMetallic":
@@ -458,6 +901,7 @@ function fixtureDetails(nodeId: string): SceneProjection["selected"] {
   if (nodeId === "key-light") {
     return {
       id: nodeId,
+      transformEditable: false,
       transform: {
         translation: [0, 0, 0],
         rotation: [0, 0, 0, 1],
@@ -480,6 +924,7 @@ function fixtureDetails(nodeId: string): SceneProjection["selected"] {
   }
   return {
     id: nodeId,
+    transformEditable: false,
     transform: {
       translation: [0, 0, 0],
       rotation: [0, 0, 0, 1],
@@ -512,4 +957,12 @@ export function selectSceneNode(nodeId: string): void {
 
 export function dispatchSceneCommand(command: SceneCommand): void {
   void sceneProjectionDataSource.dispatch(command);
+}
+
+export function undoSceneTransform(): void {
+  void sceneProjectionDataSource.undoTransform();
+}
+
+export function redoSceneTransform(): void {
+  void sceneProjectionDataSource.redoTransform();
 }

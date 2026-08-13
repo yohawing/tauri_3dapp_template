@@ -10,6 +10,8 @@ import {
   type ConsoleStore,
   formatConsoleEntries,
 } from "./state";
+import { boundSearchQuery, normalizeSearchQuery } from "../searchQuery";
+import { focusLazyPanelHost } from "../components/LazyPanelBoundary";
 
 const EMPTY_STATE: ConsoleState = {
   entries: [],
@@ -19,6 +21,70 @@ const EMPTY_STATE: ConsoleState = {
 };
 
 const EMPTY_SUBSCRIBE = (_listener: () => void): (() => void) => () => undefined;
+const CONSOLE_DRAWER_MIN_HEIGHT = 120;
+const CONSOLE_DRAWER_KEYBOARD_STEP = 16;
+
+export function isActiveConsoleResizePointer(activePointerId: number | null, pointerId: number): boolean {
+  return activePointerId === pointerId;
+}
+
+const consoleEntryKeys = new WeakMap<ConsoleEntry, number>();
+let nextConsoleEntryKey = 1;
+
+function consoleEntryKey(entry: ConsoleEntry): number {
+  const existing = consoleEntryKeys.get(entry);
+  if (existing !== undefined) return existing;
+  const key = nextConsoleEntryKey++;
+  consoleEntryKeys.set(entry, key);
+  return key;
+}
+
+export function formatConsoleLiveAnnouncement(entry: ConsoleEntry | undefined, additional: boolean): string {
+  if (!entry) return "Console cleared.";
+  const prefix = additional ? "Another" : "New";
+  return `${entry.timestamp}: ${prefix} ${entry.level} diagnostic from ${entry.source}.`;
+}
+
+/** Stable across appends while remaining unique if one object is repeated. */
+export function consoleEntryRenderKeys(entries: readonly ConsoleEntry[]): string[] {
+  const occurrences = new Map<ConsoleEntry, number>();
+  return entries.map((entry) => {
+    const occurrence = occurrences.get(entry) ?? 0;
+    occurrences.set(entry, occurrence + 1);
+    return `${consoleEntryKey(entry)}:${occurrence}`;
+  });
+}
+
+export function getConsoleDrawerMaxHeight(viewportHeight: number): number {
+  if (!Number.isFinite(viewportHeight)) return CONSOLE_DRAWER_MIN_HEIGHT;
+  return Math.max(CONSOLE_DRAWER_MIN_HEIGHT, viewportHeight * 0.65);
+}
+
+export function clampConsoleDrawerHeight(value: number, maxHeight: number): number {
+  const upperBound = Math.max(CONSOLE_DRAWER_MIN_HEIGHT, maxHeight);
+  if (!Number.isFinite(value)) return CONSOLE_DRAWER_MIN_HEIGHT;
+  return Math.max(CONSOLE_DRAWER_MIN_HEIGHT, Math.min(upperBound, value));
+}
+
+export function consoleDrawerHeightForKey(
+  key: string,
+  currentHeight: number,
+  maxHeight: number,
+): number | null {
+  const upperBound = Math.max(CONSOLE_DRAWER_MIN_HEIGHT, maxHeight);
+  switch (key) {
+    case "ArrowUp":
+      return clampConsoleDrawerHeight(currentHeight + CONSOLE_DRAWER_KEYBOARD_STEP, upperBound);
+    case "ArrowDown":
+      return clampConsoleDrawerHeight(currentHeight - CONSOLE_DRAWER_KEYBOARD_STEP, upperBound);
+    case "Home":
+      return CONSOLE_DRAWER_MIN_HEIGHT;
+    case "End":
+      return upperBound;
+    default:
+      return null;
+  }
+}
 
 export type ConsoleDrawerProps =
   | {
@@ -49,6 +115,9 @@ function filterLabel(filter: ConsoleFilter): string {
 export function ConsoleDrawer(props: ConsoleDrawerProps) {
   const store = props.store;
   const controlledState = props.state;
+  const onAction = props.onAction;
+  const onCopyAll = props.onCopyAll;
+  const customClassName = props.className;
   const getSnapshot = useCallback(
     () => store?.getState() ?? controlledState ?? EMPTY_STATE,
     [controlledState, store],
@@ -63,43 +132,94 @@ export function ConsoleDrawer(props: ConsoleDrawerProps) {
       if (store) {
         store.dispatch(action);
       } else {
-        props.onAction(action);
+        onAction?.(action);
       }
     },
-    [props, store],
+    [onAction, store],
   );
   const [query, setQuery] = useState("");
   const visibleEntries = useMemo(
-    () => selectVisibleConsoleEntries(state.entries, state.levelFilter).filter((entry) => {
-      const needle = query.trim().toLocaleLowerCase();
-      return needle.length === 0 || `${entry.source} ${entry.message}`.toLocaleLowerCase().includes(needle);
-    }),
+    () => {
+      const needle = normalizeSearchQuery(query);
+      return selectVisibleConsoleEntries(state.entries, state.levelFilter).filter((entry) =>
+        needle.length === 0 || `${entry.source} ${entry.message}`.toLocaleLowerCase().includes(needle),
+      );
+    },
     [query, state.entries, state.levelFilter],
   );
+  const visibleEntryKeys = useMemo(() => consoleEntryRenderKeys(visibleEntries), [visibleEntries]);
   const listRef = useRef<HTMLOListElement>(null);
+  const previousEntriesRef = useRef(state.entries);
+  const liveAnnouncementAdditionalRef = useRef(false);
+  const [liveAnnouncement, setLiveAnnouncement] = useState("");
+  const mountedRef = useRef(false);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const [drawerHeight, setDrawerHeight] = useState(220);
   const resizeStartRef = useRef<{ pointerY: number; height: number } | null>(null);
+  const resizePointerIdRef = useRef<number | null>(null);
+  const maxDrawerHeight = getConsoleDrawerMaxHeight(
+    typeof window === "undefined" ? Number.NaN : window.innerHeight,
+  );
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const handleResizePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (resizePointerIdRef.current !== null) return;
     resizeStartRef.current = { pointerY: event.clientY, height: drawerHeight };
+    resizePointerIdRef.current = event.pointerId;
     event.currentTarget.setPointerCapture(event.pointerId);
     event.preventDefault();
   }, [drawerHeight]);
 
   const handleResizePointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!isActiveConsoleResizePointer(resizePointerIdRef.current, event.pointerId)) return;
     const start = resizeStartRef.current;
     if (!start) return;
     const next = start.height + start.pointerY - event.clientY;
-    setDrawerHeight(Math.max(120, Math.min(window.innerHeight * 0.65, next)));
+    setDrawerHeight(clampConsoleDrawerHeight(next, getConsoleDrawerMaxHeight(window.innerHeight)));
   }, []);
 
   const handleResizePointerEnd = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!isActiveConsoleResizePointer(resizePointerIdRef.current, event.pointerId)) return;
     resizeStartRef.current = null;
+    resizePointerIdRef.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
   }, []);
+
+  const handleResizeLostPointerCapture = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!isActiveConsoleResizePointer(resizePointerIdRef.current, event.pointerId)) return;
+    resizeStartRef.current = null;
+    resizePointerIdRef.current = null;
+  }, []);
+
+  const handleResizeKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    const next = consoleDrawerHeightForKey(event.key, drawerHeight, maxDrawerHeight);
+    if (next === null) return;
+    event.preventDefault();
+    setDrawerHeight(next);
+  }, [drawerHeight, maxDrawerHeight]);
+
+  useEffect(() => {
+    const previousEntries = previousEntriesRef.current;
+    previousEntriesRef.current = state.entries;
+    if (previousEntries === state.entries) return;
+    const latest = state.entries.at(-1);
+    if (!latest) {
+      liveAnnouncementAdditionalRef.current = false;
+      setLiveAnnouncement(formatConsoleLiveAnnouncement(undefined, false));
+      return;
+    }
+    const additional = liveAnnouncementAdditionalRef.current;
+    liveAnnouncementAdditionalRef.current = !additional;
+    setLiveAnnouncement(formatConsoleLiveAnnouncement(latest, additional));
+  }, [state.entries]);
 
   useEffect(() => {
     if (!state.autoScroll || !listRef.current) return;
@@ -118,18 +238,18 @@ export function ConsoleDrawer(props: ConsoleDrawerProps) {
   const handleCopyAll = useCallback(async () => {
     const text = formatConsoleEntries(state.entries);
     try {
-      if (props.onCopyAll) {
-        await props.onCopyAll(text);
+      if (onCopyAll) {
+        await onCopyAll(text);
       } else if (typeof navigator !== "undefined" && navigator.clipboard) {
         await navigator.clipboard.writeText(text);
       } else {
         throw new Error("Clipboard API unavailable");
       }
-      setCopyState("copied");
+      if (mountedRef.current) setCopyState("copied");
     } catch {
-      setCopyState("failed");
+      if (mountedRef.current) setCopyState("failed");
     }
-  }, [props, state.entries]);
+  }, [onCopyAll, state.entries]);
 
   useEffect(() => {
     if (copyState === "idle") return;
@@ -137,7 +257,7 @@ export function ConsoleDrawer(props: ConsoleDrawerProps) {
     return () => window.clearTimeout(timeout);
   }, [copyState]);
 
-  const className = ["console-drawer", props.className].filter(Boolean).join(" ");
+  const className = ["console-drawer", customClassName].filter(Boolean).join(" ");
   const copyLabel = copyState === "copied" ? "Copied" : copyState === "failed" ? "Copy failed" : "Copy All";
 
   return (
@@ -147,22 +267,31 @@ export function ConsoleDrawer(props: ConsoleDrawerProps) {
         role="separator"
         aria-label="Resize Console"
         aria-orientation="horizontal"
+        aria-valuemin={CONSOLE_DRAWER_MIN_HEIGHT}
+        aria-valuemax={maxDrawerHeight}
+        aria-valuenow={clampConsoleDrawerHeight(drawerHeight, maxDrawerHeight)}
+        tabIndex={0}
         onPointerDown={handleResizePointerDown}
         onPointerMove={handleResizePointerMove}
         onPointerUp={handleResizePointerEnd}
         onPointerCancel={handleResizePointerEnd}
+        onLostPointerCapture={handleResizeLostPointerCapture}
+        onKeyDown={handleResizeKeyDown}
       />
       <header className="console-drawer__header">
-        <div className="console-drawer__tabs" role="tablist" aria-label="Bottom panel">
+        <div className="console-drawer__tabs" role="group" aria-label="Bottom panel">
           <button
             className="console-drawer__tab"
             type="button"
-            role="tab"
-            onClick={() => window.dispatchEvent(new CustomEvent("tauri3d:console-toggle", { detail: { open: false } }))}
+            aria-pressed="false"
+            onClick={(event) => {
+              focusLazyPanelHost(event.currentTarget);
+              window.dispatchEvent(new CustomEvent("tauri3d:console-toggle", { detail: { open: false } }));
+            }}
           >
             Timeline
           </button>
-          <button className="console-drawer__tab console-drawer__tab--active" type="button" role="tab" aria-selected="true">
+          <button className="console-drawer__tab console-drawer__tab--active" type="button" aria-pressed="true">
             Console
           </button>
           <span className="console-drawer__count" aria-label={`${state.entries.length} entries`}>
@@ -189,7 +318,7 @@ export function ConsoleDrawer(props: ConsoleDrawerProps) {
             type="search"
             placeholder="Filter…"
             value={query}
-            onChange={(event) => setQuery(event.currentTarget.value)}
+            onChange={(event) => setQuery(boundSearchQuery(event.currentTarget.value))}
           />
           <button className="console-drawer__button" type="button" onClick={handleCopyAll}>
             {copyLabel}
@@ -208,12 +337,30 @@ export function ConsoleDrawer(props: ConsoleDrawerProps) {
         </div>
       </header>
 
+      <div
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        style={{
+          position: "absolute",
+          width: 1,
+          height: 1,
+          padding: 0,
+          margin: -1,
+          overflow: "hidden",
+          clip: "rect(0, 0, 0, 0)",
+          whiteSpace: "nowrap",
+          border: 0,
+        }}
+      >
+        {liveAnnouncement}
+      </div>
       <ol className="console-drawer__entries" ref={listRef} onScroll={handleScroll}>
         {visibleEntries.length === 0 ? (
           <li className="console-drawer__empty">No diagnostics in this view.</li>
         ) : (
           visibleEntries.map((entry, index) => (
-            <li className={entryClassName(entry)} key={`${entry.timestamp}-${index}`}>
+            <li className={entryClassName(entry)} key={visibleEntryKeys[index]}>
               <time className="console-drawer__timestamp" dateTime={entry.timestamp}>{entry.timestamp}</time>
               <span className="console-drawer__level">{entry.level}</span>
               <span className="console-drawer__source">{entry.source}</span>

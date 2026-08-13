@@ -4,6 +4,7 @@ import {
   SETTINGS_STORAGE_KEY,
   SETTINGS_VERSION,
   loadSettings,
+  normalizeViewportEnvironmentSettings,
   saveSettings,
 } from "./model";
 
@@ -20,6 +21,22 @@ class MemoryStorage {
 }
 
 describe("settings persistence", () => {
+  it("accepts only finite, bounded environment IPC responses", () => {
+    const value = {
+      enabled: true,
+      path: "C:\\assets\\studio.hdr",
+      rotationDegrees: -90,
+      intensity: 2,
+    };
+    expect(normalizeViewportEnvironmentSettings(value)).toEqual(value);
+    expect(normalizeViewportEnvironmentSettings({ ...value, intensity: Number.NaN })).toBeNull();
+    expect(normalizeViewportEnvironmentSettings({ ...value, intensity: Number.MAX_VALUE })).toBeNull();
+    expect(normalizeViewportEnvironmentSettings({ ...value, rotationDegrees: Number.MAX_VALUE })).toBeNull();
+    expect(normalizeViewportEnvironmentSettings({ ...value, rotationDegrees: 181 })).toBeNull();
+    expect(normalizeViewportEnvironmentSettings({ ...value, enabled: "yes" })).toBeNull();
+    expect(normalizeViewportEnvironmentSettings({ ...value, path: null })).toBeNull();
+  });
+
   it("returns independent defaults when no persisted value exists", () => {
     const first = loadSettings(null);
     first.viewport.debugOverlay = true;
@@ -209,6 +226,24 @@ describe("settings persistence", () => {
       }),
     );
     expect(loadSettings(storage).viewport.lighting).toEqual(DEFAULT_SETTINGS.viewport.lighting);
+  });
+
+  it("falls back for an oversized persisted environment path", () => {
+    const storage = new MemoryStorage();
+    storage.setItem(
+      SETTINGS_STORAGE_KEY,
+      JSON.stringify({
+        version: SETTINGS_VERSION,
+        settings: { viewport: { environment: { path: "p".repeat(4_097) } } },
+      }),
+    );
+    expect(loadSettings(storage).viewport.environment.path).toBe(DEFAULT_SETTINGS.viewport.environment.path);
+  });
+
+  it("fails closed before parsing an oversized storage payload", () => {
+    const storage = new MemoryStorage();
+    storage.setItem(SETTINGS_STORAGE_KEY, `{"version":${SETTINGS_VERSION},"settings":{"console":{"minimumLevel":"info","autoScroll":true},"padding":"${"x".repeat(300_000)}"}}`);
+    expect(loadSettings(storage)).toEqual(DEFAULT_SETTINGS);
   });
 
   it("does not throw when the storage implementation fails", () => {

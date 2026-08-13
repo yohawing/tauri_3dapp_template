@@ -93,7 +93,6 @@ export function ShellComponentsPage() {
         <nav aria-label="Component stories">
           {storyLinks.map(([id, label]) => <a key={id} href={`#${id}`}>{label}</a>)}
         </nav>
-        <a className="components-page__compare-link" href="/?shell=compare">← Visual comparison</a>
       </aside>
       <div className="components-page__content">
         <header className="components-page__intro">

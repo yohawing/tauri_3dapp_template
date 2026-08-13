@@ -130,13 +130,24 @@
 }
 
 .outliner-row__caret {
+  appearance: none;
   flex: 0 0 12px;
   display: grid;
   place-items: center;
+  width: 12px;
+  height: 16px;
+  padding: 0;
+  border: 0;
   color: #8a8a94;
+  background: transparent;
   font-size: 11px;
   line-height: 1;
   cursor: pointer;
+}
+
+.outliner-row__caret:focus-visible {
+  outline: 1px solid #5a8fe0;
+  outline-offset: -1px;
 }
 
 .outliner-row__kind {

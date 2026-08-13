@@ -1,0 +1,63 @@
+name: verify
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Run verification gates
+        run: npm run verify
+
+      - name: Check committed patch whitespace
+        shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_SHA: ${{ github.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          $baseSha = if ($env:EVENT_NAME -eq "pull_request") {
+            $env:PR_BASE_SHA
+          } else {
+            $env:PUSH_BEFORE_SHA
+          }
+
+          if ([string]::IsNullOrWhiteSpace($baseSha) -or $baseSha -match "^0+$") {
+            Write-Host "No comparable parent commit; skipping patch whitespace check."
+            exit 0
+          }
+
+          $range = "$baseSha..$env:HEAD_SHA"
+          git diff --check $range
+          if ($LASTEXITCODE -ne 0) {
+            throw "git diff --check found whitespace errors in $range"
+          }
+
+      - name: Build debug bundle smoke
+        run: npm run tauri build -- --debug

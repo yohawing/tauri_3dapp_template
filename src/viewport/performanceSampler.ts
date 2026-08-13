@@ -22,6 +22,16 @@ export interface PerformanceSummary {
   gpuTiming: "unavailable";
 }
 
+export const MAX_PERFORMANCE_SAMPLE_FRAMES = 1_000_000;
+
+export function parsePerformanceSampleFrames(value: string | undefined): number | null {
+  if (!value || !/^\d+$/.test(value.trim())) return null;
+  const frames = Number(value.trim());
+  return Number.isSafeInteger(frames) && frames > 0 && frames <= MAX_PERFORMANCE_SAMPLE_FRAMES
+    ? frames
+    : null;
+}
+
 export function parsePerformanceTarget(value: string | undefined): [number, number] | null {
   if (!value) return null;
   const match = /^(\d+)x(\d+)$/.exec(value.trim());
@@ -41,8 +51,8 @@ function rounded(value: number): number {
   return Math.round(value * 1000) / 1000;
 }
 
-function optionalPercentile(values: number[], fraction: number): number | null {
-  return values.length === 0 ? null : rounded(percentile([...values].sort((a, b) => a - b), fraction));
+function optionalPercentile(sortedValues: number[], fraction: number): number | null {
+  return sortedValues.length === 0 ? null : rounded(percentile(sortedValues, fraction));
 }
 
 export class CanvasPerformanceSampler {
@@ -63,7 +73,18 @@ export class CanvasPerformanceSampler {
   ) {}
 
   observe(frameStartedAt: number, cpuRenderMs: number, rafTimestamp?: number): PerformanceSummary | null {
+    if (
+      !Number.isFinite(frameStartedAt) ||
+      !Number.isFinite(cpuRenderMs) ||
+      cpuRenderMs < 0 ||
+      (rafTimestamp !== undefined && !Number.isFinite(rafTimestamp))
+    ) return null;
     const wall = this.previousFrameAt === null ? null : frameStartedAt - this.previousFrameAt;
+    if (wall !== null && (!Number.isFinite(wall) || wall <= 0)) {
+      this.previousFrameAt = frameStartedAt;
+      this.previousRafTimestamp = rafTimestamp ?? this.previousRafTimestamp;
+      return null;
+    }
     this.previousFrameAt = frameStartedAt;
     const rafInterval =
       rafTimestamp !== undefined && this.previousRafTimestamp !== null
@@ -76,14 +97,17 @@ export class CanvasPerformanceSampler {
     this.frameWallMs.push(wall);
     this.cpuRenderMs.push(cpuRenderMs);
     if (rafTimestamp !== undefined) {
-      this.rafCallbackDelayMs.push(Math.max(0, frameStartedAt - rafTimestamp));
-      if (rafInterval !== null) this.rafTimestampIntervalsMs.push(Math.max(0, rafInterval));
+      const callbackDelay = frameStartedAt - rafTimestamp;
+      if (callbackDelay >= 0) this.rafCallbackDelayMs.push(callbackDelay);
+      if (rafInterval !== null && rafInterval > 0) this.rafTimestampIntervalsMs.push(rafInterval);
     }
     if (this.frameWallMs.length < this.sampleFrames) return null;
 
     this.reported = true;
-    const wallSorted = [...this.frameWallMs].sort((a, b) => a - b);
-    const cpuSorted = [...this.cpuRenderMs].sort((a, b) => a - b);
+    this.frameWallMs.sort((a, b) => a - b);
+    this.cpuRenderMs.sort((a, b) => a - b);
+    this.rafCallbackDelayMs.sort((a, b) => a - b);
+    this.rafTimestampIntervalsMs.sort((a, b) => a - b);
     const averageWall = this.frameWallMs.reduce((sum, value) => sum + value, 0) / this.frameWallMs.length;
     return {
       backend: "canvas",
@@ -91,18 +115,18 @@ export class CanvasPerformanceSampler {
       targetHeight: this.targetHeight,
       samples: this.frameWallMs.length,
       averageFps: rounded(1000 / averageWall),
-      frameWallP50Ms: rounded(percentile(wallSorted, 0.5)),
-      frameWallP95Ms: rounded(percentile(wallSorted, 0.95)),
-      frameWallP99Ms: rounded(percentile(wallSorted, 0.99)),
+      frameWallP50Ms: rounded(percentile(this.frameWallMs, 0.5)),
+      frameWallP95Ms: rounded(percentile(this.frameWallMs, 0.95)),
+      frameWallP99Ms: rounded(percentile(this.frameWallMs, 0.99)),
       rafCallbackDelayP50Ms: optionalPercentile(this.rafCallbackDelayMs, 0.5),
       rafCallbackDelayP95Ms: optionalPercentile(this.rafCallbackDelayMs, 0.95),
       rafCallbackDelayP99Ms: optionalPercentile(this.rafCallbackDelayMs, 0.99),
       rafTimestampP50Ms: optionalPercentile(this.rafTimestampIntervalsMs, 0.5),
       rafTimestampP95Ms: optionalPercentile(this.rafTimestampIntervalsMs, 0.95),
       rafTimestampP99Ms: optionalPercentile(this.rafTimestampIntervalsMs, 0.99),
-      cpuRenderP50Ms: rounded(percentile(cpuSorted, 0.5)),
-      cpuRenderP95Ms: rounded(percentile(cpuSorted, 0.95)),
-      cpuRenderP99Ms: rounded(percentile(cpuSorted, 0.99)),
+      cpuRenderP50Ms: rounded(percentile(this.cpuRenderMs, 0.5)),
+      cpuRenderP95Ms: rounded(percentile(this.cpuRenderMs, 0.95)),
+      cpuRenderP99Ms: rounded(percentile(this.cpuRenderMs, 0.99)),
       gpuP95Ms: null,
       gpuTiming: "unavailable",
     };

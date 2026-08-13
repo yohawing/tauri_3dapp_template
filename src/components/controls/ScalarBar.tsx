@@ -17,10 +17,10 @@ type ScalarBarProps = Omit<
   style?: CSSProperties;
 };
 
-const percent = (value: number, min: number, max: number) => {
-  if (max <= min) return 0;
+export function scalarBarPercent(value: number, min: number, max: number): number {
+  if (![value, min, max].every(Number.isFinite) || max <= min) return 0;
   return Math.min(100, Math.max(0, ((value - min) / (max - min)) * 100));
-};
+}
 
 export function ScalarBar({
   value,
@@ -32,7 +32,7 @@ export function ScalarBar({
   style,
   ...props
 }: ScalarBarProps) {
-  const progress = percent(value, min, max);
+  const progress = scalarBarPercent(value, min, max);
   const trackStyle = {
     ...style,
     "--scalar-progress": `${progress}%`,

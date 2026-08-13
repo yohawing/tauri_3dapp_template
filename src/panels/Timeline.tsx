@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { PointerEvent } from "react";
+import { boundedDiagnosticText, safeDiagnosticText } from "../console/contracts";
+import { createSelfTestTimerBag } from "../selfTestTimers";
 import { CompactNumberInput } from "../components/controls/CompactControls";
 import { RangeViewport, type RangeViewportValue } from "../components/controls/RangeViewport";
 import { runtimeTimelineDataSource } from "../timeline/adapters/gltfProjectionDataSource";
@@ -9,17 +11,26 @@ import {
   type TimelineItem,
   type TimelineKey,
   type TimelineKeyColumn,
+  type TimelinePlaybackTarget,
   type TimelineRow,
+  type RowRangeQuery,
 } from "../timeline/core/contracts";
 import {
-  dispatchTimelinePlayback,
+  createTimelinePlaybackDispatcher,
+  createTimelinePlaybackListener,
   getTimelinePlayback,
   projectTimelinePlaybackTime,
   reportTimelineEventPerformance,
+  resolveTimelinePlaybackTarget,
   subscribeTimelinePlayback,
+  timelinePlaybackTargetEquals,
   timelineEventAges,
   timelineSequenceGap,
+  createTimelinePlaybackCommandFlight,
+  timelinePlaybackCommandResultMatchesFlight,
+  shouldRollbackTimelinePlaybackCommand,
   type TimelinePlaybackCommand,
+  type TimelinePlaybackCommandFlight,
   type TimelinePlaybackSnapshot,
 } from "../timeline/playback";
 import {
@@ -37,6 +48,7 @@ import {
   type TimelineDisplayMode,
   type TimelineSeekPolicy,
 } from "../timeline/display";
+import { focusLazyPanelHost } from "../components/LazyPanelBoundary";
 import "./Timeline.css";
 
 const ROW_HEIGHT = 26;
@@ -46,18 +58,112 @@ const ZOOM_NAVIGATOR_BASE = 30;
 const PLAYHEAD_TIME = 4.55;
 const TIMELINE_FPS = 24;
 const NATIVE_PLAYBACK_EVENT_INTERVAL_MS = 250;
+const MAX_VISIBLE_TIMELINE_TICKS = 512;
 let timelineSelfTestHasRun = false;
 let timelinePlaybackSelfTestHasRun = false;
+const activeTimelineSelfTestCleanups = new Set<() => void>();
+
+/** Keep a rejected native transport command visible after optimistic rollback. */
+function reportTimelinePlaybackCommandFailure(error: unknown): void {
+  const message = `Native playback command failed; rolled back: ${boundedDiagnosticText(error)}`;
+  try {
+    console.warn("[Timeline]", message);
+  } catch {
+    // Embedding hosts may replace console methods with throwing shims.
+  }
+  if (typeof window === "undefined") return;
+  try {
+    window.dispatchEvent(new CustomEvent("tauri3d:diagnostic", {
+      detail: { level: "error", source: "timeline", message },
+    }));
+    window.dispatchEvent(new CustomEvent("tauri3d:console-toggle", { detail: { open: true } }));
+  } catch {
+    // Rollback already restored the native snapshot; diagnostics are best effort.
+  }
+}
+
+function registerTimelineSelfTestCleanup(cleanup: () => void): () => void {
+  activeTimelineSelfTestCleanups.add(cleanup);
+  return () => activeTimelineSelfTestCleanups.delete(cleanup);
+}
+
+// HMR can replace this module without first unmounting the current React tree.
+// Stop old scripted timers before a replacement module arms a second run.
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    activeTimelineSelfTestCleanups.forEach((cleanup) => cleanup());
+    activeTimelineSelfTestCleanups.clear();
+    timelineSelfTestHasRun = false;
+    timelinePlaybackSelfTestHasRun = false;
+  });
+}
+
+export function formatTimelinePlaybackStatus(
+  connection: PlaybackConnectionState,
+  isPlaying: boolean,
+): string {
+  switch (connection.kind) {
+    case "browser-preview":
+      return isPlaying ? "Timeline preview playing." : "Timeline preview paused.";
+    case "native-loading":
+      return "Connecting to Native playback.";
+    case "native-unavailable":
+      return "Native playback unavailable.";
+    case "native-available":
+      return isPlaying ? "Native playback playing." : "Native playback paused.";
+  }
+}
+
+/** Return the row page needed to paint the current viewport, including one row of overscan. */
+export function visibleTimelineRowQuery(
+  rowCount: number,
+  viewportTop: number,
+  viewportHeight: number,
+  rowHeight = ROW_HEIGHT,
+): RowRangeQuery {
+  const total = Number.isFinite(rowCount) ? Math.max(0, Math.floor(rowCount)) : 0;
+  const top = Number.isFinite(viewportTop) ? Math.max(0, viewportTop) : 0;
+  const height = Number.isFinite(viewportHeight) ? Math.max(0, viewportHeight) : 0;
+  const safeRowHeight = Number.isFinite(rowHeight) && rowHeight > 0 ? rowHeight : ROW_HEIGHT;
+  const start = Math.min(total, Math.floor(top / safeRowHeight));
+  const end = Math.min(total, Math.ceil((top + height) / safeRowHeight) + 1);
+  return { start, count: Math.max(0, end - start) };
+}
+
+/** Return only the ruler ticks intersecting the horizontal viewport. */
+export function visibleTimelineTicks(
+  timeEnd: number,
+  scrollLeft: number,
+  viewportWidth: number,
+  pixelsPerSecond: number,
+  tickStep: number,
+  overscanTicks = 2,
+): number[] {
+  const end = Number.isFinite(timeEnd) ? Math.max(0, timeEnd) : 0;
+  const scale = Number.isFinite(pixelsPerSecond) ? Math.max(0.001, pixelsPerSecond) : 1;
+  const step = Number.isFinite(tickStep) ? Math.max(0.001, tickStep) : 1;
+  const left = Number.isFinite(scrollLeft) ? Math.max(0, scrollLeft) : 0;
+  const width = Number.isFinite(viewportWidth) ? Math.max(0, viewportWidth) : 0;
+  const overscan = Number.isFinite(overscanTicks) ? Math.max(0, Math.floor(overscanTicks)) : 0;
+  const maxIndex = Math.floor(end / step);
+  const maxScroll = Math.max(0, end * scale - width);
+  const visibleLeft = Math.min(left, maxScroll);
+  const visibleRight = Math.min(end, (visibleLeft + width) / scale);
+  const firstIndex = Math.max(0, Math.floor((visibleLeft / scale) / step) - overscan);
+  const lastIndex = Math.min(maxIndex, Math.ceil(visibleRight / step) + overscan);
+  const count = Math.min(MAX_VISIBLE_TIMELINE_TICKS, Math.max(0, lastIndex - firstIndex + 1));
+  return Array.from({ length: count }, (_, offset) => (firstIndex + offset) * step);
+}
 
 function isTimelineTextEditingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
-
-  if (target.closest("textarea, [contenteditable='true']")) return true;
-
-  const input = target.closest("input");
-  if (!input) return false;
-  const type = input.getAttribute("type")?.toLowerCase() ?? "text";
-  return ["text", "search", "email", "url", "tel", "password"].includes(type);
+  if (target.closest("input, select, textarea")) return true;
+  let current: Element | null = target;
+  while (current) {
+    if (current instanceof HTMLElement && current.isContentEditable) return true;
+    current = current.parentElement;
+  }
+  return false;
 }
 
 function LoopIcon() {
@@ -254,6 +360,7 @@ function drawKeyColumn(
 function paintTimeline(
   canvas: HTMLCanvasElement,
   rows: readonly TimelineRow[],
+  rowStart: number,
   items: readonly TimelineItem[],
   keys: readonly TimelineKey[],
   keyColumns: readonly TimelineKeyColumn[],
@@ -277,10 +384,14 @@ function paintTimeline(
   context.clearRect(0, 0, canvasWidth, canvasHeight);
   context.translate(-viewport.left, -viewport.top);
 
-  const firstRow = Math.max(0, Math.floor(viewport.top / ROW_HEIGHT));
-  const lastRow = Math.min(rows.length, Math.ceil((viewport.top + viewport.height) / ROW_HEIGHT));
+  const firstRow = Math.max(rowStart, Math.floor(viewport.top / ROW_HEIGHT));
+  const lastRow = Math.min(
+    rowStart + rows.length,
+    Math.ceil((viewport.top + viewport.height) / ROW_HEIGHT),
+  );
   for (let index = firstRow; index < lastRow; index += 1) {
-    const row = rows[index];
+    const row = rows[index - rowStart];
+    if (!row) continue;
     const y = index * ROW_HEIGHT;
     context.fillStyle =
       row.kind === "group"
@@ -314,7 +425,7 @@ function paintTimeline(
   }
 
   const transform = createViewTransform(0, pixelsPerSecond);
-  const rowIndexById = new Map(rows.map((row, index) => [row.id, index]));
+  const rowIndexById = new Map(rows.map((row, index) => [row.id, rowStart + index]));
   for (const item of items) {
     const rowIndex = rowIndexById.get(item.rowId);
     if (rowIndex != null && rowIndex >= firstRow && rowIndex < lastRow) {
@@ -364,6 +475,8 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
   const compactPlayheadRef = useRef<HTMLDivElement>(null);
   const scrubbingRef = useRef(false);
   const timeDisplayModeRef = useRef<TimelineDisplayMode>("frames");
+  const pixelsPerSecondRef = useRef(MIN_PIXELS_PER_SECOND);
+  const timeEndRef = useRef(1);
   const rulerPlayheadRef = useRef<HTMLDivElement>(null);
   const frameReadoutRef = useRef<HTMLButtonElement>(null);
   const timeReadoutRef = useRef<HTMLButtonElement>(null);
@@ -387,14 +500,51 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
   const browserPreview = playbackConnection.kind === "browser-preview";
   const controlsEnabled = playbackControlsEnabled(playbackConnection);
   const nativePlaybackRef = useRef<TimelinePlaybackSnapshot | null>(null);
+  const [selectedTarget, setSelectedTarget] = useState<TimelinePlaybackTarget | null>(null);
+  const selectedTargetRef = useRef<TimelinePlaybackTarget | null>(null);
+  const acceptedPlaybackRef = useRef<TimelinePlaybackSnapshot | null>(null);
+  const acceptedPlaybackGenerationRef = useRef(0);
+  const playbackFlightIdRef = useRef(0);
+  const playbackFlightRef = useRef<TimelinePlaybackCommandFlight | null>(null);
+  const lastCommandResultSequenceRef = useRef(0);
+  const nativePlaybackEpochRef = useRef(0);
+  const playbackDispatcherRef = useRef<ReturnType<typeof createTimelinePlaybackDispatcher> | null>(null);
+  const dispatchPlayback = useCallback((command: TimelinePlaybackCommand, epoch: number, requestId?: number) => {
+    const dispatcher = playbackDispatcherRef.current ?? createTimelinePlaybackDispatcher();
+    playbackDispatcherRef.current = dispatcher;
+    return dispatcher.dispatch(command, epoch, requestId);
+  }, []);
+  const setSelectedPlaybackTarget = useCallback((target: TimelinePlaybackTarget | null) => {
+    selectedTargetRef.current = target;
+    setSelectedTarget((current) => timelinePlaybackTargetEquals(current, target) ? current : target);
+  }, []);
+  const selectPlaybackRow = useCallback((rowId: TimelineRow["id"]) => {
+    const target = dataSource.getPlaybackTarget?.(rowId) ?? null;
+    if (target) setSelectedPlaybackTarget(target);
+  }, [dataSource, setSelectedPlaybackTarget]);
+  const handlePlaybackRowKeyDown = useCallback((event: React.KeyboardEvent<HTMLElement>, rowId: TimelineRow["id"]) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    selectPlaybackRow(rowId);
+  }, [selectPlaybackRow]);
   const playheadTimeRef = useRef(PLAYHEAD_TIME);
   const [rangeEnabled, setRangeEnabled] = useState(true);
   const [rangeStart, setRangeStart] = useState(2);
   const [rangeEnd, setRangeEnd] = useState(9.5);
 
-  const rows = useMemo(() => dataSource.getRows({ start: 0, count: 10_000 }), [dataSource, revision]);
+  useEffect(() => () => {
+    playbackDispatcherRef.current?.dispose();
+    playbackDispatcherRef.current = null;
+  }, []);
+
+  const rowCount = useMemo(
+    () => Math.max(0, Math.floor(dataSource.getRowCount())),
+    [dataSource, revision],
+  );
   const timelineRange = useMemo(() => dataSource.getRange(), [dataSource, revision]);
   const timeEnd = Math.max(1, timelineRange.end);
+  pixelsPerSecondRef.current = pixelsPerSecond;
+  timeEndRef.current = timeEnd;
   const displayRange = useMemo(() => {
     const usesNativeFullRange = nativePlayback !== null;
     const usesFullRange = usesNativeFullRange || !rangeEnabled;
@@ -408,21 +558,24 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
       end,
     };
   }, [loop, nativePlayback, rangeEnabled, rangeEnd, rangeStart, timeEnd]);
-  const firstVisibleRow = Math.max(0, Math.floor(canvasWindow.top / ROW_HEIGHT));
-  const lastVisibleRow = Math.min(
-    rows.length,
-    Math.ceil((canvasWindow.top + canvasWindow.height) / ROW_HEIGHT) + 1,
+  const visibleRowQuery = useMemo(
+    () => visibleTimelineRowQuery(rowCount, canvasWindow.top, canvasWindow.height),
+    [rowCount, canvasWindow.top, canvasWindow.height],
   );
-  const visibleTreeRows = useMemo(
-    () => rows.slice(firstVisibleRow, lastVisibleRow),
-    [rows, firstVisibleRow, lastVisibleRow],
+  const rows = useMemo(
+    () => variant === "full" ? dataSource.getRows(visibleRowQuery) : [],
+    [dataSource, revision, variant, visibleRowQuery],
   );
+  const visibleTreeRows = rows;
   const rowIds = useMemo(() => visibleTreeRows.map((row) => row.id), [visibleTreeRows]);
   const items = useMemo(
-    () => dataSource.getItems({ rowIds, range: visibleRange }),
-    [dataSource, revision, rowIds, visibleRange],
+    () => variant === "full" ? dataSource.getItems({ rowIds, range: visibleRange }) : [],
+    [dataSource, revision, rowIds, variant, visibleRange],
   );
-  const compactRows = useMemo(() => rows.slice(0, 3), [rows]);
+  const compactRows = useMemo(
+    () => dataSource.getRows({ start: 0, count: 3 }),
+    [dataSource, revision],
+  );
   const compactRowIds = useMemo(() => compactRows.map((row) => row.id), [compactRows]);
   const compactItems = useMemo(
     () => dataSource.getItems({ rowIds: compactRowIds, range: { start: 0, end: timeEnd } }),
@@ -438,48 +591,56 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
     return grouped;
   }, [compactItems]);
   const keys = useMemo(
-    () => (dataSource.getKeyColumns ? [] : dataSource.getKeys({ rowIds, range: visibleRange })),
-    [dataSource, revision, rowIds, visibleRange],
+    () => variant === "full" && !dataSource.getKeyColumns
+      ? dataSource.getKeys({ rowIds, range: visibleRange })
+      : [],
+    [dataSource, revision, rowIds, variant, visibleRange],
   );
   const keyColumns = useMemo(
-    () => dataSource.getKeyColumns?.({ rowIds, range: visibleRange }, pixelsPerSecond) ?? [],
-    [dataSource, revision, rowIds, visibleRange, pixelsPerSecond],
+    () => variant === "full"
+      ? dataSource.getKeyColumns?.({ rowIds, range: visibleRange }, pixelsPerSecond) ?? []
+      : [],
+    [dataSource, revision, rowIds, variant, visibleRange, pixelsPerSecond],
   );
   const bindingById = useMemo(
     () => new Map(dataSource.getBindings().map((binding) => [binding.id, binding])),
     [dataSource, revision],
   );
   const presentPlayhead = useCallback((time: number) => {
-    const normalized = clampTimelineTime(time, timeEnd);
+    const currentTimeEnd = timeEndRef.current;
+    const currentPixelsPerSecond = pixelsPerSecondRef.current;
+    const normalized = clampTimelineTime(time, currentTimeEnd);
     playheadTimeRef.current = normalized;
-    const offset = `${normalized * pixelsPerSecond}px`;
+    const offset = `${normalized * currentPixelsPerSecond}px`;
     if (canvasPlayheadRef.current) canvasPlayheadRef.current.style.transform = `translateX(${offset})`;
     if (rulerPlayheadRef.current) rulerPlayheadRef.current.style.transform = `translateX(${offset})`;
     if (compactPlayheadRef.current) {
-      compactPlayheadRef.current.style.left = `${(normalized / Math.max(timeEnd, 0.001)) * 100}%`;
+      compactPlayheadRef.current.style.left = `${(normalized / Math.max(currentTimeEnd, 0.001)) * 100}%`;
     }
     if (frameReadoutRef.current) {
       frameReadoutRef.current.textContent = formatTimelineReadout(
         normalized,
-        timeEnd,
+        currentTimeEnd,
         timeDisplayModeRef.current,
       );
     }
     if (timeReadoutRef.current) {
       timeReadoutRef.current.textContent = formatCompactTimelineReadout(
         normalized,
-        timeEnd,
+        currentTimeEnd,
         timeDisplayModeRef.current,
       );
     }
     return normalized;
-  }, [pixelsPerSecond, timeEnd]);
+  }, []);
 
   useEffect(() => {
     presentPlayhead(playheadTimeRef.current);
-  }, [presentPlayhead]);
+  }, [pixelsPerSecond, presentPlayhead, timeEnd]);
 
   const updateCanvasWindow = useCallback((viewport: HTMLDivElement) => {
+    const currentPixelsPerSecond = pixelsPerSecondRef.current;
+    const currentTimeEnd = timeEndRef.current;
     const nextWindow = {
       left: viewport.scrollLeft,
       top: viewport.scrollTop,
@@ -495,26 +656,26 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
         : nextWindow,
     );
     const nextRange = {
-      start: nextWindow.left / pixelsPerSecond,
-      end: Math.min(timeEnd + 0.001, (nextWindow.left + nextWindow.width) / pixelsPerSecond),
+      start: nextWindow.left / currentPixelsPerSecond,
+      end: Math.min(currentTimeEnd + 0.001, (nextWindow.left + nextWindow.width) / currentPixelsPerSecond),
     };
     setVisibleRange((current) =>
       current.start === nextRange.start && current.end === nextRange.end ? current : nextRange,
     );
-  }, [pixelsPerSecond, timeEnd]);
+  }, []);
 
   useEffect(() => {
+    if (variant !== "full") return;
     const canvas = canvasRef.current;
     if (!canvas) return;
-    paintTimeline(canvas, rows, items, keys, keyColumns, pixelsPerSecond, timeEnd, canvasWindow, {
+    paintTimeline(canvas, rows, visibleRowQuery.start, items, keys, keyColumns, pixelsPerSecond, timeEnd, canvasWindow, {
       ...displayRange,
     });
-  }, [canvasWindow, displayRange, items, keyColumns, keys, pixelsPerSecond, rows, timeEnd]);
+  }, [canvasWindow, displayRange, items, keyColumns, keys, pixelsPerSecond, rows, timeEnd, variant, visibleRowQuery.start]);
 
   useEffect(() => {
     if (!hasTauriRuntime) return;
     let disposed = false;
-    let unlisten: (() => void) | undefined;
     const deliveryAges: number[] = [];
     const sampleToEmitAges: number[] = [];
     const emitToListenerAges: number[] = [];
@@ -528,6 +689,8 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
     const sampleTarget = import.meta.env.VITE_TIMELINE_PLAYBACK_SYNC_SELF_TEST ? 100 : 0;
     const applySnapshot = (snapshot: TimelinePlaybackSnapshot, measure: boolean) => {
       if (disposed) return;
+      if (snapshot.epoch < nativePlaybackEpochRef.current) return;
+      nativePlaybackEpochRef.current = snapshot.epoch;
       const measureEvent = measure && sampleTarget > 0 && deliveryAges.length < sampleTarget;
       // Count sequence continuity for every event received by the listener, including a
       // stale revision that is intentionally ignored for playback state application.
@@ -538,6 +701,35 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
       const currentConnection = playbackConnectionRef.current;
       const acceptance = acceptPlaybackSnapshot(currentConnection, snapshot);
       if (!acceptance.accepted) return;
+      const currentAcceptedGeneration = acceptedPlaybackGenerationRef.current;
+      const currentFlight = playbackFlightRef.current;
+      const freshResults = snapshot.commandResults.filter(
+        (result) => result.sequence > lastCommandResultSequenceRef.current,
+      );
+      if (snapshot.commandResults.length > 0) {
+        lastCommandResultSequenceRef.current = Math.max(
+          lastCommandResultSequenceRef.current,
+          snapshot.commandResults[snapshot.commandResults.length - 1].sequence,
+        );
+      }
+      const rejectedFlight = currentFlight && freshResults.find(
+        (result) => !result.applied && timelinePlaybackCommandResultMatchesFlight(
+          result,
+          currentFlight,
+          currentAcceptedGeneration,
+        ),
+      );
+      const previousAcceptedTarget = resolveTimelinePlaybackTarget(null, acceptedPlaybackRef.current);
+      const nextSnapshotTarget = resolveTimelinePlaybackTarget(null, snapshot);
+      acceptedPlaybackGenerationRef.current += 1;
+      acceptedPlaybackRef.current = snapshot.available ? snapshot : null;
+      playbackFlightRef.current = null;
+      if (
+        selectedTargetRef.current === null ||
+        !timelinePlaybackTargetEquals(previousAcceptedTarget, nextSnapshotTarget)
+      ) {
+        setSelectedPlaybackTarget(nextSnapshotTarget);
+      }
       const nextConnection = acceptance.state;
       if (nextConnection !== currentConnection) {
         playbackConnectionRef.current = nextConnection;
@@ -557,6 +749,18 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
         setLoop(false);
         setPlayheadTime(0);
         presentPlayhead(0);
+      }
+      if (rejectedFlight && currentFlight && snapshot.available && currentFlight.rollbackSnapshot.available) {
+        const restoredTime = projectTimelinePlaybackTime(currentFlight.rollbackSnapshot);
+        nativePlaybackRef.current = {
+          ...currentFlight.rollbackSnapshot,
+          commandResults: snapshot.commandResults,
+        };
+        setIsPlaying(currentFlight.rollbackSnapshot.playing);
+        setLoop(currentFlight.rollbackSnapshot.looping);
+        setPlayheadTime(restoredTime);
+        presentPlayhead(restoredTime);
+        reportTimelinePlaybackCommandFailure(rejectedFlight.error ?? "unknown error");
       }
       if (!measureEvent) return;
       const receivedAt = performance.now();
@@ -595,29 +799,48 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
         revisionGaps,
         averageEventIntervalMs: intervalSum / eventIntervals.length,
         maxEventIntervalMs: Math.max(...eventIntervals),
-      }).catch((error) => console.warn("[Timeline] failed to report event performance", error));
+      }).catch((error) => {
+        if (!disposed) console.warn("[Timeline] failed to report event performance", error);
+      });
     };
-    void subscribeTimelinePlayback((snapshot) => applySnapshot(snapshot, true))
-      .then((stopListening) => {
-        if (disposed) stopListening();
-        else unlisten = stopListening;
-        return getTimelinePlayback();
-      })
-      .then((snapshot) => applySnapshot(snapshot, false))
-      .catch((error) => {
+    const listener = createTimelinePlaybackListener(
+      subscribeTimelinePlayback,
+      (snapshot) => applySnapshot(snapshot, true),
+      (error) => {
+        if (disposed) return;
         window.dispatchEvent(new CustomEvent("tauri3d:diagnostic", {
           detail: {
             level: "error",
             source: "timeline",
-            message: `Native Timeline playback unavailable: ${String(error)}`,
+            message: `Native Timeline playback unavailable: ${safeDiagnosticText(error)}`,
+          },
+        }));
+      },
+    );
+    void listener.ready
+      .then((stopListening) => {
+        if (!stopListening || disposed) return null;
+        return getTimelinePlayback();
+      })
+      .then((snapshot) => {
+        if (!snapshot || disposed) return;
+        applySnapshot(snapshot, false);
+      })
+      .catch((error) => {
+        if (disposed) return;
+        window.dispatchEvent(new CustomEvent("tauri3d:diagnostic", {
+          detail: {
+            level: "error",
+            source: "timeline",
+            message: `Native Timeline playback unavailable: ${safeDiagnosticText(error)}`,
           },
         }));
       });
     return () => {
       disposed = true;
-      unlisten?.();
+      listener.dispose();
     };
-  }, [hasTauriRuntime, presentPlayhead]);
+  }, [hasTauriRuntime, presentPlayhead, setSelectedPlaybackTarget]);
 
   useEffect(() => {
     if (!isPlaying || !nativePlayback) return;
@@ -664,6 +887,12 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
   }, [updateCanvasWindow]);
 
   useEffect(() => {
+    const viewport = canvasViewportRef.current;
+    if (viewport) updateCanvasWindow(viewport);
+  }, [pixelsPerSecond, timeEnd, updateCanvasWindow]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
     if (
       timelineSelfTestHasRun ||
       !import.meta.env.VITE_TIMELINE_SELF_TEST ||
@@ -672,8 +901,9 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
     ) return;
     timelineSelfTestHasRun = true;
     let completed = false;
-    const zoomTimer = window.setTimeout(() => setZoomRange({ start: 2, end: 20.75 }), 2000);
-    const scrollTimer = window.setTimeout(() => {
+    const timers = createSelfTestTimerBag();
+    timers.schedule(() => setZoomRange({ start: 2, end: 20.75 }), 2000);
+    timers.schedule(() => {
       const viewport = canvasViewportRef.current;
       if (!viewport) {
         timelineSelfTestHasRun = false;
@@ -684,14 +914,19 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
       viewport.dispatchEvent(new Event("scroll", { bubbles: true }));
       completed = true;
     }, 4000);
+    const unregister = registerTimelineSelfTestCleanup(() => {
+      timers.cancel();
+      if (!completed) timelineSelfTestHasRun = false;
+    });
     return () => {
-      window.clearTimeout(zoomTimer);
-      window.clearTimeout(scrollTimer);
+      unregister();
+      timers.cancel();
       if (!completed) timelineSelfTestHasRun = false;
     };
   }, [canvasWindow.width, canvasWindow.height]);
 
   useEffect(() => {
+    if (!import.meta.env.DEV) return;
     if (
       timelinePlaybackSelfTestHasRun ||
       !import.meta.env.VITE_TIMELINE_PLAYBACK_SELF_TEST ||
@@ -700,29 +935,40 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
       nativePlayback.clipIndex === null
     ) return;
     timelinePlaybackSelfTestHasRun = true;
-    const target = {
-      instanceId: nativePlayback.instanceId,
-      clipIndex: nativePlayback.clipIndex,
-    };
-    const delay = (milliseconds: number) =>
-      new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
+    const timers = createSelfTestTimerBag();
+    let completed = false;
+    const target = resolveTimelinePlaybackTarget(selectedTargetRef.current, nativePlayback);
+    if (!target) {
+      timelinePlaybackSelfTestHasRun = false;
+      timers.cancel();
+      return;
+    }
+    const unregister = registerTimelineSelfTestCleanup(() => {
+      timers.cancel();
+      if (!completed) timelinePlaybackSelfTestHasRun = false;
+    });
     void (async () => {
       try {
-        await dispatchTimelinePlayback({ type: "pause", ...target });
-        await delay(150);
+        if (timers.isCancelled()) return;
+        await dispatchPlayback({ type: "pause", ...target }, nativePlayback.epoch);
+        if (!(await timers.delay(150))) return;
         const pausedA = await getTimelinePlayback();
-        await delay(250);
+        if (!(await timers.delay(250))) return;
         const pausedB = await getTimelinePlayback();
         const seekTime = nativePlayback.duration * 0.5;
-        await dispatchTimelinePlayback({ type: "seek", ...target, time: seekTime });
-        await delay(150);
+        if (timers.isCancelled()) return;
+        await dispatchPlayback({ type: "seek", ...target, time: seekTime }, nativePlayback.epoch);
+        if (!(await timers.delay(150))) return;
         const sought = await getTimelinePlayback();
-        await dispatchTimelinePlayback({ type: "play", ...target });
-        await delay(300);
+        if (timers.isCancelled()) return;
+        await dispatchPlayback({ type: "play", ...target }, nativePlayback.epoch);
+        if (!(await timers.delay(300))) return;
         const resumed = await getTimelinePlayback();
-        await dispatchTimelinePlayback({ type: "pause", ...target });
-        await delay(150);
+        if (timers.isCancelled()) return;
+        await dispatchPlayback({ type: "pause", ...target }, nativePlayback.epoch);
+        if (!(await timers.delay(150))) return;
         const final = await getTimelinePlayback();
+        if (timers.isCancelled()) return;
         const passed =
           !pausedA.playing &&
           !pausedB.playing &&
@@ -740,17 +986,31 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
             message: `${passed ? "PASS" : "FAIL"} Native Timeline pause/seek/play self-test: ${final.time.toFixed(2)}s`,
           },
         }));
+        completed = true;
       } catch (error) {
-        window.dispatchEvent(new CustomEvent("tauri3d:diagnostic", {
-          detail: {
-            level: "error",
-            source: "timeline",
-            message: `FAIL Native Timeline playback self-test: ${String(error)}`,
-          },
-        }));
+        if (!timers.isCancelled()) {
+          window.dispatchEvent(new CustomEvent("tauri3d:diagnostic", {
+            detail: {
+              level: "error",
+              source: "timeline",
+              message: `FAIL Native Timeline playback self-test: ${safeDiagnosticText(error)}`,
+            },
+          }));
+        }
       }
     })();
-  }, [nativePlayback]);
+    return () => {
+      unregister();
+      timers.cancel();
+      if (!completed) timelinePlaybackSelfTestHasRun = false;
+    };
+  }, [
+    dispatchPlayback,
+    nativePlayback?.available,
+    nativePlayback?.instanceId,
+    nativePlayback?.clipIndex,
+    nativePlayback?.epoch,
+  ]);
 
   const handleScroll = (event: React.UIEvent<HTMLDivElement>) => {
     const target = event.currentTarget;
@@ -764,24 +1024,58 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
   };
 
   const tickStep = pixelsPerSecond < 18 ? 5 : 1;
-  const ticks = Array.from({ length: Math.floor(timeEnd / tickStep) + 1 }, (_, index) => index * tickStep);
+  const ticks = useMemo(
+    () => variant === "full"
+      ? visibleTimelineTicks(
+        timeEnd,
+        canvasWindow.left,
+        canvasWindow.width,
+        pixelsPerSecond,
+        tickStep,
+      )
+      : [],
+    [canvasWindow.left, canvasWindow.width, pixelsPerSecond, tickStep, timeEnd, variant],
+  );
   const canvasWidth = timeEnd * pixelsPerSecond;
   const sendNative = useCallback((command: "play" | "pause" | "seek" | "setLooping", value?: number | boolean) => {
-    if (!nativePlayback?.instanceId || nativePlayback.clipIndex === null) return false;
-    const target = {
-      instanceId: nativePlayback.instanceId,
-      clipIndex: nativePlayback.clipIndex,
-    };
+    const currentPlayback = nativePlaybackRef.current;
+    if (!currentPlayback?.instanceId || currentPlayback.clipIndex === null) return false;
+    const rollbackSnapshot = acceptedPlaybackRef.current ?? currentPlayback;
+    const target = resolveTimelinePlaybackTarget(selectedTargetRef.current, currentPlayback);
+    if (!target) return false;
     const payload: TimelinePlaybackCommand = command === "seek"
       ? { type: command, ...target, time: value as number }
       : command === "setLooping"
         ? { type: command, ...target, looping: value as boolean }
         : { type: command, ...target };
-    void dispatchTimelinePlayback(payload).catch((error) =>
-      console.warn("[Timeline] native playback command failed", error),
+    const flight = createTimelinePlaybackCommandFlight(
+      ++playbackFlightIdRef.current,
+      acceptedPlaybackGenerationRef.current,
+      payload,
+      currentPlayback.epoch,
+      rollbackSnapshot,
     );
+    playbackFlightRef.current = flight;
+    void dispatchPlayback(payload, currentPlayback.epoch, flight.requestId).catch((error) => {
+      if (!shouldRollbackTimelinePlaybackCommand(
+        flight,
+        playbackFlightRef.current,
+        acceptedPlaybackGenerationRef.current,
+        acceptedPlaybackRef.current,
+      )) {
+        return;
+      }
+      playbackFlightRef.current = null;
+      const restoredTime = projectTimelinePlaybackTime(flight.rollbackSnapshot);
+      nativePlaybackRef.current = flight.rollbackSnapshot;
+      setIsPlaying(flight.rollbackSnapshot.playing);
+      setLoop(flight.rollbackSnapshot.looping);
+      setPlayheadTime(restoredTime);
+      presentPlayhead(restoredTime);
+      reportTimelinePlaybackCommandFailure(error);
+    });
     return true;
-  }, [nativePlayback]);
+  }, [dispatchPlayback, presentPlayhead]);
   const togglePlayback = useCallback(() => {
     if (!controlsEnabled) return;
     const next = !isPlaying;
@@ -803,6 +1097,7 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.code !== "Space" || event.repeat) return;
       if (isTimelineTextEditingTarget(event.target)) return;
+      if (!controlsEnabled) return;
       event.preventDefault();
       event.stopPropagation();
       togglePlayback();
@@ -812,7 +1107,7 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
     // entered into search/name fields.
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [togglePlayback]);
+  }, [controlsEnabled, togglePlayback]);
 
   const seekTo = (time: number, policy: TimelineSeekPolicy = "unsnapped") => {
     if (!controlsEnabled) return;
@@ -880,6 +1175,7 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
   const jumpTo = (time: number) => seekTo(time);
   const jumpToPreviousKey = () => jumpTo(Math.max(0, Math.ceil(playheadTimeRef.current) - 1));
   const jumpToNextKey = () => jumpTo(Math.min(timeEnd, Math.floor(playheadTimeRef.current) + 1));
+  const playbackStatus = formatTimelinePlaybackStatus(playbackConnection, isPlaying);
 
   if (variant === "compact") {
     const compactTicks = [0, 0.25, 0.5, 0.75, 1].map((ratio) => ({
@@ -888,17 +1184,22 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
     }));
     return (
       <section className="timeline-panel timeline-panel--compact" aria-label="Timeline playback">
+        <span className="timeline-panel__live-status" role="status" aria-live="polite" aria-atomic="true">
+          {playbackStatus}
+        </span>
         <header className="timeline-panel__header timeline-panel__compact-header">
-          <div className="timeline-panel__tabs" role="tablist" aria-label="Bottom panel">
-            <button className="timeline-panel__tab timeline-panel__tab--active" type="button" role="tab" aria-selected="true">
+          <div className="timeline-panel__tabs" role="group" aria-label="Bottom panel">
+            <button className="timeline-panel__tab timeline-panel__tab--active" type="button" aria-pressed="true">
               Timeline
             </button>
             <button
               className="timeline-panel__tab"
               type="button"
-              role="tab"
-              aria-selected="false"
-              onClick={() => window.dispatchEvent(new CustomEvent("tauri3d:console-toggle", { detail: { open: true } }))}
+              aria-pressed="false"
+              onClick={(event) => {
+                focusLazyPanelHost(event.currentTarget);
+                window.dispatchEvent(new CustomEvent("tauri3d:console-toggle", { detail: { open: true } }));
+              }}
             >
               Console
             </button>
@@ -956,11 +1257,18 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
           <div className="timeline-panel__compact-track-list">
             {compactRows.length > 0 ? compactRows.map((row, rowIndex) => {
               const binding = row.bindingId ? bindingById.get(row.bindingId) : undefined;
+              const rowTarget = dataSource.getPlaybackTarget?.(row.id) ?? null;
+              const isSelected = timelinePlaybackTargetEquals(rowTarget, selectedTarget);
               return (
                 <div
-                  className={`timeline-row timeline-panel__compact-row timeline-row--${row.kind}${rowIndex % 2 === 0 ? " timeline-row--alternate" : ""}`}
+                  className={`timeline-row timeline-panel__compact-row timeline-row--${row.kind}${rowIndex % 2 === 0 ? " timeline-row--alternate" : ""}${isSelected ? " timeline-row--selected" : ""}`}
                   key={row.id}
                   style={{ height: 20, paddingLeft: 6 + row.depth * 8 }}
+                  role={rowTarget ? "button" : undefined}
+                  tabIndex={rowTarget ? 0 : -1}
+                  aria-pressed={rowTarget ? isSelected : undefined}
+                  onClick={() => selectPlaybackRow(row.id)}
+                  onKeyDown={(event) => handlePlaybackRowKeyDown(event, row.id)}
                 >
                   <span className="timeline-row__disclosure">{row.kind === "group" ? "▾" : ""}</span>
                   <span className="timeline-row__color" style={{ backgroundColor: row.color }} />
@@ -1049,17 +1357,22 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
 
   return (
     <section className="timeline-panel" aria-label="Timeline editor preview">
+      <span className="timeline-panel__live-status" role="status" aria-live="polite" aria-atomic="true">
+        {playbackStatus}
+      </span>
       <header className="timeline-panel__header">
-        <div className="timeline-panel__tabs" role="tablist" aria-label="Bottom panel">
-          <button className="timeline-panel__tab timeline-panel__tab--active" type="button" role="tab" aria-selected="true">
+        <div className="timeline-panel__tabs" role="group" aria-label="Bottom panel">
+          <button className="timeline-panel__tab timeline-panel__tab--active" type="button" aria-pressed="true">
             Timeline
           </button>
           <button
             className="timeline-panel__tab"
             type="button"
-            role="tab"
-            aria-selected="false"
-            onClick={() => window.dispatchEvent(new CustomEvent("tauri3d:console-toggle", { detail: { open: true } }))}
+            aria-pressed="false"
+            onClick={(event) => {
+              focusLazyPanelHost(event.currentTarget);
+              window.dispatchEvent(new CustomEvent("tauri3d:console-toggle", { detail: { open: true } }));
+            }}
           >
             Console
           </button>
@@ -1207,16 +1520,23 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
         </div>
 
         <div className="timeline-panel__tree-viewport">
-          <div className="timeline-panel__tree-content" ref={treeRowsRef} style={{ height: rows.length * ROW_HEIGHT }}>
-            <div className="timeline-panel__tree-window" style={{ top: firstVisibleRow * ROW_HEIGHT }}>
+          <div className="timeline-panel__tree-content" ref={treeRowsRef} style={{ height: rowCount * ROW_HEIGHT }}>
+            <div className="timeline-panel__tree-window" style={{ top: visibleRowQuery.start * ROW_HEIGHT }}>
               {visibleTreeRows.map((row, localIndex) => {
-                const rowIndex = firstVisibleRow + localIndex;
+                const rowIndex = visibleRowQuery.start + localIndex;
                 const binding = row.bindingId ? bindingById.get(row.bindingId) : undefined;
+                const rowTarget = dataSource.getPlaybackTarget?.(row.id) ?? null;
+                const isSelected = timelinePlaybackTargetEquals(rowTarget, selectedTarget);
                 return (
                   <div
-                    className={`timeline-row timeline-row--${row.kind}${rowIndex % 2 === 0 ? " timeline-row--alternate" : ""}`}
+                    className={`timeline-row timeline-row--${row.kind}${rowIndex % 2 === 0 ? " timeline-row--alternate" : ""}${isSelected ? " timeline-row--selected" : ""}`}
                     key={row.id}
                     style={{ height: ROW_HEIGHT, paddingLeft: 10 + row.depth * 15 }}
+                    role={rowTarget ? "button" : undefined}
+                    tabIndex={rowTarget ? 0 : -1}
+                    aria-pressed={rowTarget ? isSelected : undefined}
+                    onClick={() => selectPlaybackRow(row.id)}
+                    onKeyDown={(event) => handlePlaybackRowKeyDown(event, row.id)}
                   >
                     <span className="timeline-row__disclosure">{row.kind === "group" ? "▾" : ""}</span>
                     <span className="timeline-row__color" style={{ backgroundColor: row.color }} />
@@ -1247,7 +1567,7 @@ export function Timeline({ dataSource = runtimeTimelineDataSource, variant = "co
         >
           <div
             className="timeline-panel__canvas-content"
-            style={{ width: canvasWidth, height: rows.length * ROW_HEIGHT }}
+            style={{ width: canvasWidth, height: rowCount * ROW_HEIGHT }}
           >
             <canvas ref={canvasRef} aria-label="Timeline tracks" />
             <div className="timeline-panel__canvas-playhead" ref={canvasPlayheadRef} aria-hidden="true" />

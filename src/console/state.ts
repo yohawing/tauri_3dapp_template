@@ -97,7 +97,17 @@ export function createConsoleStore(options: ConsoleStateOptions = {}): ConsoleSt
     const next = reduceConsoleState(state, action);
     if (next === state) return;
     state = next;
-    listeners.forEach((listener) => listener());
+    listeners.forEach((listener) => {
+      try {
+        listener();
+      } catch (error) {
+        try {
+          console.error("[Console] subscriber failed:", error);
+        } catch {
+          // Console implementations can be replaced by embedding hosts.
+        }
+      }
+    });
   };
 
   return {

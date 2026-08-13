@@ -45,11 +45,14 @@ export interface SceneLight {
 export interface SelectedSceneNode {
   id: string;
   transform: SceneTransform;
+  transformEditable: boolean;
   material: SceneMaterial | null;
   light: SceneLight | null;
 }
 
 export interface SceneProjection {
+  /** Runtime Scene generation; starts at 1 and advances on replacement. */
+  epoch: number;
   revision: number;
   selectedNodeId: string | null;
   nodes: SceneNodeSummary[];
@@ -73,9 +76,10 @@ export type SceneLightProperty =
   | "lightDirection"
   | "lightEnabled"
   | "lightCastsShadows";
-export type SceneCommandProperty = SceneMaterialProperty | SceneLightProperty | "visibility";
+export type SceneCommandProperty = SceneMaterialProperty | SceneLightProperty | "transform" | "visibility";
 
 export type SceneCommand =
+  | { type: "setTransform"; nodeId: string; transform: SceneTransform }
   | { type: "setBaseColor"; nodeId: string; color: [number, number, number, number] }
   | { type: "setMetallic"; nodeId: string; value: number }
   | { type: "setRoughness"; nodeId: string; value: number }
@@ -87,6 +91,8 @@ export type SceneCommand =
   | { type: "setVisibility"; nodeId: string; visible: boolean };
 
 export interface SceneCommandEnvelope {
+  /** Scene generation captured when the command was authored. */
+  epoch: number;
   sequence: number;
   command: SceneCommand;
 }

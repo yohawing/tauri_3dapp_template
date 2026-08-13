@@ -7,13 +7,28 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
 
+use crate::scene::diagnostic_text;
+
+/// Runtime node IDs include generated bone IDs (`<instance>::bone::<index>`),
+/// so their wire cap is intentionally wider than persisted Scene IDs/labels.
+const MAX_RUNTIME_NODE_ID_BYTES: usize = 2048;
+const MAX_PENDING_SCENE_COMMANDS: usize = 256;
+const MAX_JS_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+
+// `Set*` is part of the serialized TypeScript/Rust command contract.
+#[allow(clippy::enum_variant_names)]
 #[derive(serde::Deserialize, Clone, Debug, PartialEq)]
 #[serde(
     tag = "type",
     rename_all = "camelCase",
-    rename_all_fields = "camelCase"
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
 )]
 pub enum SceneCommand {
+    SetTransform {
+        node_id: String,
+        transform: SceneTransform,
+    },
     SetBaseColor {
         node_id: String,
         color: [f32; 4],
@@ -56,8 +71,11 @@ pub enum SceneCommand {
 /// is monotonic for the lifetime of the page.  It lets the native side discard
 /// an older value when delayed invokes arrive out of order.
 #[derive(serde::Deserialize, Clone, Debug, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SceneCommandEnvelope {
+    /// Runtime scene generation captured when the command was authored.  It
+    /// is deliberately not part of the persisted Scene document.
+    pub epoch: u64,
     pub sequence: u64,
     pub command: SceneCommand,
 }
@@ -71,6 +89,7 @@ impl SceneCommandEnvelope {
 impl SceneCommand {
     fn key(&self) -> String {
         match self {
+            Self::SetTransform { node_id, .. } => format!("{node_id}/transform"),
             Self::SetBaseColor { node_id, .. } => format!("{node_id}/baseColor"),
             Self::SetMetallic { node_id, .. } => format!("{node_id}/metallic"),
             Self::SetRoughness { node_id, .. } => format!("{node_id}/roughness"),
@@ -87,6 +106,7 @@ impl SceneCommand {
 
     pub(crate) fn property(&self) -> &'static str {
         match self {
+            Self::SetTransform { .. } => "transform",
             Self::SetBaseColor { .. } => "baseColor",
             Self::SetMetallic { .. } => "metallic",
             Self::SetRoughness { .. } => "roughness",
@@ -101,7 +121,8 @@ impl SceneCommand {
 
     pub(crate) fn node_id(&self) -> &str {
         match self {
-            Self::SetBaseColor { node_id, .. }
+            Self::SetTransform { node_id, .. }
+            | Self::SetBaseColor { node_id, .. }
             | Self::SetMetallic { node_id, .. }
             | Self::SetRoughness { node_id, .. }
             | Self::SetLightColor { node_id, .. }
@@ -115,6 +136,7 @@ impl SceneCommand {
 
     fn validate(&self) -> Result<(), String> {
         match self {
+            Self::SetTransform { transform, .. } => transform.validate(),
             Self::SetBaseColor { color, .. } | Self::SetLightColor { color, .. } => {
                 if color
                     .iter()
@@ -157,6 +179,18 @@ impl SceneCommand {
     }
 }
 
+fn validate_runtime_id(value: &str, field: &str) -> Result<(), String> {
+    if value.trim().is_empty() {
+        return Err(format!("{field} must not be empty"));
+    }
+    if value.len() > MAX_RUNTIME_NODE_ID_BYTES {
+        return Err(format!(
+            "{field} exceeds the {MAX_RUNTIME_NODE_ID_BYTES}-byte limit"
+        ));
+    }
+    Ok(())
+}
+
 #[derive(serde::Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SceneCommandResult {
@@ -177,12 +211,35 @@ pub struct SceneNodeSummary {
     pub visible: bool,
 }
 
-#[derive(serde::Serialize, Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SceneTransform {
     pub translation: [f32; 3],
     pub rotation: [f32; 4],
     pub scale: [f32; 3],
+}
+
+impl SceneTransform {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        if self.translation.iter().any(|value| !value.is_finite()) {
+            return Err("transform translation must be finite".to_string());
+        }
+        let rotation_length_squared = self.rotation.iter().map(|value| value * value).sum::<f32>();
+        if self.rotation.iter().any(|value| !value.is_finite())
+            || !rotation_length_squared.is_finite()
+            || rotation_length_squared <= f32::EPSILON
+        {
+            return Err("transform rotation must be a finite non-zero quaternion".to_string());
+        }
+        if self
+            .scale
+            .iter()
+            .any(|value| !value.is_finite() || *value <= 0.0)
+        {
+            return Err("transform scale axes must be finite and greater than zero".to_string());
+        }
+        Ok(())
+    }
 }
 
 #[derive(serde::Serialize, Clone, Debug, PartialEq)]
@@ -213,6 +270,7 @@ pub struct SceneLight {
 pub struct SelectedSceneNode {
     pub id: String,
     pub transform: SceneTransform,
+    pub transform_editable: bool,
     pub material: Option<SceneMaterial>,
     pub light: Option<SceneLight>,
 }
@@ -220,6 +278,9 @@ pub struct SelectedSceneNode {
 #[derive(serde::Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SceneProjection {
+    /// Runtime scene generation.  Epoch 1 is the startup/default scene; it
+    /// advances only when the canonical Scene is replaced.
+    pub epoch: u64,
     pub revision: u64,
     pub selected_node_id: Option<String>,
     pub nodes: Vec<SceneNodeSummary>,
@@ -231,6 +292,7 @@ pub struct SceneProjection {
 impl Default for SceneProjection {
     fn default() -> Self {
         Self {
+            epoch: 1,
             revision: 0,
             selected_node_id: None,
             nodes: Vec::new(),
@@ -250,6 +312,7 @@ pub struct SceneProjectionStore {
     pending_selection: Mutex<Option<String>>,
     pending_commands: Mutex<VecDeque<SceneCommandEnvelope>>,
     latest_command_sequences: Mutex<HashMap<String, u64>>,
+    in_flight_sequences: Mutex<HashMap<String, u64>>,
 }
 
 impl SceneProjectionStore {
@@ -257,32 +320,50 @@ impl SceneProjectionStore {
         self.projection.lock().unwrap().clone()
     }
 
+    pub fn selected_node_id(&self) -> Option<String> {
+        self.projection.lock().unwrap().selected_node_id.clone()
+    }
+
     pub fn publish(&self, mut projection: SceneProjection) {
         let mut current = self.projection.lock().unwrap();
+        // Renderer snapshots do not own the runtime generation.  The store
+        // retains the current epoch while accepting their scene DTO.
+        projection.epoch = current.epoch;
         projection.revision = current.revision;
         // Renderer snapshots do not own command acknowledgements.  Keep the
         // bounded result history that was recorded by the IPC/event-loop
         // bridge when rebuilding the rest of the projection.
         projection.last_processed_sequence = current.last_processed_sequence;
-        projection.command_results = current.command_results.clone();
-        if *current == projection {
+        if scene_projection_payload_equal(&current, &projection) {
             return;
         }
+        // Acknowledgements are store-owned; move the bounded history into the
+        // replacement DTO instead of cloning it on each changed render sample.
+        projection.command_results = std::mem::take(&mut current.command_results);
         projection.revision = current.revision.saturating_add(1);
         *current = projection;
     }
 
     pub fn replace_scene(&self, mut projection: SceneProjection) {
         self.pending_selection.lock().unwrap().take();
-        self.pending_commands.lock().unwrap().clear();
-        self.latest_command_sequences.lock().unwrap().clear();
         let mut current = self.projection.lock().unwrap();
+        // Keep the epoch transition and queue clear under one lock order so a
+        // command cannot observe the old epoch and enqueue after this clear.
+        let mut sequences = self.latest_command_sequences.lock().unwrap();
+        let mut in_flight = self.in_flight_sequences.lock().unwrap();
+        let mut pending = self.pending_commands.lock().unwrap();
+        pending.clear();
+        sequences.clear();
+        in_flight.clear();
+        projection.epoch = current.epoch.saturating_add(1).max(1);
         projection.revision = current.revision.saturating_add(1);
         *current = projection;
     }
 
-    pub fn request_selection(&self, node_id: String) {
+    pub fn request_selection(&self, node_id: String) -> Result<(), String> {
+        validate_runtime_id(&node_id, "scene selection nodeId")?;
         *self.pending_selection.lock().unwrap() = Some(node_id);
+        Ok(())
     }
 
     pub fn take_selection(&self) -> Option<String> {
@@ -294,11 +375,48 @@ impl SceneProjectionStore {
         if envelope.sequence == 0 {
             return Err("command sequence must be greater than zero".to_string());
         }
+        if envelope.sequence > MAX_JS_SAFE_INTEGER {
+            return Err(format!(
+                "command sequence must not exceed JavaScript safe integer {MAX_JS_SAFE_INTEGER}"
+            ));
+        }
+        if envelope.epoch == 0 || envelope.epoch > MAX_JS_SAFE_INTEGER {
+            return Err(format!(
+                "command epoch must be between 1 and JavaScript safe integer {MAX_JS_SAFE_INTEGER}"
+            ));
+        }
+        validate_runtime_id(envelope.command.node_id(), "scene command nodeId")?;
+
+        let current = self.projection.lock().unwrap();
+        let current_epoch = current.epoch;
+        if envelope.epoch != current_epoch {
+            drop(current);
+            self.record_command_result(SceneCommandResult {
+                sequence: envelope.sequence,
+                node_id: envelope.command.node_id().to_string(),
+                property: envelope.command.property().to_string(),
+                applied: false,
+                error: Some(format!(
+                    "stale scene epoch: command={}, current={}",
+                    envelope.epoch, current_epoch
+                )),
+            });
+            return Ok(());
+        }
 
         let key = envelope.key();
         let mut sequences = self.latest_command_sequences.lock().unwrap();
-        let previous = sequences.get(&key).copied().unwrap_or(0);
+        let in_flight = self.in_flight_sequences.lock().unwrap();
+        let previous = sequences
+            .get(&key)
+            .copied()
+            .into_iter()
+            .chain(in_flight.get(&key).copied())
+            .max()
+            .unwrap_or(0);
         if envelope.sequence <= previous {
+            drop(current);
+            drop(in_flight);
             drop(sequences);
             self.record_command_result(SceneCommandResult {
                 sequence: envelope.sequence,
@@ -309,7 +427,6 @@ impl SceneProjectionStore {
             });
             return Ok(());
         }
-        sequences.insert(key.clone(), envelope.sequence);
         // Coalesce slider/color edits for the same node/property while keeping
         // different properties in the queue.
         let mut pending = self.pending_commands.lock().unwrap();
@@ -317,22 +434,67 @@ impl SceneProjectionStore {
             if existing.sequence < envelope.sequence {
                 *existing = envelope;
             }
+            sequences.insert(key, existing.sequence);
         } else {
+            if pending.len() >= MAX_PENDING_SCENE_COMMANDS {
+                return Err(format!(
+                    "scene command queue is full ({MAX_PENDING_SCENE_COMMANDS}); command was rejected"
+                ));
+            }
+            if in_flight.len() >= MAX_PENDING_SCENE_COMMANDS && !in_flight.contains_key(&key) {
+                return Err(format!(
+                    "scene command in-flight capacity is full ({MAX_PENDING_SCENE_COMMANDS}); command was rejected"
+                ));
+            }
+            sequences.insert(key, envelope.sequence);
             pending.push_back(envelope);
         }
         drop(pending);
+        drop(in_flight);
         drop(sequences);
+        drop(current);
         Ok(())
     }
 
     pub fn take_commands(&self) -> Vec<SceneCommandEnvelope> {
-        self.pending_commands.lock().unwrap().drain(..).collect()
+        let mut sequences = self.latest_command_sequences.lock().unwrap();
+        let mut in_flight = self.in_flight_sequences.lock().unwrap();
+        let mut pending = self.pending_commands.lock().unwrap();
+        let commands = pending.drain(..).collect::<Vec<_>>();
+        for command in &commands {
+            let key = command.key();
+            if let Some(sequence) = sequences.remove(&key) {
+                in_flight
+                    .entry(key)
+                    .and_modify(|current| *current = (*current).max(sequence))
+                    .or_insert(sequence);
+            }
+        }
+        commands
+    }
+
+    /// Check an envelope immediately before applying it to the event-loop
+    /// renderer.  A command may have been taken from the queue just before a
+    /// concurrent Scene replacement, so enqueue-time validation alone is not
+    /// sufficient.
+    pub fn is_current_epoch(&self, envelope: &SceneCommandEnvelope) -> bool {
+        self.projection.lock().unwrap().epoch == envelope.epoch
     }
 
     pub fn record_command_result(&self, result: SceneCommandResult) {
         let mut projection = self.projection.lock().unwrap();
+        let key = format!("{}/{}", result.node_id, result.property);
+        let mut in_flight = self.in_flight_sequences.lock().unwrap();
+        if in_flight
+            .get(&key)
+            .is_some_and(|sequence| *sequence == result.sequence)
+        {
+            in_flight.remove(&key);
+        }
         projection.last_processed_sequence =
             projection.last_processed_sequence.max(result.sequence);
+        let mut result = result;
+        result.error = result.error.map(|error| diagnostic_text(&error));
         projection.command_results.push(result);
         const MAX_RESULTS: usize = 32;
         if projection.command_results.len() > MAX_RESULTS {
@@ -343,30 +505,363 @@ impl SceneProjectionStore {
     }
 }
 
+fn scene_projection_payload_equal(current: &SceneProjection, next: &SceneProjection) -> bool {
+    current.epoch == next.epoch
+        && current.selected_node_id == next.selected_node_id
+        && current.nodes == next.nodes
+        && current.selected == next.selected
+        && current.last_processed_sequence == next.last_processed_sequence
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{mpsc, Arc};
+    use std::thread;
+    use std::time::Duration;
+
+    fn finish_commands(store: &SceneProjectionStore, commands: Vec<SceneCommandEnvelope>) {
+        for envelope in commands {
+            store.record_command_result(SceneCommandResult {
+                sequence: envelope.sequence,
+                node_id: envelope.command.node_id().to_string(),
+                property: envelope.command.property().to_string(),
+                applied: true,
+                error: None,
+            });
+        }
+    }
+
+    #[test]
+    fn command_result_errors_are_bounded_and_single_line() {
+        let store = SceneProjectionStore::default();
+        store.record_command_result(SceneCommandResult {
+            sequence: 1,
+            node_id: "cube".to_string(),
+            property: "transform".to_string(),
+            applied: false,
+            error: Some(format!("renderer\n{}", "x".repeat(5000))),
+        });
+
+        let projection = store.projection();
+        let error = projection
+            .command_results
+            .first()
+            .and_then(|result| result.error.as_deref())
+            .expect("error result is retained");
+        assert!(!error.contains('\n'));
+        assert!(error.ends_with("..."));
+        assert!(error.len() <= 4096);
+    }
 
     #[test]
     fn store_replaces_pending_selection_and_only_revises_changed_projection() {
         let store = SceneProjectionStore::default();
-        store.request_selection("cube".to_string());
-        store.request_selection("key-light".to_string());
+        store.request_selection("cube".to_string()).unwrap();
+        store.request_selection("key-light".to_string()).unwrap();
         assert_eq!(store.take_selection().as_deref(), Some("key-light"));
         assert_eq!(store.take_selection(), None);
 
         let mut projection = SceneProjection {
+            epoch: 1,
             selected_node_id: Some("cube".to_string()),
             ..SceneProjection::default()
         };
         store.publish(projection.clone());
         let first = store.projection();
+        assert_eq!(store.selected_node_id().as_deref(), Some("cube"));
         store.publish(projection.clone());
         assert_eq!(store.projection().revision, first.revision);
 
         projection.selected_node_id = Some("key-light".to_string());
         store.publish(projection);
+        assert_eq!(store.selected_node_id().as_deref(), Some("key-light"));
         assert!(store.projection().revision > first.revision);
+    }
+
+    #[test]
+    fn rejects_oversized_selection_and_scene_command_ids() {
+        let store = SceneProjectionStore::default();
+        let error = store
+            .request_selection(" \t".to_string())
+            .expect_err("runtime selection IDs must not be whitespace-only");
+        assert!(error.contains("must not be empty"));
+        let oversized = "n".repeat(MAX_RUNTIME_NODE_ID_BYTES + 1);
+        let error = store
+            .request_selection(oversized.clone())
+            .expect_err("selection IDs must be bounded");
+        assert!(error.contains("selection nodeId"));
+        assert_eq!(store.take_selection(), None);
+
+        let error = store
+            .request_command(SceneCommandEnvelope {
+                epoch: 1,
+                sequence: 1,
+                command: SceneCommand::SetVisibility {
+                    node_id: oversized,
+                    visible: true,
+                },
+            })
+            .expect_err("scene command IDs must be bounded");
+        assert!(error.contains("command nodeId"));
+    }
+
+    #[test]
+    fn accepts_max_runtime_id_and_bounds_distinct_command_queue() {
+        let store = SceneProjectionStore::default();
+        let generated_bone_id = format!("{}::bone::{}", "n".repeat(1024), 42);
+        store
+            .request_selection(generated_bone_id.clone())
+            .expect("generated bone IDs remain valid beyond the persisted ID cap");
+        assert_eq!(
+            store.take_selection().as_deref(),
+            Some(generated_bone_id.as_str())
+        );
+        let node_id = "n".repeat(MAX_RUNTIME_NODE_ID_BYTES);
+        store
+            .request_command(SceneCommandEnvelope {
+                epoch: 1,
+                sequence: 1,
+                command: SceneCommand::SetTransform {
+                    node_id,
+                    transform: SceneTransform {
+                        translation: [0.0; 3],
+                        rotation: [0.0, 0.0, 0.0, 1.0],
+                        scale: [1.0; 3],
+                    },
+                },
+            })
+            .expect("a maximum-size runtime ID remains valid with its derived key");
+        finish_commands(&store, store.take_commands());
+
+        for index in 0..MAX_PENDING_SCENE_COMMANDS {
+            store
+                .request_command(SceneCommandEnvelope {
+                    epoch: 1,
+                    sequence: index as u64 + 1,
+                    command: SceneCommand::SetMetallic {
+                        node_id: format!("node-{index}"),
+                        value: 0.5,
+                    },
+                })
+                .unwrap();
+        }
+        store
+            .request_command(SceneCommandEnvelope {
+                epoch: 1,
+                sequence: 1000,
+                command: SceneCommand::SetMetallic {
+                    node_id: "node-0".to_string(),
+                    value: 0.75,
+                },
+            })
+            .expect("existing coalesced key remains admissible at capacity");
+        let error = store
+            .request_command(SceneCommandEnvelope {
+                epoch: 1,
+                sequence: 1001,
+                command: SceneCommand::SetMetallic {
+                    node_id: "overflow".to_string(),
+                    value: 0.5,
+                },
+            })
+            .expect_err("new distinct key must be rejected at capacity");
+        assert!(error.contains("queue is full"));
+        let commands = store.take_commands();
+        assert_eq!(commands.len(), MAX_PENDING_SCENE_COMMANDS);
+        finish_commands(&store, commands);
+        store
+            .request_command(SceneCommandEnvelope {
+                epoch: 1,
+                sequence: 1001,
+                command: SceneCommand::SetMetallic {
+                    node_id: "overflow".to_string(),
+                    value: 0.5,
+                },
+            })
+            .expect("rejected key must not pollute sequence state");
+    }
+
+    #[test]
+    fn rejects_unsafe_sequence_without_poisoning_follow_up_commands() {
+        let store = SceneProjectionStore::default();
+        let command = |sequence| SceneCommandEnvelope {
+            epoch: 1,
+            sequence,
+            command: SceneCommand::SetVisibility {
+                node_id: "cube".to_string(),
+                visible: true,
+            },
+        };
+
+        let error = store
+            .request_command(command(MAX_JS_SAFE_INTEGER + 1))
+            .expect_err("sequences beyond JavaScript safe integer must be rejected");
+        assert!(error.contains("JavaScript safe integer"));
+        assert!(store.take_commands().is_empty());
+
+        for epoch in [0, MAX_JS_SAFE_INTEGER + 1] {
+            let mut invalid = command(1);
+            invalid.epoch = epoch;
+            let error = store
+                .request_command(invalid)
+                .expect_err("scene epochs must be positive JavaScript-safe integers");
+            assert!(error.contains("command epoch"));
+        }
+        assert!(store.take_commands().is_empty());
+
+        store
+            .request_command(command(1))
+            .expect("a rejected unsafe sequence must not poison the key");
+        finish_commands(&store, store.take_commands());
+        store
+            .request_command(command(2))
+            .expect("the key remains usable after the rejected sequence");
+    }
+
+    #[test]
+    fn drained_command_sequences_do_not_accumulate_across_sessions() {
+        let store = SceneProjectionStore::default();
+        for sequence in 1..=1_000 {
+            store
+                .request_command(SceneCommandEnvelope {
+                    epoch: 1,
+                    sequence,
+                    command: SceneCommand::SetMetallic {
+                        node_id: format!("session-node-{sequence}"),
+                        value: 0.5,
+                    },
+                })
+                .unwrap();
+            finish_commands(&store, store.take_commands());
+            assert!(store.latest_command_sequences.lock().unwrap().is_empty());
+            assert!(store.in_flight_sequences.lock().unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn in_flight_sequence_capacity_rejects_new_keys_until_acknowledged() {
+        let store = SceneProjectionStore::default();
+        for sequence in 1..=MAX_PENDING_SCENE_COMMANDS as u64 {
+            store
+                .request_command(SceneCommandEnvelope {
+                    epoch: 1,
+                    sequence,
+                    command: SceneCommand::SetMetallic {
+                        node_id: format!("in-flight-node-{sequence}"),
+                        value: 0.5,
+                    },
+                })
+                .unwrap();
+        }
+        let commands = store.take_commands();
+        assert_eq!(commands.len(), MAX_PENDING_SCENE_COMMANDS);
+        assert_eq!(
+            store.in_flight_sequences.lock().unwrap().len(),
+            MAX_PENDING_SCENE_COMMANDS
+        );
+
+        let error = store
+            .request_command(SceneCommandEnvelope {
+                epoch: 1,
+                sequence: 10_000,
+                command: SceneCommand::SetMetallic {
+                    node_id: "in-flight-overflow".to_string(),
+                    value: 0.5,
+                },
+            })
+            .expect_err("distinct commands must not grow the in-flight map");
+        assert!(error.contains("in-flight capacity"));
+
+        finish_commands(&store, commands);
+        store
+            .request_command(SceneCommandEnvelope {
+                epoch: 1,
+                sequence: 10_000,
+                command: SceneCommand::SetMetallic {
+                    node_id: "in-flight-overflow".to_string(),
+                    value: 0.5,
+                },
+            })
+            .unwrap();
+        assert_eq!(store.take_commands().len(), 1);
+    }
+
+    #[test]
+    fn concurrent_request_and_drain_keep_sequence_map_bounded() {
+        let store = Arc::new(SceneProjectionStore::default());
+        let producer_store = Arc::clone(&store);
+        let producer = thread::spawn(move || {
+            for sequence in 1..=2_000 {
+                let _ = producer_store.request_command(SceneCommandEnvelope {
+                    epoch: 1,
+                    sequence,
+                    command: SceneCommand::SetMetallic {
+                        node_id: format!("concurrent-node-{sequence}"),
+                        value: 0.5,
+                    },
+                });
+                if sequence % 8 == 0 {
+                    thread::yield_now();
+                }
+            }
+        });
+        let drainer_store = Arc::clone(&store);
+        let drainer = thread::spawn(move || {
+            for _ in 0..256 {
+                finish_commands(&drainer_store, drainer_store.take_commands());
+                thread::yield_now();
+            }
+        });
+        producer.join().unwrap();
+        drainer.join().unwrap();
+        finish_commands(&store, store.take_commands());
+        assert!(store.latest_command_sequences.lock().unwrap().is_empty());
+        assert!(store.in_flight_sequences.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn in_flight_sequence_rejects_stale_until_result_finishes() {
+        let store = SceneProjectionStore::default();
+        let metallic = |sequence, value| SceneCommandEnvelope {
+            epoch: 1,
+            sequence,
+            command: SceneCommand::SetMetallic {
+                node_id: "cube".to_string(),
+                value,
+            },
+        };
+
+        store.request_command(metallic(10, 0.5)).unwrap();
+        let commands = store.take_commands();
+        assert_eq!(commands, vec![metallic(10, 0.5)]);
+        assert_eq!(
+            store
+                .in_flight_sequences
+                .lock()
+                .unwrap()
+                .get("cube/metallic"),
+            Some(&10)
+        );
+
+        store
+            .request_command(metallic(9, 0.25))
+            .expect("stale commands are acknowledged as rejected");
+        assert!(store.take_commands().is_empty());
+        assert_eq!(
+            store
+                .in_flight_sequences
+                .lock()
+                .unwrap()
+                .get("cube/metallic"),
+            Some(&10),
+            "a stale result must not release the in-flight newer command"
+        );
+
+        finish_commands(&store, commands);
+        assert!(store.in_flight_sequences.lock().unwrap().is_empty());
+        store.request_command(metallic(1, 0.1)).unwrap();
+        assert_eq!(store.take_commands(), vec![metallic(1, 0.1)]);
     }
 
     #[test]
@@ -382,12 +877,14 @@ mod tests {
         };
         store
             .request_command(SceneCommandEnvelope {
+                epoch: 1,
                 sequence: 1,
                 command: metallic.clone(),
             })
             .unwrap();
         store
             .request_command(SceneCommandEnvelope {
+                epoch: 1,
                 sequence: 2,
                 command: roughness.clone(),
             })
@@ -396,10 +893,12 @@ mod tests {
             store.take_commands(),
             vec![
                 SceneCommandEnvelope {
+                    epoch: 1,
                     sequence: 1,
                     command: metallic
                 },
                 SceneCommandEnvelope {
+                    epoch: 1,
                     sequence: 2,
                     command: roughness
                 }
@@ -409,6 +908,7 @@ mod tests {
 
         assert!(store
             .request_command(SceneCommandEnvelope {
+                epoch: 1,
                 sequence: 3,
                 command: SceneCommand::SetMetallic {
                     node_id: "cube".to_string(),
@@ -418,6 +918,7 @@ mod tests {
             .is_err());
         assert!(store
             .request_command(SceneCommandEnvelope {
+                epoch: 1,
                 sequence: 4,
                 command: SceneCommand::SetBaseColor {
                     node_id: "cube".to_string(),
@@ -427,6 +928,7 @@ mod tests {
             .is_err());
         assert!(store
             .request_command(SceneCommandEnvelope {
+                epoch: 1,
                 sequence: 5,
                 command: SceneCommand::SetLightDirection {
                     node_id: "key-light".to_string(),
@@ -436,6 +938,7 @@ mod tests {
             .is_err());
         store
             .request_command(SceneCommandEnvelope {
+                epoch: 1,
                 sequence: 6,
                 command: SceneCommand::SetLightIntensity {
                     node_id: "key-light".to_string(),
@@ -447,9 +950,32 @@ mod tests {
     }
 
     #[test]
+    fn transform_validation_rejects_non_finite_and_degenerate_values() {
+        let valid = SceneTransform {
+            translation: [0.0, 0.0, 0.0],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            scale: [1.0, 1.0, 1.0],
+        };
+        assert!(valid.validate().is_ok());
+
+        let mut invalid = valid.clone();
+        invalid.translation[0] = f32::NAN;
+        assert!(invalid.validate().is_err());
+
+        let mut invalid = valid.clone();
+        invalid.rotation = [0.0, 0.0, 0.0, 0.0];
+        assert!(invalid.validate().is_err());
+
+        let mut invalid = valid;
+        invalid.scale[2] = 0.0;
+        assert!(invalid.validate().is_err());
+    }
+
+    #[test]
     fn stale_same_property_is_rejected_but_different_properties_are_retained() {
         let store = SceneProjectionStore::default();
         let metallic = |sequence, value| SceneCommandEnvelope {
+            epoch: 1,
             sequence,
             command: SceneCommand::SetMetallic {
                 node_id: "cube".to_string(),
@@ -457,6 +983,7 @@ mod tests {
             },
         };
         let roughness = |sequence, value| SceneCommandEnvelope {
+            epoch: 1,
             sequence,
             command: SceneCommand::SetRoughness {
                 node_id: "cube".to_string(),
@@ -480,6 +1007,7 @@ mod tests {
     fn visibility_commands_coalesce_and_reject_stale_sequences() {
         let store = SceneProjectionStore::default();
         let visibility = |sequence, visible| SceneCommandEnvelope {
+            epoch: 1,
             sequence,
             command: SceneCommand::SetVisibility {
                 node_id: "cube".to_string(),
@@ -538,11 +1066,25 @@ mod tests {
     }
 
     #[test]
+    fn scene_command_wire_rejects_unknown_fields() {
+        let command = serde_json::from_str::<SceneCommand>(
+            r#"{"type":"setVisibility","nodeId":"cube","visible":false,"future":true}"#,
+        );
+        assert!(command.is_err());
+
+        let envelope = serde_json::from_str::<SceneCommandEnvelope>(
+            r#"{"epoch":1,"sequence":1,"command":{"type":"setVisibility","nodeId":"cube","visible":false},"future":true}"#,
+        );
+        assert!(envelope.is_err());
+    }
+
+    #[test]
     fn replacing_scene_clears_requests_and_advances_projection_revision() {
         let store = SceneProjectionStore::default();
-        store.request_selection("old-node".to_string());
+        store.request_selection("old-node".to_string()).unwrap();
         store
             .request_command(SceneCommandEnvelope {
+                epoch: 1,
                 sequence: 1,
                 command: SceneCommand::SetMetallic {
                     node_id: "cube".to_string(),
@@ -550,7 +1092,10 @@ mod tests {
                 },
             })
             .unwrap();
+        let _ = store.take_commands();
+        assert!(!store.in_flight_sequences.lock().unwrap().is_empty());
         store.replace_scene(SceneProjection {
+            epoch: 1,
             selected_node_id: Some("new-node".to_string()),
             ..SceneProjection::default()
         });
@@ -559,5 +1104,103 @@ mod tests {
         let projection = store.projection();
         assert_eq!(projection.selected_node_id.as_deref(), Some("new-node"));
         assert_eq!(projection.revision, 1);
+        assert_eq!(projection.epoch, 2);
+        assert!(store.in_flight_sequences.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn stale_epoch_command_is_rejected_without_entering_renderer_queue() {
+        let store = SceneProjectionStore::default();
+        store.replace_scene(SceneProjection::default());
+        let stale = SceneCommandEnvelope {
+            epoch: 1,
+            sequence: 42,
+            command: SceneCommand::SetVisibility {
+                node_id: "cube".to_string(),
+                visible: false,
+            },
+        };
+
+        store.request_command(stale).unwrap();
+
+        assert!(store.take_commands().is_empty());
+        let projection = store.projection();
+        let result = projection.command_results.last().unwrap();
+        assert_eq!(result.sequence, 42);
+        assert!(!result.applied);
+        assert!(result
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("stale scene epoch"));
+    }
+
+    #[test]
+    fn stale_epoch_sequence_does_not_pollute_new_scene_coalescing_state() {
+        let store = SceneProjectionStore::default();
+        store.replace_scene(SceneProjection::default());
+
+        store
+            .request_command(SceneCommandEnvelope {
+                epoch: 1,
+                sequence: 100,
+                command: SceneCommand::SetVisibility {
+                    node_id: "cube".to_string(),
+                    visible: false,
+                },
+            })
+            .expect("stale command is recorded as rejected");
+
+        store
+            .request_command(SceneCommandEnvelope {
+                epoch: 2,
+                sequence: 1,
+                command: SceneCommand::SetVisibility {
+                    node_id: "cube".to_string(),
+                    visible: true,
+                },
+            })
+            .expect("new epoch command is accepted");
+
+        let commands = store.take_commands();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].epoch, 2);
+        assert_eq!(commands[0].sequence, 1);
+    }
+
+    #[test]
+    fn concurrent_enqueue_and_scene_replace_complete_without_lock_inversion() {
+        let store = Arc::new(SceneProjectionStore::default());
+        let (done_tx, done_rx) = mpsc::channel();
+
+        let enqueue_store = Arc::clone(&store);
+        let enqueue_done = done_tx.clone();
+        let enqueue = thread::spawn(move || {
+            for sequence in 1..=128 {
+                let _ = enqueue_store.request_command(SceneCommandEnvelope {
+                    epoch: 1,
+                    sequence,
+                    command: SceneCommand::SetVisibility {
+                        node_id: "cube".to_string(),
+                        visible: sequence % 2 == 0,
+                    },
+                });
+            }
+            enqueue_done.send(()).expect("enqueue completion");
+        });
+
+        let replace_store = Arc::clone(&store);
+        let replace_done = done_tx;
+        let replace = thread::spawn(move || {
+            for _ in 0..128 {
+                replace_store.replace_scene(SceneProjection::default());
+            }
+            replace_done.send(()).expect("replace completion");
+        });
+
+        assert!(done_rx.recv_timeout(Duration::from_secs(1)).is_ok());
+        assert!(done_rx.recv_timeout(Duration::from_secs(1)).is_ok());
+        enqueue.join().expect("enqueue thread");
+        replace.join().expect("replace thread");
     }
 }

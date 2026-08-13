@@ -2,6 +2,8 @@ use std::time::Duration;
 
 use kiss3d::renderer::RenderTimings;
 
+const MAX_PERFORMANCE_SAMPLE_FRAMES: usize = 1_000_000;
+
 pub(crate) struct PerformanceSampler {
     sample_frames: usize,
     warmup_remaining: usize,
@@ -16,13 +18,15 @@ impl PerformanceSampler {
         let sample_frames = std::env::var("TAURI3D_PERF_SAMPLE_FRAMES")
             .ok()?
             .parse::<usize>()
-            .ok()?;
-        (sample_frames > 0).then(|| Self {
+            .ok()
+            .and_then(validate_sample_frames)?;
+        let (frame_wall, cpu_render, gpu) = allocate_sample_buffers(sample_frames)?;
+        Some(Self {
             sample_frames,
             warmup_remaining: 60,
-            frame_wall: Vec::with_capacity(sample_frames),
-            cpu_render: Vec::with_capacity(sample_frames),
-            gpu: Vec::with_capacity(sample_frames),
+            frame_wall,
+            cpu_render,
+            gpu,
             reported: false,
         })
     }
@@ -44,6 +48,9 @@ impl PerformanceSampler {
             return;
         }
         self.reported = true;
+        self.frame_wall.sort_unstable();
+        self.cpu_render.sort_unstable();
+        self.gpu.sort_unstable();
         let (target_width, target_height) = target.unwrap_or_default();
         let average_wall = self
             .frame_wall
@@ -51,11 +58,11 @@ impl PerformanceSampler {
             .map(Duration::as_secs_f64)
             .sum::<f64>()
             / self.frame_wall.len() as f64;
-        let gpu_p95 = self
-            .gpu
-            .is_empty()
-            .then_some("null".to_string())
-            .unwrap_or_else(|| format!("{:.3}", percentile_ms(&self.gpu, 0.95)));
+        let gpu_p95 = if self.gpu.is_empty() {
+            "null".to_string()
+        } else {
+            format!("{:.3}", percentile_ms(&self.gpu, 0.95))
+        };
         eprintln!(
             "[perf] {{\"backend\":\"native\",\"targetWidth\":{target_width},\"targetHeight\":{target_height},\"samples\":{},\"averageFps\":{:.3},\"frameWallP50Ms\":{:.3},\"frameWallP95Ms\":{:.3},\"frameWallP99Ms\":{:.3},\"cpuRenderP50Ms\":{:.3},\"cpuRenderP95Ms\":{:.3},\"cpuRenderP99Ms\":{:.3},\"gpuP95Ms\":{gpu_p95},\"gpuTiming\":\"{}\"}}",
             self.frame_wall.len(),
@@ -75,6 +82,22 @@ impl PerformanceSampler {
     }
 }
 
+fn allocate_sample_buffers(
+    sample_frames: usize,
+) -> Option<(Vec<Duration>, Vec<Duration>, Vec<Duration>)> {
+    let mut frame_wall = Vec::new();
+    frame_wall.try_reserve(sample_frames).ok()?;
+    let mut cpu_render = Vec::new();
+    cpu_render.try_reserve(sample_frames).ok()?;
+    let mut gpu = Vec::new();
+    gpu.try_reserve(sample_frames).ok()?;
+    Some((frame_wall, cpu_render, gpu))
+}
+
+fn validate_sample_frames(value: usize) -> Option<usize> {
+    (value > 0 && value <= MAX_PERFORMANCE_SAMPLE_FRAMES).then_some(value)
+}
+
 pub(crate) fn target_from_env() -> Option<(u32, u32)> {
     let value = std::env::var("TAURI3D_PERF_TARGET").ok()?;
     parse_target(&value)
@@ -87,11 +110,10 @@ fn parse_target(value: &str) -> Option<(u32, u32)> {
         .then_some(dimensions)
 }
 
+/// Nearest-rank percentile over an already sorted, non-empty sample slice.
 fn percentile_ms(samples: &[Duration], fraction: f64) -> f64 {
-    let mut sorted = samples.to_vec();
-    sorted.sort_unstable();
-    let index = ((sorted.len() as f64 * fraction).ceil() as usize).saturating_sub(1);
-    sorted[index.min(sorted.len().saturating_sub(1))].as_secs_f64() * 1000.0
+    let index = ((samples.len() as f64 * fraction).ceil() as usize).saturating_sub(1);
+    samples[index.min(samples.len().saturating_sub(1))].as_secs_f64() * 1000.0
 }
 
 #[cfg(test)]
@@ -107,9 +129,47 @@ mod tests {
     }
 
     #[test]
+    fn sample_count_rejects_zero_and_unbounded_allocations() {
+        assert_eq!(validate_sample_frames(1), Some(1));
+        assert_eq!(
+            validate_sample_frames(MAX_PERFORMANCE_SAMPLE_FRAMES),
+            Some(MAX_PERFORMANCE_SAMPLE_FRAMES)
+        );
+        assert_eq!(validate_sample_frames(0), None);
+        assert_eq!(
+            validate_sample_frames(MAX_PERFORMANCE_SAMPLE_FRAMES + 1),
+            None
+        );
+    }
+
+    #[test]
+    fn sample_buffers_reserve_without_panicking() {
+        let (frame_wall, cpu_render, gpu) =
+            allocate_sample_buffers(1).expect("small sample buffer allocation");
+        assert!(frame_wall.capacity() >= 1);
+        assert!(cpu_render.capacity() >= 1);
+        assert!(gpu.capacity() >= 1);
+    }
+
+    #[test]
     fn percentile_uses_nearest_rank() {
         let samples = [10, 20, 30, 40].map(Duration::from_millis);
         assert_eq!(percentile_ms(&samples, 0.50), 20.0);
         assert_eq!(percentile_ms(&samples, 0.95), 40.0);
+    }
+
+    #[test]
+    fn sampler_skips_initial_zero_frame_without_reporting() {
+        let mut sampler = PerformanceSampler {
+            sample_frames: 1,
+            warmup_remaining: 0,
+            frame_wall: Vec::new(),
+            cpu_render: Vec::new(),
+            gpu: Vec::new(),
+            reported: false,
+        };
+        sampler.observe(&RenderTimings::default(), None);
+        assert!(sampler.frame_wall.is_empty());
+        assert!(!sampler.reported);
     }
 }

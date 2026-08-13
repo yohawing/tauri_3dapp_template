@@ -4,10 +4,12 @@ export type BackendTransitionMode = "native" | "canvas";
 
 export interface BackendTransitionDependencies {
   deactivateNative: () => Promise<void>;
+  /** Resolves after the previous Native input attachment has drained its IPC tail. */
+  waitForViewportInputIdle?: () => Promise<void>;
   activateNative: () => Promise<void>;
   readCamera: () => Promise<CameraState>;
   writeCamera: (camera: CameraState) => Promise<void>;
-  mountCanvas: (camera: CameraState) => CanvasBackendHandle;
+  prepareCanvas: () => Promise<(camera: CameraState) => CanvasBackendHandle>;
   reportError: (error: unknown) => void;
 }
 
@@ -35,6 +37,10 @@ export class BackendTransitionController {
   private pendingCamera: CameraState | undefined;
   private disposed = false;
   private compensationTail: Promise<void> = Promise.resolve();
+  private nativeDeactivationInFlight: {
+    owner: TransitionState;
+    promise: Promise<void>;
+  } | null = null;
 
   public constructor(private readonly dependencies: BackendTransitionDependencies) {}
 
@@ -137,6 +143,35 @@ export class BackendTransitionController {
     return !this.disposed && !state.cancelled && this.current === state;
   }
 
+  /**
+   * Share a Native deactivation only within the Canvas owner that requested
+   * it. A stale Native activation can race the owner's Canvas entry; issuing
+   * a second deactivate in that window is redundant and can reorder renderer
+   * lifecycle calls. Different generations retain their existing compensation
+   * semantics and may request their own operation.
+   */
+  private deactivateNative(owner: TransitionState): Promise<void> {
+    const inFlight = this.nativeDeactivationInFlight;
+    if (inFlight?.owner === owner) {
+      return inFlight.promise;
+    }
+
+    let operation: Promise<void>;
+    try {
+      operation = this.dependencies.deactivateNative();
+    } catch (error) {
+      operation = Promise.reject(error);
+    }
+    this.nativeDeactivationInFlight = { owner, promise: operation };
+    const clearInFlight = () => {
+      if (this.nativeDeactivationInFlight?.promise === operation) {
+        this.nativeDeactivationInFlight = null;
+      }
+    };
+    void operation.then(clearInFlight, clearInFlight);
+    return operation;
+  }
+
   private canRestore(state: TransitionState, allowDisposed: boolean): boolean {
     const currentOrCancelled = this.current === state || (state.cancelled && this.current === null);
     return (
@@ -184,7 +219,17 @@ export class BackendTransitionController {
       if (!this.isCurrent(state)) {
         return;
       }
-      await this.dependencies.deactivateNative();
+      if (this.dependencies.waitForViewportInputIdle) {
+        // The Native input effect cleanup queues PointerCancel and publishes
+        // its attachment tail before this transition effect starts Canvas.
+        // Keep deactivation behind that tail so late old input cannot enter a
+        // later Native generation.
+        await this.dependencies.waitForViewportInputIdle();
+        if (!this.isCurrent(state)) {
+          return;
+        }
+      }
+      await this.deactivateNative(state);
       state.nativeDeactivated = true;
       if (!this.isCurrent(state)) {
         if (state.cancelled && this.generation === state.generation && this.current === null) {
@@ -196,11 +241,16 @@ export class BackendTransitionController {
         return;
       }
 
+      const mountCanvas = await this.dependencies.prepareCanvas();
+      if (!this.isCurrent(state)) {
+        return;
+      }
+
       const camera = state.seedCamera ?? (await this.dependencies.readCamera());
       if (!this.isCurrent(state)) {
         return;
       }
-      const handle = this.dependencies.mountCanvas(camera);
+      const handle = mountCanvas(camera);
       if (!this.isCurrent(state)) {
         this.disposeCanvas(handle);
         return;
@@ -255,11 +305,49 @@ export class BackendTransitionController {
     }
     try {
       await this.dependencies.activateNative();
+      if (!this.isCurrent(state)) {
+        this.compensateLateActivation();
+        return;
+      }
       state.nativeDeactivated = false;
     } catch (error) {
       if (this.isCurrent(state)) {
         this.dependencies.reportError(error);
       }
     }
+  }
+
+  /**
+   * A Native generation may finish activating after a newer Canvas generation
+   * has already deactivated and mounted. Queue a Native deactivation for that
+   * current Canvas owner, and let later Canvas generations wait for it through
+   * the shared compensation tail.
+   */
+  private compensateLateActivation(): void {
+    const owner = this.current;
+    if (!owner || owner.mode !== "canvas") {
+      return;
+    }
+    this.compensationTail = this.compensationTail
+      .then(async () => {
+        if (this.current !== owner || owner.cancelled || this.disposed) {
+          return;
+        }
+        try {
+          if (this.dependencies.waitForViewportInputIdle) {
+            await this.dependencies.waitForViewportInputIdle();
+            if (this.current !== owner || owner.cancelled || this.disposed) {
+              return;
+            }
+          }
+          await this.deactivateNative(owner);
+          owner.nativeDeactivated = true;
+        } catch (error) {
+          if (this.current === owner && !owner.cancelled) {
+            this.dependencies.reportError(error);
+          }
+        }
+      })
+      .catch(() => undefined);
   }
 }

@@ -1,6 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   formatConsoleEntries,
+  MAX_CONSOLE_MESSAGE_LENGTH,
+  boundedDiagnosticText,
+  normalizeConsoleDiagnostic,
+  safeDiagnosticText,
   selectVisibleConsoleEntries,
   type ConsoleEntry,
 } from "./contracts";
@@ -65,5 +69,89 @@ describe("console state model", () => {
 
     expect(notifications).toBe(2);
     expect(formatConsoleEntries([entry(5, "warn")])).toContain("[WARN] [frontend] diagnostic-5");
+  });
+
+  it("continues notifying subscribers when one subscriber throws", () => {
+    const store = createConsoleStore();
+    const first = vi.fn(() => { throw new Error("subscriber failed"); });
+    const second = vi.fn();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      store.subscribe(first);
+      store.subscribe(second);
+      expect(() => store.append(entry(1))).not.toThrow();
+      expect(first).toHaveBeenCalledOnce();
+      expect(second).toHaveBeenCalledOnce();
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("normalizes diagnostic events and keeps unknown sources in frontend", () => {
+    expect(normalizeConsoleDiagnostic({ level: "warn", source: "timeline", message: "late event" })).toEqual({
+      level: "warn",
+      source: "timeline",
+      message: "late event",
+    });
+    expect(normalizeConsoleDiagnostic({ level: "info", source: "plugin", message: "external" })).toEqual({
+      level: "info",
+      source: "frontend",
+      message: "external",
+    });
+    expect(normalizeConsoleDiagnostic({ level: "debug", source: "scene", message: "ignored" })).toBeNull();
+    expect(normalizeConsoleDiagnostic(null)).toBeNull();
+  });
+
+  it("fails closed for diagnostic payloads with throwing getters", () => {
+    const hostile = new Proxy({}, {
+      get() {
+        throw new Error("hostile diagnostic getter");
+      },
+    });
+
+    expect(() => normalizeConsoleDiagnostic(hostile)).not.toThrow();
+    expect(normalizeConsoleDiagnostic(hostile)).toBeNull();
+  });
+
+  it("bounds untrusted diagnostic messages before retaining them", () => {
+    const message = "x".repeat(MAX_CONSOLE_MESSAGE_LENGTH + 100);
+    const normalized = normalizeConsoleDiagnostic({ level: "error", source: "scene", message });
+
+    expect(normalized?.message).toBe(`${"x".repeat(MAX_CONSOLE_MESSAGE_LENGTH)}…`);
+  });
+
+  it("keeps copied diagnostics line-oriented and neutralizes control characters", () => {
+    const normalized = normalizeConsoleDiagnostic({
+      level: "warn",
+      source: "scene",
+      message: "first\n[ERROR] forged\t\u202e reversed",
+    });
+
+    expect(normalized?.message).toBe("first [ERROR] forged � reversed");
+    expect(formatConsoleEntries([
+      { timestamp: "2026-08-08T00:00:00.000Z", ...normalized! },
+    ])).not.toContain("\n[ERROR]");
+  });
+
+  it("converts hostile rejection values without throwing", () => {
+    const nullPrototype = Object.create(null) as object;
+    const throwingToString = { toString: () => { throw new Error("coercion failed"); } };
+
+    expect(safeDiagnosticText(new Error("native failed"))).toBe("Error: native failed");
+    expect(safeDiagnosticText(nullPrototype)).toBe("Unknown error");
+    expect(safeDiagnosticText(throwingToString)).toBe("Unknown error");
+  });
+
+  it("bounds command-result text by UTF-8 bytes", () => {
+    const text = boundedDiagnosticText("あ".repeat(4_000), 4_096);
+    expect(new TextEncoder().encode(text).byteLength).toBeLessThanOrEqual(4_096);
+    expect(text).not.toContain("\n");
+  });
+
+  it("does not leave a split surrogate at the UTF-8 boundary", () => {
+    const text = boundedDiagnosticText(`${"a".repeat(4_093)}😀`);
+    expect(new TextEncoder().encode(text).byteLength).toBeLessThanOrEqual(4_096);
+    const last = text.charCodeAt(text.length - 1);
+    expect(last < 0xd800 || last > 0xdbff).toBe(true);
   });
 });

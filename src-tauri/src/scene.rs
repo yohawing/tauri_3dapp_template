@@ -5,13 +5,22 @@
 //! construction belongs to a later integration slice.
 
 use std::fmt;
-use std::fs;
-use std::io;
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
+use serde::de::{self, DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 
 const SCENE_VERSION: u32 = 1;
+const MAX_SCENE_JSON_BYTES: usize = 16 * 1024 * 1024;
+const MAX_SCENE_COLLECTION_ITEMS: usize = 4096;
+const MAX_SCENE_ID_BYTES: usize = 1024;
+const MAX_SCENE_NAME_BYTES: usize = 1024;
+const MAX_SCENE_PATH_BYTES: usize = 4096;
+const ATOMIC_TEMP_CREATE_ATTEMPTS: usize = 16;
+static NEXT_ATOMIC_TEMP_ID: AtomicU64 = AtomicU64::new(1);
 
 /// The persistent Scene v1 document.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -167,6 +176,20 @@ pub enum SceneValidationError {
     EmptyAssetPath {
         asset_id: String,
     },
+    InvalidAssetPath {
+        asset_id: String,
+        path: String,
+    },
+    StringTooLong {
+        field: String,
+        bytes: usize,
+        limit: usize,
+    },
+    CollectionTooLarge {
+        field: String,
+        count: usize,
+        limit: usize,
+    },
     UnsupportedAssetKind {
         asset_id: String,
         kind: String,
@@ -220,14 +243,20 @@ impl fmt::Display for SceneError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::FileIo { path, message, .. } => {
-                write!(
-                    formatter,
-                    "scene file I/O failed for {}: {message}",
-                    path.display()
-                )
+                let path = diagnostic_path(path);
+                let message = diagnostic_text(message);
+                write!(formatter, "scene file I/O failed for {}: {message}", path)
             }
-            Self::Json { kind, message } => write!(formatter, "scene JSON {kind:?}: {message}"),
-            Self::Validation(error) => write!(formatter, "scene validation failed: {error:?}"),
+            Self::Json { kind, message } => write!(
+                formatter,
+                "scene JSON {kind:?}: {}",
+                diagnostic_text(message)
+            ),
+            Self::Validation(error) => write!(
+                formatter,
+                "scene validation failed: {}",
+                diagnostic_text(&format!("{error:?}"))
+            ),
             Self::MissingAsset {
                 asset_id,
                 resolved_path,
@@ -235,14 +264,56 @@ impl fmt::Display for SceneError {
                 ..
             } => write!(
                 formatter,
-                "scene asset '{asset_id}' ({path_kind:?}) does not exist at {}",
-                resolved_path.display()
+                "scene asset '{}' ({path_kind:?}) does not exist at {}",
+                diagnostic_text(asset_id),
+                diagnostic_path(resolved_path),
             ),
         }
     }
 }
 
 impl std::error::Error for SceneError {}
+
+const MAX_DIAGNOSTIC_TEXT_BYTES: usize = 4096;
+
+/// Keep user-controlled diagnostics single-line and bounded without changing
+/// the stored Scene path or the path shown to successful callers.
+pub(crate) fn diagnostic_text(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len().min(MAX_DIAGNOSTIC_TEXT_BYTES));
+    for character in value.chars() {
+        let replacement = match character {
+            '\n' => "\\n".to_string(),
+            '\r' => "\\r".to_string(),
+            '\t' => "\\t".to_string(),
+            character if is_bidi_control(character) => {
+                format!("\\u{{{:x}}}", character as u32)
+            }
+            character if character.is_control() => format!("\\u{{{:x}}}", character as u32),
+            character => character.to_string(),
+        };
+        if escaped.len() + replacement.len() > MAX_DIAGNOSTIC_TEXT_BYTES - 3 {
+            escaped.push_str("...");
+            break;
+        }
+        escaped.push_str(&replacement);
+    }
+    escaped
+}
+
+fn is_bidi_control(character: char) -> bool {
+    matches!(
+        character,
+        '\u{061c}'
+            | '\u{200e}'
+            | '\u{200f}'
+            | '\u{202a}'..='\u{202e}'
+            | '\u{2066}'..='\u{206f}'
+    )
+}
+
+pub(crate) fn diagnostic_path(path: &Path) -> String {
+    diagnostic_text(&path.to_string_lossy())
+}
 
 impl Scene {
     /// Construct an empty, valid Scene document suitable for File > New.
@@ -258,6 +329,22 @@ impl Scene {
 
     /// Parse and semantically validate a JSON Scene document.
     pub fn parse_json(input: &str) -> Result<Self, SceneError> {
+        if input.len() > MAX_SCENE_JSON_BYTES {
+            return Err(SceneError::Json {
+                kind: SceneJsonErrorKind::Schema,
+                message: format!(
+                    "scene JSON is {} bytes; maximum is {} bytes",
+                    input.len(),
+                    MAX_SCENE_JSON_BYTES
+                ),
+            });
+        }
+        if let Err(message) = reject_duplicate_json_keys(input) {
+            return Err(SceneError::Json {
+                kind: SceneJsonErrorKind::Schema,
+                message,
+            });
+        }
         let scene = serde_json::from_str::<Self>(input).map_err(|error| SceneError::Json {
             kind: if error.is_syntax() || error.is_eof() {
                 SceneJsonErrorKind::Syntax
@@ -273,7 +360,22 @@ impl Scene {
     /// Read, parse, validate, resolve, and existence-check a Scene file.
     pub fn load(path: impl AsRef<Path>) -> Result<Self, SceneError> {
         let path = path.as_ref();
-        let input = fs::read_to_string(path).map_err(|error| SceneError::FileIo {
+        let metadata = fs::metadata(path).map_err(|error| SceneError::FileIo {
+            path: path.to_path_buf(),
+            kind: error.kind(),
+            message: error.to_string(),
+        })?;
+        if metadata.len() > MAX_SCENE_JSON_BYTES as u64 {
+            return Err(SceneError::Json {
+                kind: SceneJsonErrorKind::Schema,
+                message: format!(
+                    "scene JSON is {} bytes; maximum is {} bytes",
+                    metadata.len(),
+                    MAX_SCENE_JSON_BYTES
+                ),
+            });
+        }
+        let input = read_scene_json(path).map_err(|error| SceneError::FileIo {
             path: path.to_path_buf(),
             kind: error.kind(),
             message: error.to_string(),
@@ -292,10 +394,20 @@ impl Scene {
             message: format!("scene serialization failed: {error}"),
         })?;
         encoded.push('\n');
-        fs::write(path, encoded).map_err(|error| SceneError::FileIo {
+        if encoded.len() > MAX_SCENE_JSON_BYTES {
+            return Err(SceneError::Json {
+                kind: SceneJsonErrorKind::Schema,
+                message: format!(
+                    "scene JSON is {} bytes; maximum is {} bytes",
+                    encoded.len(),
+                    MAX_SCENE_JSON_BYTES
+                ),
+            });
+        }
+        atomic_write(path, encoded.as_bytes()).map_err(|error| SceneError::FileIo {
             path: path.to_path_buf(),
             kind: error.kind(),
-            message: error.to_string(),
+            message: format!("atomic Scene save failed: {error}"),
         })
     }
 
@@ -318,15 +430,18 @@ impl Scene {
         let mut rebased = self.clone();
         let resolved = self.resolve_asset_paths(source_scene_file)?;
         for (asset, resolved) in rebased.assets.iter_mut().zip(resolved) {
-            if !Path::new(&asset.path).is_absolute() {
+            if !is_absolute_asset_path(Path::new(&asset.path)) {
                 let canonical_asset = resolved
                     .resolved_path
                     .canonicalize()
                     .unwrap_or(resolved.resolved_path);
-                asset.path = pathdiff::diff_paths(&canonical_asset, &canonical_target_parent)
-                    .unwrap_or(canonical_asset)
-                    .to_string_lossy()
-                    .into_owned();
+                let rebased_path = pathdiff::diff_paths(&canonical_asset, &canonical_target_parent)
+                    .unwrap_or(canonical_asset);
+                asset.path = if rebased_path.is_absolute() {
+                    rebased_path.to_string_lossy().into_owned()
+                } else {
+                    portable_relative_path(&rebased_path)
+                };
             }
         }
         rebased.validate().map_err(SceneError::Validation)?;
@@ -341,8 +456,31 @@ impl Scene {
             });
         }
 
+        if let Some(name) = &self.name {
+            validate_string_limit(name, "scene.name", MAX_SCENE_NAME_BYTES)?;
+        }
+        if self.assets.len() > MAX_SCENE_COLLECTION_ITEMS {
+            return Err(SceneValidationError::CollectionTooLarge {
+                field: "assets".to_string(),
+                count: self.assets.len(),
+                limit: MAX_SCENE_COLLECTION_ITEMS,
+            });
+        }
+        if self.instances.len() > MAX_SCENE_COLLECTION_ITEMS {
+            return Err(SceneValidationError::CollectionTooLarge {
+                field: "instances".to_string(),
+                count: self.instances.len(),
+                limit: MAX_SCENE_COLLECTION_ITEMS,
+            });
+        }
+
         let mut asset_ids = std::collections::HashSet::with_capacity(self.assets.len());
         for (index, asset) in self.assets.iter().enumerate() {
+            validate_string_limit(
+                &asset.id,
+                &format!("assets[{index}].id"),
+                MAX_SCENE_ID_BYTES,
+            )?;
             if asset.id.trim().is_empty() {
                 return Err(SceneValidationError::EmptyAssetId { index });
             }
@@ -356,6 +494,17 @@ impl Scene {
                     asset_id: asset.id.clone(),
                 });
             }
+            validate_string_limit(
+                &asset.path,
+                &format!("assets[{index}].path"),
+                MAX_SCENE_PATH_BYTES,
+            )?;
+            if is_windows_drive_relative(Path::new(&asset.path)) {
+                return Err(SceneValidationError::InvalidAssetPath {
+                    asset_id: asset.id.clone(),
+                    path: asset.path.clone(),
+                });
+            }
             if !matches!(asset.kind.as_str(), "gltf" | "fbx") {
                 return Err(SceneValidationError::UnsupportedAssetKind {
                     asset_id: asset.id.clone(),
@@ -366,6 +515,11 @@ impl Scene {
 
         let mut instance_ids = std::collections::HashSet::with_capacity(self.instances.len());
         for (index, instance) in self.instances.iter().enumerate() {
+            validate_string_limit(
+                &instance.id,
+                &format!("instances[{index}].id"),
+                MAX_SCENE_ID_BYTES,
+            )?;
             if instance.id.trim().is_empty() {
                 return Err(SceneValidationError::EmptyInstanceId { index });
             }
@@ -374,6 +528,11 @@ impl Scene {
                     id: instance.id.clone(),
                 });
             }
+            validate_string_limit(
+                &instance.asset,
+                &format!("instances[{index}].asset"),
+                MAX_SCENE_ID_BYTES,
+            )?;
             if !asset_ids.contains(&instance.asset) {
                 return Err(SceneValidationError::MissingAssetReference {
                     instance_id: instance.id.clone(),
@@ -445,7 +604,7 @@ impl Scene {
             .iter()
             .map(|asset| {
                 let stored_path = PathBuf::from(&asset.path);
-                let kind = if stored_path.is_absolute() {
+                let kind = if is_absolute_asset_path(&stored_path) {
                     AssetPathKind::AbsoluteLocal
                 } else {
                     AssetPathKind::PortableRelative
@@ -453,7 +612,7 @@ impl Scene {
                 let resolved_path = if kind == AssetPathKind::AbsoluteLocal {
                     stored_path.clone()
                 } else {
-                    scene_parent.join(&stored_path)
+                    scene_parent.join(portable_asset_path(&stored_path))
                 };
                 ResolvedAssetPath {
                     asset_id: asset.id.clone(),
@@ -485,6 +644,203 @@ impl Scene {
     }
 }
 
+/// Read at most one byte beyond the JSON budget. The metadata check above is
+/// only an early fast path; a concurrent writer can grow the file after it.
+fn read_scene_json(path: &Path) -> io::Result<String> {
+    let file = File::open(path)?;
+    let mut input = String::new();
+    file.take((MAX_SCENE_JSON_BYTES + 1) as u64)
+        .read_to_string(&mut input)?;
+    Ok(input)
+}
+
+const DUPLICATE_JSON_KEY_PREFIX: &str = "duplicate JSON object key: ";
+const NESTING_JSON_KEY_PREFIX: &str = "scene JSON nesting exceeds ";
+const MAX_SCENE_JSON_NESTING_DEPTH: usize = 256;
+
+/// Scan JSON objects before schema deserialization so duplicate keys cannot
+/// silently overwrite an earlier value. Syntax errors are left to the normal
+/// parser below, which preserves serde_json's line/column diagnostics.
+fn reject_duplicate_json_keys(input: &str) -> Result<(), String> {
+    validate_json_nesting_depth(input)?;
+    let mut deserializer = serde_json::Deserializer::from_str(input);
+    match deserializer.deserialize_any(JsonValueVisitor { depth: 0 }) {
+        Ok(()) => {
+            let _ = deserializer.end();
+            Ok(())
+        }
+        Err(error) => {
+            let message = error.to_string();
+            if let Some(key) = message.strip_prefix(DUPLICATE_JSON_KEY_PREFIX) {
+                Err(format!("{DUPLICATE_JSON_KEY_PREFIX}{key}"))
+            } else if message.starts_with(NESTING_JSON_KEY_PREFIX) {
+                Err(message)
+            } else {
+                Ok(())
+            }
+        }
+    }
+}
+
+fn validate_json_nesting_depth(input: &str) -> Result<(), String> {
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for byte in input.bytes() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match byte {
+            b'"' => in_string = true,
+            b'{' | b'[' => {
+                depth += 1;
+                if depth > MAX_SCENE_JSON_NESTING_DEPTH {
+                    return Err(format!(
+                        "{NESTING_JSON_KEY_PREFIX}{MAX_SCENE_JSON_NESTING_DEPTH}"
+                    ));
+                }
+            }
+            b'}' | b']' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+struct JsonValueScanner {
+    depth: usize,
+}
+
+impl<'de> DeserializeSeed<'de> for JsonValueScanner {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(JsonValueVisitor { depth: self.depth })
+    }
+}
+
+struct JsonValueVisitor {
+    depth: usize,
+}
+
+impl<'de> Visitor<'de> for JsonValueVisitor {
+    type Value = ();
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("any JSON value")
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        if self.depth >= MAX_SCENE_JSON_NESTING_DEPTH {
+            return Err(de::Error::custom(format!(
+                "{NESTING_JSON_KEY_PREFIX}{MAX_SCENE_JSON_NESTING_DEPTH}"
+            )));
+        }
+        let mut keys = std::collections::HashSet::new();
+        while let Some(key) = map.next_key::<String>()? {
+            if !keys.insert(key.clone()) {
+                return Err(de::Error::custom(format!(
+                    "{DUPLICATE_JSON_KEY_PREFIX}{key}"
+                )));
+            }
+            map.next_value_seed(JsonValueScanner {
+                depth: self.depth + 1,
+            })?;
+        }
+        Ok(())
+    }
+
+    fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        if self.depth >= MAX_SCENE_JSON_NESTING_DEPTH {
+            return Err(de::Error::custom(format!(
+                "{NESTING_JSON_KEY_PREFIX}{MAX_SCENE_JSON_NESTING_DEPTH}"
+            )));
+        }
+        while sequence
+            .next_element_seed(JsonValueScanner {
+                depth: self.depth + 1,
+            })?
+            .is_some()
+        {}
+        Ok(())
+    }
+
+    fn visit_bool<E>(self, _: bool) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(())
+    }
+
+    fn visit_i64<E>(self, _: i64) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(())
+    }
+
+    fn visit_u64<E>(self, _: u64) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(())
+    }
+
+    fn visit_f64<E>(self, _: f64) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(())
+    }
+
+    fn visit_str<E>(self, _: &str) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(())
+    }
+
+    fn visit_none<E>(self) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(())
+    }
+
+    fn visit_unit<E>(self) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(())
+    }
+
+    fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        JsonValueScanner {
+            depth: self.depth + 1,
+        }
+        .deserialize(deserializer)
+    }
+}
+
 fn absolute_path(path: &Path) -> Result<PathBuf, SceneError> {
     if path.is_absolute() {
         return Ok(path.to_path_buf());
@@ -498,6 +854,124 @@ fn absolute_path(path: &Path) -> Result<PathBuf, SceneError> {
         })
 }
 
+/// Scene JSON uses forward slashes for relative paths on every platform.
+/// Absolute paths retain their native spelling and are intentionally not
+/// passed through this helper.
+fn portable_relative_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn portable_asset_path(path: &Path) -> PathBuf {
+    PathBuf::from(path.to_string_lossy().replace('\\', "/"))
+}
+
+fn is_absolute_asset_path(path: &Path) -> bool {
+    path.is_absolute() || is_windows_drive_absolute(path) || is_windows_unc(path)
+}
+
+fn is_windows_drive_absolute(path: &Path) -> bool {
+    let value = path.to_string_lossy();
+    let mut chars = value.chars();
+    matches!(
+        (chars.next(), chars.next(), chars.next()),
+        (Some(drive), Some(':'), Some(separator))
+            if drive.is_ascii_alphabetic() && matches!(separator, '\\' | '/')
+    )
+}
+
+fn is_windows_drive_relative(path: &Path) -> bool {
+    let value = path.to_string_lossy();
+    let mut chars = value.chars();
+    matches!((chars.next(), chars.next()), (Some(drive), Some(':'))
+        if drive.is_ascii_alphabetic()
+            && !matches!(chars.next(), Some('\\' | '/')))
+}
+
+fn is_windows_unc(path: &Path) -> bool {
+    path.to_string_lossy().starts_with(r"\\")
+}
+
+fn atomic_write(path: &Path, contents: &[u8]) -> io::Result<()> {
+    atomic_write_with(path, contents, |temporary, destination| {
+        fs::rename(temporary, destination)
+    })
+}
+
+fn atomic_write_with<F>(destination: &Path, contents: &[u8], replace: F) -> io::Result<()>
+where
+    F: FnOnce(&Path, &Path) -> io::Result<()>,
+{
+    let (mut file, temporary_path) = create_atomic_temp_file(destination)?;
+    let mut cleanup = AtomicTempCleanup::new(temporary_path.clone());
+
+    let write_result = (|| {
+        file.write_all(contents)?;
+        file.sync_all()
+    })();
+    drop(file);
+    write_result?;
+
+    replace(&temporary_path, destination)?;
+    cleanup.committed = true;
+    Ok(())
+}
+
+fn create_atomic_temp_file(destination: &Path) -> io::Result<(File, PathBuf)> {
+    let parent = destination
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let file_name = destination.file_name().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Scene save destination must name a file",
+        )
+    })?;
+    let stem = file_name.to_string_lossy();
+    let process_id = std::process::id();
+
+    for attempt in 0..ATOMIC_TEMP_CREATE_ATTEMPTS {
+        let serial = NEXT_ATOMIC_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+        let temporary_path = parent.join(format!(".{stem}.tmp-{process_id}-{serial}-{attempt}"));
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary_path)
+        {
+            Ok(file) => return Ok((file, temporary_path)),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "could not allocate a unique temporary Scene save file",
+    ))
+}
+
+struct AtomicTempCleanup {
+    path: PathBuf,
+    committed: bool,
+}
+
+impl AtomicTempCleanup {
+    fn new(path: PathBuf) -> Self {
+        Self {
+            path,
+            committed: false,
+        }
+    }
+}
+
+impl Drop for AtomicTempCleanup {
+    fn drop(&mut self) {
+        if !self.committed {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
 fn validate_finite<const N: usize>(
     values: &[f64; N],
     field: String,
@@ -506,6 +980,22 @@ fn validate_finite<const N: usize>(
         Ok(())
     } else {
         Err(SceneValidationError::NonFinite { field })
+    }
+}
+
+fn validate_string_limit(
+    value: &str,
+    field: &str,
+    limit: usize,
+) -> Result<(), SceneValidationError> {
+    if value.len() > limit {
+        Err(SceneValidationError::StringTooLong {
+            field: field.to_string(),
+            bytes: value.len(),
+            limit,
+        })
+    } else {
+        Ok(())
     }
 }
 
@@ -548,12 +1038,153 @@ mod tests {
         std::env::temp_dir().join(format!("tauri3d-scene-{label}-{nonce}"))
     }
 
+    fn atomic_temp_entries(root: &Path) -> Vec<PathBuf> {
+        fs::read_dir(root)
+            .expect("read temporary save directory")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with(".scene.json.tmp-"))
+            })
+            .collect()
+    }
+
     #[test]
     fn parses_and_round_trips_semantically() {
         let scene = valid_scene();
         let encoded = serde_json::to_string(&scene).expect("serialize");
         let decoded = Scene::parse_json(&encoded).expect("round trip");
         assert_eq!(scene, decoded);
+    }
+
+    #[test]
+    fn rejects_oversized_scene_json_before_deserialize() {
+        let oversized = " ".repeat(MAX_SCENE_JSON_BYTES + 1);
+        assert!(matches!(
+            Scene::parse_json(&oversized),
+            Err(SceneError::Json {
+                kind: SceneJsonErrorKind::Schema,
+                message,
+            }) if message.contains("maximum")
+        ));
+    }
+
+    #[test]
+    fn rejects_excessively_nested_scene_json_before_schema_deserialize() {
+        let mut nested = String::with_capacity(MAX_SCENE_JSON_NESTING_DEPTH * 2 + 1);
+        nested.extend(std::iter::repeat_n('[', MAX_SCENE_JSON_NESTING_DEPTH + 1));
+        nested.push('0');
+        nested.extend(std::iter::repeat_n(']', MAX_SCENE_JSON_NESTING_DEPTH + 1));
+        assert!(matches!(
+            Scene::parse_json(&nested),
+            Err(SceneError::Json {
+                kind: SceneJsonErrorKind::Schema,
+                message,
+            }) if message.contains("nesting exceeds")
+        ));
+    }
+
+    #[test]
+    fn load_rejects_oversized_scene_file_before_reading() {
+        let root = temp_path("oversized-load");
+        fs::create_dir_all(&root).expect("create temp directory");
+        let path = root.join("scene.json");
+        fs::write(&path, vec![b' '; MAX_SCENE_JSON_BYTES + 1]).expect("write oversized fixture");
+        assert!(matches!(
+            Scene::load(&path),
+            Err(SceneError::Json {
+                kind: SceneJsonErrorKind::Schema,
+                message,
+            }) if message.contains("maximum")
+        ));
+        fs::remove_dir_all(root).expect("remove temp directory");
+    }
+
+    #[test]
+    fn bounded_scene_read_stops_after_budget_plus_one_byte() {
+        let root = temp_path("bounded-read");
+        fs::create_dir_all(&root).expect("create temp directory");
+        let path = root.join("scene.json");
+        fs::write(&path, vec![b' '; MAX_SCENE_JSON_BYTES + 4096]).expect("write oversized fixture");
+        let input = read_scene_json(&path).expect("bounded read");
+        assert_eq!(input.len(), MAX_SCENE_JSON_BYTES + 1);
+        fs::remove_dir_all(root).expect("remove temp directory");
+    }
+
+    #[test]
+    fn rejects_scene_collection_and_string_limits() {
+        let mut scene = valid_scene();
+        scene.assets = (0..=MAX_SCENE_COLLECTION_ITEMS)
+            .map(|index| SceneAsset {
+                id: format!("asset-{index}"),
+                kind: "gltf".to_string(),
+                path: format!("asset-{index}.glb"),
+            })
+            .collect();
+        assert!(matches!(
+            scene.validate(),
+            Err(SceneValidationError::CollectionTooLarge { field, .. }) if field == "assets"
+        ));
+
+        let mut scene = valid_scene();
+        scene.instances = (0..=MAX_SCENE_COLLECTION_ITEMS)
+            .map(|index| {
+                let mut instance = scene.instances[0].clone();
+                instance.id = format!("instance-{index}");
+                instance
+            })
+            .collect();
+        assert!(matches!(
+            scene.validate(),
+            Err(SceneValidationError::CollectionTooLarge { field, .. }) if field == "instances"
+        ));
+
+        let mut scene = valid_scene();
+        scene.name = Some("n".repeat(MAX_SCENE_NAME_BYTES + 1));
+        assert!(matches!(
+            scene.validate(),
+            Err(SceneValidationError::StringTooLong { field, .. }) if field == "scene.name"
+        ));
+
+        let mut scene = valid_scene();
+        scene.assets[0].id = "a".repeat(MAX_SCENE_ID_BYTES + 1);
+        assert!(matches!(
+            scene.validate(),
+            Err(SceneValidationError::StringTooLong { field, .. })
+                if field == "assets[0].id"
+        ));
+
+        let mut scene = valid_scene();
+        scene.assets[0].path = "p".repeat(MAX_SCENE_PATH_BYTES + 1);
+        assert!(matches!(
+            scene.validate(),
+            Err(SceneValidationError::StringTooLong { field, .. })
+                if field == "assets[0].path"
+        ));
+    }
+
+    #[test]
+    fn rejects_serialized_scene_over_json_limit() {
+        let mut scene = valid_scene();
+        scene.instances.clear();
+        scene.assets = (0..MAX_SCENE_COLLECTION_ITEMS)
+            .map(|index| SceneAsset {
+                id: format!("asset-{index}"),
+                kind: "gltf".to_string(),
+                path: "p".repeat(MAX_SCENE_PATH_BYTES),
+            })
+            .collect();
+        let path = temp_path("oversized-json");
+        assert!(matches!(
+            scene.save(&path),
+            Err(SceneError::Json {
+                kind: SceneJsonErrorKind::Schema,
+                message,
+            }) if message.contains("maximum")
+        ));
+        assert!(!path.exists());
     }
 
     #[test]
@@ -590,6 +1221,77 @@ mod tests {
     }
 
     #[test]
+    fn rejects_duplicate_json_keys_at_any_object_depth() {
+        let duplicate_top_level = r#"{"version":1,"version":1,"assets":[],"instances":[]}"#;
+        assert!(matches!(
+            Scene::parse_json(duplicate_top_level),
+            Err(SceneError::Json {
+                kind: SceneJsonErrorKind::Schema,
+                message,
+            }) if message.contains("duplicate JSON object key: version")
+        ));
+
+        let duplicate_nested = r#"{
+            "version":1,
+            "assets":[{"id":"asset","id":"other","kind":"gltf","path":"asset.glb"}],
+            "instances":[]
+        }"#;
+        assert!(matches!(
+            Scene::parse_json(duplicate_nested),
+            Err(SceneError::Json {
+                kind: SceneJsonErrorKind::Schema,
+                message,
+            }) if message.contains("duplicate JSON object key: id")
+        ));
+
+        let duplicate_escaped =
+            r#"{"version":1,"name":"first","\u006eame":"second","assets":[],"instances":[]}"#;
+        assert!(matches!(
+            Scene::parse_json(duplicate_escaped),
+            Err(SceneError::Json {
+                kind: SceneJsonErrorKind::Schema,
+                message,
+            }) if message.contains("duplicate JSON object key: name")
+        ));
+    }
+
+    #[test]
+    fn diagnostics_escape_control_chars_and_bound_untrusted_text() {
+        let error = SceneError::FileIo {
+            path: PathBuf::from("scene\nname\twith-control"),
+            kind: io::ErrorKind::Other,
+            message: "read\r\nfailed".to_string(),
+        };
+        let message = error.to_string();
+        assert!(!message.contains('\n'));
+        assert!(!message.contains('\r'));
+        assert!(message.contains("scene\\nname\\twith-control"));
+        assert!(message.contains("read\\r\\nfailed"));
+
+        let bidi = diagnostic_text("visible\u{202e}hidden");
+        assert_eq!(bidi, "visible\\u{202e}hidden");
+        assert_eq!(
+            diagnostic_text("visible\u{206f}hidden"),
+            "visible\\u{206f}hidden"
+        );
+        assert_eq!(
+            diagnostic_path(Path::new("assets/visible\u{202e}hidden.glb")),
+            "assets/visible\\u{202e}hidden.glb"
+        );
+        let bidi_long = diagnostic_text(&"\u{202e}".repeat(MAX_DIAGNOSTIC_TEXT_BYTES));
+        assert!(bidi_long.len() <= MAX_DIAGNOSTIC_TEXT_BYTES);
+        assert!(bidi_long.ends_with("..."));
+        assert!(!bidi_long.contains('\u{202e}'));
+
+        let long = diagnostic_text(&"x".repeat(MAX_DIAGNOSTIC_TEXT_BYTES + 32));
+        assert!(long.len() <= MAX_DIAGNOSTIC_TEXT_BYTES);
+        assert!(long.ends_with("..."));
+        let unicode = diagnostic_text(&"é".repeat(MAX_DIAGNOSTIC_TEXT_BYTES));
+        assert!(unicode.len() <= MAX_DIAGNOSTIC_TEXT_BYTES);
+        assert!(unicode.ends_with("..."));
+    }
+
+    #[test]
     fn rejects_duplicate_ids_and_missing_reference() {
         let duplicate_asset = VALID_JSON.replace(
             "{\"id\":\"character\",\"kind\":\"gltf\",\"path\":\"./assets/character.glb\"}",
@@ -620,6 +1322,23 @@ mod tests {
             Err(SceneError::Validation(
                 SceneValidationError::MissingAssetReference { .. }
             ))
+        ));
+    }
+
+    #[test]
+    fn rejects_windows_drive_relative_asset_paths() {
+        let mut scene = valid_scene();
+        scene.assets[0].path = "C:assets/character.glb".into();
+        assert!(matches!(
+            scene.validate(),
+            Err(SceneValidationError::InvalidAssetPath { path, .. })
+                if path == "C:assets/character.glb"
+        ));
+
+        scene.assets[0].path = "C:".into();
+        assert!(matches!(
+            scene.validate(),
+            Err(SceneValidationError::InvalidAssetPath { .. })
         ));
     }
 
@@ -680,6 +1399,34 @@ mod tests {
     }
 
     #[test]
+    fn resolves_legacy_windows_separators_as_portable_relative_paths() {
+        let mut scene = valid_scene();
+        scene.assets[0].path = r".\assets\character.glb".into();
+        let root = temp_path("legacy-separators");
+        let scene_file = root.join("experiments").join("example.scene.json");
+        let resolved = scene.resolve_asset_paths(&scene_file).expect("resolve");
+        assert_eq!(resolved[0].kind, AssetPathKind::PortableRelative);
+        assert_eq!(
+            resolved[0].resolved_path,
+            root.join("experiments").join("assets/character.glb")
+        );
+    }
+
+    #[test]
+    fn preserves_foreign_windows_absolute_drive_and_unc_paths() {
+        for path in [r"C:\assets\character.glb", r"\\server\share\character.glb"] {
+            let mut scene = valid_scene();
+            scene.assets[0].path = path.to_string();
+            let resolved = scene
+                .resolve_asset_paths(Path::new("portable/example.scene.json"))
+                .expect("resolve foreign absolute path");
+            assert_eq!(resolved[0].kind, AssetPathKind::AbsoluteLocal);
+            assert_eq!(resolved[0].stored_path, PathBuf::from(path));
+            assert_eq!(resolved[0].resolved_path, PathBuf::from(path));
+        }
+    }
+
+    #[test]
     fn preserves_absolute_path_diagnostic() {
         let root = temp_path("absolute");
         let absolute = root.join("character.glb");
@@ -722,6 +1469,66 @@ mod tests {
     }
 
     #[test]
+    fn save_replaces_existing_scene_file() {
+        let root = temp_path("save-replace");
+        fs::create_dir_all(&root).expect("create temp directory");
+        let path = root.join("scene.json");
+        fs::write(&path, b"old scene contents").expect("create existing scene");
+
+        let scene = Scene::empty("Replacement");
+        scene.save(&path).expect("replace existing scene");
+
+        assert_eq!(
+            Scene::load(&path)
+                .expect("reload replacement")
+                .name
+                .as_deref(),
+            Some("Replacement")
+        );
+        assert!(atomic_temp_entries(&root).is_empty());
+        fs::remove_dir_all(root).expect("remove temp directory");
+    }
+
+    #[test]
+    fn injected_atomic_replace_failure_preserves_old_bytes_and_cleans_temp() {
+        let root = temp_path("save-replace-failure");
+        fs::create_dir_all(&root).expect("create temp directory");
+        let path = root.join("scene.json");
+        let old_contents = b"old scene contents";
+        fs::write(&path, old_contents).expect("create existing scene");
+
+        let error = atomic_write_with(&path, b"new scene contents", |_temporary, _destination| {
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "injected rename failure",
+            ))
+        })
+        .expect_err("injected replacement must fail");
+
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(fs::read(&path).expect("read preserved scene"), old_contents);
+        assert!(atomic_temp_entries(&root).is_empty());
+        fs::remove_dir_all(root).expect("remove temp directory");
+    }
+
+    #[test]
+    fn missing_parent_save_reports_destination_and_leaves_no_temp_file() {
+        let root = temp_path("save-missing-parent");
+        let path = root.join("missing-parent").join("scene.json");
+
+        let error = Scene::empty("Missing Parent")
+            .save(&path)
+            .expect_err("missing parent must fail");
+        match error {
+            SceneError::FileIo {
+                path: error_path, ..
+            } => assert_eq!(error_path, path),
+            other => panic!("expected destination FileIo, got {other:?}"),
+        }
+        assert!(!root.exists());
+    }
+
+    #[test]
     fn save_as_rebases_relative_assets_to_the_new_parent() {
         let root = temp_path("save-as");
         let source = root.join("source").join("sample.scene.json");
@@ -733,6 +1540,20 @@ mod tests {
         assert_eq!(
             PathBuf::from(&rebased.assets[0].path),
             PathBuf::from("..").join("source/assets/character.glb")
+        );
+        assert!(!rebased.assets[0].path.contains('\\'));
+        assert_eq!(rebased.assets[0].path, "../source/assets/character.glb");
+    }
+
+    #[test]
+    fn portable_relative_path_normalizes_windows_separators_only() {
+        assert_eq!(
+            portable_relative_path(Path::new(r"..\assets\character.glb")),
+            "../assets/character.glb"
+        );
+        assert_eq!(
+            portable_relative_path(Path::new("assets/character.glb")),
+            "assets/character.glb"
         );
     }
 
@@ -763,5 +1584,42 @@ mod tests {
             .expect("rebase first-save asset path");
 
         assert_eq!(PathBuf::from(&rebased.assets[0].path), asset);
+    }
+
+    #[test]
+    fn save_as_keeps_absolute_asset_path_native() {
+        let root = temp_path("save-as-absolute");
+        let target = root.join("saved").join("copy.scene.json");
+        let asset = root.join("assets").join("character.fbx");
+        let mut scene = Scene::empty("Untitled");
+        scene.assets.push(SceneAsset {
+            id: "character".into(),
+            kind: "fbx".into(),
+            path: asset.to_string_lossy().into_owned(),
+        });
+
+        let rebased = scene
+            .rebased_for_save(Some(&root.join("source.scene.json")), &target)
+            .expect("absolute path remains machine-local");
+        assert_eq!(rebased.assets[0].path, asset.to_string_lossy());
+    }
+
+    #[test]
+    fn save_as_preserves_foreign_windows_absolute_asset_spelling() {
+        let root = temp_path("save-as-foreign-absolute");
+        let target = root.join("saved").join("copy.scene.json");
+        for path in [r"C:\assets\character.glb", r"\\server\share\character.glb"] {
+            let mut scene = Scene::empty("Untitled");
+            scene.assets.push(SceneAsset {
+                id: "character".into(),
+                kind: "gltf".into(),
+                path: path.to_string(),
+            });
+
+            let rebased = scene
+                .rebased_for_save(Some(&root.join("source.scene.json")), &target)
+                .expect("foreign absolute path remains unchanged");
+            assert_eq!(rebased.assets[0].path, path);
+        }
     }
 }

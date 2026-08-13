@@ -4,7 +4,7 @@ export type PlaybackConnectionState =
   | { kind: "browser-preview" }
   | { kind: "native-loading"; latestRevision: number }
   | { kind: "native-available"; snapshot: TimelinePlaybackSnapshot; latestRevision: number }
-  | { kind: "native-unavailable"; latestRevision: number };
+  | { kind: "native-unavailable"; latestEpoch: number; latestRevision: number };
 
 export interface PlaybackSnapshotAcceptance {
   state: PlaybackConnectionState;
@@ -29,11 +29,25 @@ function latestRevision(state: PlaybackConnectionState): number {
   }
 }
 
+function latestEpoch(state: PlaybackConnectionState): number {
+  switch (state.kind) {
+    case "native-loading":
+      return 0;
+    case "native-unavailable":
+      return state.latestEpoch;
+    case "native-available":
+      return state.snapshot.epoch;
+    case "browser-preview":
+      return -1;
+  }
+}
+
 /**
  * Accepts authoritative Native snapshots while preserving the explicit
  * browser-only preview state. Equal revisions are accepted because Rust may
- * publish a corrected time/availability snapshot without advancing the
- * scene revision; only lower revisions are stale.
+ * publish a corrected time/availability snapshot. Scene epoch is compared
+ * first, then the revision within that epoch; older epochs are stale even if
+ * their revision is numerically newer after a replacement reset.
  */
 export function reducePlaybackConnection(
   state: PlaybackConnectionState,
@@ -62,16 +76,25 @@ export function acceptPlaybackSnapshot(
   state: PlaybackConnectionState,
   snapshot: TimelinePlaybackSnapshot,
 ): PlaybackSnapshotAcceptance {
-  if (state.kind === "browser-preview" || snapshot.revision < latestRevision(state)) {
+  if (
+    state.kind === "browser-preview" ||
+    snapshot.epoch < latestEpoch(state) ||
+    (snapshot.epoch === latestEpoch(state) && snapshot.revision < latestRevision(state))
+  ) {
     return { state, accepted: false };
   }
   if (!snapshot.available) {
-    if (state.kind === "native-unavailable" && state.latestRevision === snapshot.revision) {
+    if (
+      state.kind === "native-unavailable" &&
+      state.latestEpoch === snapshot.epoch &&
+      state.latestRevision === snapshot.revision
+    ) {
       return { state, accepted: true };
     }
     return {
       state: {
         kind: "native-unavailable",
+        latestEpoch: snapshot.epoch,
         latestRevision: snapshot.revision,
       },
       accepted: true,
@@ -79,6 +102,7 @@ export function acceptPlaybackSnapshot(
   }
   if (
     state.kind === "native-available" &&
+    state.snapshot.epoch === snapshot.epoch &&
     state.latestRevision === snapshot.revision &&
     hasSameTargetMetadata(state.snapshot, snapshot)
   ) {

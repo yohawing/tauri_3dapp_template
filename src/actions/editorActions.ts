@@ -4,6 +4,8 @@ export type EditorActionId =
   | "file.import"
   | "file.save"
   | "file.saveAs"
+  | "edit.undoTransform"
+  | "edit.redoTransform"
   | "renderer.native"
   | "renderer.canvas"
   | "view.inspector.toggle"

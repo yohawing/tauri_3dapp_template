@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { CheckboxInput, CompactSelect } from "../components/controls/CompactControls";
 import { CONSOLE_LEVELS, type ConsoleLevel, type Settings } from "./model";
 
@@ -9,32 +9,87 @@ export interface SettingsModalProps {
   onClose: () => void;
 }
 
-function updateSettings(settings: Settings, update: (current: Settings) => void): void {
+export function updateSettings(settings: Settings, update: (current: Settings) => Settings): Settings {
   // This helper keeps every control immediate while preserving the controlled
   // component contract expected by App. The parent owns persistence and the
   // consumers of the values.
-  update(settings);
+  return update(settings);
+}
+
+const FOCUSABLE_SELECTOR = [
+  "button:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  "a[href]",
+  "[tabindex]:not([tabindex='-1'])",
+].join(",");
+
+function focusableElements(dialog: HTMLElement): HTMLElement[] {
+  return Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+    (element) => element.tabIndex >= 0,
+  );
 }
 
 export function SettingsModal({ open, settings, onChange, onClose }: SettingsModalProps) {
+  const dialogRef = useRef<HTMLElement | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const onCloseRef = useRef(onClose);
+  const settingsRef = useRef(settings);
+  onCloseRef.current = onClose;
+  settingsRef.current = settings;
+
   useEffect(() => {
     if (!open) return;
 
+    const previouslyFocused = document.activeElement;
+    closeButtonRef.current?.focus();
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      event.stopPropagation();
-      onClose();
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        onCloseRef.current();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      const focusable = focusableElements(dialog);
+      if (focusable.length === 0) {
+        event.preventDefault();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      if (!dialog.contains(active) || (!event.shiftKey && active === last)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last.focus();
+      }
     };
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onClose, open]);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      if (previouslyFocused instanceof HTMLElement && previouslyFocused.isConnected) {
+        previouslyFocused.focus();
+      }
+    };
+  }, [open]);
 
   if (!open) return null;
 
+  const commitSettings = (update: (current: Settings) => Settings) => {
+    const next = updateSettings(settingsRef.current, update);
+    settingsRef.current = next;
+    onChange(next);
+  };
+
   const setDebugOverlay = (debugOverlay: boolean) => {
-    updateSettings(settings, (current) =>
-      onChange({
+    commitSettings((current) =>
+      ({
         ...current,
         viewport: { ...current.viewport, debugOverlay },
       }),
@@ -42,8 +97,8 @@ export function SettingsModal({ open, settings, onChange, onClose }: SettingsMod
   };
 
   const setMinimumLevel = (minimumLevel: ConsoleLevel) => {
-    updateSettings(settings, (current) =>
-      onChange({
+    commitSettings((current) =>
+      ({
         ...current,
         console: { ...current.console, minimumLevel },
       }),
@@ -51,8 +106,8 @@ export function SettingsModal({ open, settings, onChange, onClose }: SettingsMod
   };
 
   const setAutoScroll = (autoScroll: boolean) => {
-    updateSettings(settings, (current) =>
-      onChange({
+    commitSettings((current) =>
+      ({
         ...current,
         console: { ...current.console, autoScroll },
       }),
@@ -71,6 +126,7 @@ export function SettingsModal({ open, settings, onChange, onClose }: SettingsMod
       onPointerDown={interceptPointer}
     >
       <section
+        ref={dialogRef}
         className="settings-modal"
         role="dialog"
         aria-modal="true"
@@ -82,6 +138,7 @@ export function SettingsModal({ open, settings, onChange, onClose }: SettingsMod
             Settings
           </h2>
           <button
+            ref={closeButtonRef}
             type="button"
             className="settings-modal__close"
             aria-label="Close Settings"

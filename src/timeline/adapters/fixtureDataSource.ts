@@ -227,6 +227,7 @@ export const fixtureTimelineDataSource: TimelineDataSource = {
   getRange: () => ({ start: 0, end: 12 }),
   getGroups: () => groups,
   getBindings: () => bindings,
+  getRowCount: () => rows.length,
   getRows: ({ start, count }) => rows.slice(start, start + count),
   getItems: (query) =>
     items.filter((item) => {

@@ -51,9 +51,16 @@ Scene file:
 ## 検証
 
 ```powershell
-npm run build
-cargo check --locked --manifest-path src-tauri/Cargo.toml
-cargo test --locked --manifest-path src-tauri/Cargo.toml
+npm run verify
+```
+
+`npm run verify` はFrontend test／build、Rust fmt、check、clippy、testを順に実行します。
+
+外部BrainStem assetを使う実データgateは通常の自己完結testから分離しています。fixtureをtrackedせず、明示したpathだけを読み込みます。
+
+```powershell
+$env:TAURI3D_BRAINSTEM_GLTF = "F:\path\to\BrainStem.gltf"
+cargo test --locked --manifest-path src-tauri/Cargo.toml brainstem_metadata_is_available_without_renderer_startup -- --ignored
 ```
 
 ### 開発用診断フラグ
@@ -62,6 +69,7 @@ cargo test --locked --manifest-path src-tauri/Cargo.toml
 
 ```powershell
 $env:TAURI3D_LOG_VIEWPORT_RECT = "1"
+$env:TAURI3D_LOG_ASSET_DECODE = "1"
 $env:VITE_INPUT_SELF_TEST = "1"
 $env:VITE_BACKEND_SELF_TEST = "1"
 $env:VITE_DOCK_SELF_TEST = "1"
@@ -73,6 +81,7 @@ npm run tauri dev
 | 変数 | 内容 |
 |---|---|
 | `TAURI3D_LOG_VIEWPORT_RECT` | Rust側でViewport矩形変更を記録 |
+| `TAURI3D_LOG_ASSET_DECODE` | Scene replacementごとのasset種別／instance数、queue／decode／main-thread時間を記録（絶対パスは出力しない） |
 | `VITE_INPUT_SELF_TEST` | Pointer／Wheelのscripted入力を一度実行 |
 | `VITE_BACKEND_SELF_TEST` | Native→Canvas→Native切替を一度実行 |
 | `VITE_DOCK_SELF_TEST` | panel move、Inspector非表示、layout resetを順に実行 |
@@ -92,12 +101,9 @@ npm run tauri dev
 
 ## 関連文書
 
-- [`TODO.md`](TODO.md): 依存順の実行queueと完了条件
-- [`docs/IDEA.md`](docs/IDEA.md): PoC企画書
-- [`docs/SCENE_FORMAT.md`](docs/SCENE_FORMAT.md): version付きScene JSONとローカルAsset pathの最小契約
-- [`docs/POC_STATUS.md`](docs/POC_STATUS.md): 実装、検証、未実装、外部証拠待ちを分けたPoC台帳
-- [`docs/TIMELINE_PLAN.md`](docs/TIMELINE_PLAN.md): Temporal Editor subsystemの正式実装計画
-- [`docs/ui-research.md`](docs/ui-research.md): DCC UI library調査
+- [`docs/IDEA.md`](docs/IDEA.md): PoCの目的、成功条件、採否ゲート
+
+詳細なTODO、検証台帳、設計メモ、実装計画はローカル作業資料としてGit管理外に置きます。リポジトリで公開する文書は、このREADMEと`docs/IDEA.md`を正とします。
 
 ## License
 

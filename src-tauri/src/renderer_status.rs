@@ -1,7 +1,10 @@
+use std::error::Error;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use kiss3d::prelude::{RenderFrameStatus, SurfaceSkipReason, SurfaceUnavailableReason};
+
+use crate::scene::diagnostic_text;
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -33,8 +36,8 @@ impl RendererStatus {
         Self {
             native_available: false,
             native_active: false,
-            fallback_reason: Some(reason.into()),
-            recovery_hint: Some(recovery_hint.into()),
+            fallback_reason: Some(diagnostic_text(&reason.into())),
+            recovery_hint: Some(diagnostic_text(&recovery_hint.into())),
         }
     }
 }
@@ -118,9 +121,72 @@ pub fn frame_fallback_reason(status: RenderFrameStatus) -> Option<&'static str> 
     }
 }
 
+pub const GPU_OUT_OF_MEMORY_REASON: &str = "Native GPU out of memory";
+
+/// Classifies only device-level OOM for Native fallback. Surface acquisition
+/// statuses remain a separate contract, and validation/internal errors retain
+/// wgpu's fatal default behavior.
+pub fn uncaptured_error_fallback_reason(error: &wgpu::Error) -> Option<&'static str> {
+    match error {
+        wgpu::Error::OutOfMemory { .. } => Some(GPU_OUT_OF_MEMORY_REASON),
+        wgpu::Error::Validation { .. } | wgpu::Error::Internal { .. } => None,
+    }
+}
+
+/// Keeps the message and lower-level source visible when preserving wgpu's
+/// default panic behavior for non-OOM uncaptured errors.
+pub fn uncaptured_error_panic_message(error: &wgpu::Error) -> String {
+    let source = error
+        .source()
+        .map(ToString::to_string)
+        .unwrap_or_else(|| "unknown".to_string());
+    format!("wgpu uncaptured error: {error}; source: {source}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Debug)]
+    struct TestGpuError(&'static str);
+
+    impl std::fmt::Display for TestGpuError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(self.0)
+        }
+    }
+
+    impl Error for TestGpuError {}
+
+    fn test_error_source(message: &'static str) -> wgpu::ErrorSource {
+        Box::new(TestGpuError(message))
+    }
+
+    #[test]
+    fn uncaptured_error_classifier_only_falls_back_for_oom() {
+        let oom = wgpu::Error::OutOfMemory {
+            source: test_error_source("oom-source"),
+        };
+        let validation = wgpu::Error::Validation {
+            source: test_error_source("validation-source"),
+            description: "validation-message".to_string(),
+        };
+        let internal = wgpu::Error::Internal {
+            source: test_error_source("internal-source"),
+            description: "internal-message".to_string(),
+        };
+
+        assert_eq!(
+            uncaptured_error_fallback_reason(&oom),
+            Some(GPU_OUT_OF_MEMORY_REASON)
+        );
+        assert_eq!(uncaptured_error_fallback_reason(&validation), None);
+        assert_eq!(uncaptured_error_fallback_reason(&internal), None);
+
+        let panic_message = uncaptured_error_panic_message(&validation);
+        assert!(panic_message.contains("validation-message"));
+        assert!(panic_message.contains("validation-source"));
+    }
 
     #[test]
     fn unavailable_renderer_rejects_reactivation_and_keeps_reason() {
@@ -134,6 +200,19 @@ mod tests {
         assert!(!status.native_active);
         assert_eq!(status.fallback_reason.as_deref(), Some("injected failure"));
         assert!(status.recovery_hint.is_some());
+    }
+
+    #[test]
+    fn unavailable_status_bounds_and_escapes_external_diagnostics() {
+        let status = RendererStatus::unavailable_with_hint(
+            format!("device\n{}", "x".repeat(5000)),
+            "retry\tNative",
+        );
+        let reason = status.fallback_reason.as_deref().unwrap();
+        assert!(!reason.contains('\n'));
+        assert!(reason.ends_with("..."));
+        assert!(reason.len() <= 4096);
+        assert_eq!(status.recovery_hint.as_deref(), Some("retry\\tNative"));
     }
 
     #[test]
