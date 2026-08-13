@@ -53,13 +53,77 @@ export function areViewportRectsEqual(
 export type ViewportMode = "native" | "canvas";
 export type ManipulatorMode = "translate" | "rotate" | "scale";
 export type ManipulatorOrientation = "world" | "local";
+export type ViewportDisplayMode = "lit" | "wireframe";
 export type CameraProjection = "perspective" | "orthographic";
 export type CameraViewPreset = "front" | "right" | "top" | "perspective";
 export type CameraFov = 30 | 45 | 60 | 90;
 
+type ViewportToolbarIconName =
+  | "translate"
+  | "rotate"
+  | "scale"
+  | "world"
+  | "local"
+  | "snap"
+  | "lit"
+  | "wireframe"
+  | "camera"
+  | "lighting"
+  | "environment"
+  | "show";
+
+function ViewportToolbarIcon({ name }: { name: ViewportToolbarIconName }) {
+  const common = {
+    className: "viewport-host__tool-icon",
+    viewBox: "0 0 24 24",
+    "aria-hidden": true,
+  } as const;
+
+  switch (name) {
+    case "translate":
+      return <svg {...common}><path d="M12 3v18M3 12h18M12 3l-3 3m3-3 3 3M21 12l-3-3m3 3-3 3" /></svg>;
+    case "rotate":
+      return <svg {...common}><path d="M18.8 8A8 8 0 1 0 20 12" /><path d="M18.8 3.8V8h-4.2" /></svg>;
+    case "scale":
+      return <svg {...common}><path d="M5 19 19 5M13 5h6v6M5 13v6h6" /></svg>;
+    case "world":
+      return <svg {...common}><circle cx="12" cy="12" r="8" /><path d="M4 12h16M12 4c2.2 2.2 3.3 4.9 3.3 8S14.2 17.8 12 20c-2.2-2.2-3.3-4.9-3.3-8S9.8 6.2 12 4" /></svg>;
+    case "local":
+      return <svg {...common}><path d="m6 16 6 3.5 6-3.5V9l-6-3.5L6 9v7Z" /><path d="m6 9 6 3.5L18 9M12 12.5v7" /></svg>;
+    case "snap":
+      return <svg {...common}><path d="M5 4v9a7 7 0 0 0 14 0V4h-4v9a3 3 0 0 1-6 0V4H5Z" /><path d="M5 8h4m6 0h4" /></svg>;
+    case "lit":
+      return <svg {...common}><circle cx="12" cy="12" r="5" /><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4m0-14.2-1.4 1.4M6.3 17.7l-1.4 1.4" /></svg>;
+    case "wireframe":
+      return <svg {...common}><path d="m5 8 7-4 7 4v8l-7 4-7-4V8Z" /><path d="m5 8 7 4 7-4M12 12v8" /></svg>;
+    case "camera":
+      return <svg {...common}><path d="M4 7h4l1.5-2h5L16 7h4v11H4V7Z" /><circle cx="12" cy="12.5" r="3.5" /></svg>;
+    case "lighting":
+      return <svg {...common}><path d="M8.5 15.5c-1.3-1-2-2.5-2-4.1a5.5 5.5 0 1 1 11 0c0 1.6-.7 3.1-2 4.1-.8.7-1.1 1.2-1.1 2H9.6c0-.8-.3-1.3-1.1-2Z" /><path d="M9.5 20h5" /></svg>;
+    case "environment":
+      return <svg {...common}><circle cx="12" cy="12" r="8" /><path d="M4.6 15h14.8M7 15l3-4 2 2 2.5-3 3 5" /></svg>;
+    case "show":
+      return <svg {...common}><path d="M3 12s3.2-5 9-5 9 5 9 5-3.2 5-9 5-9-5-9-5Z" /><circle cx="12" cy="12" r="2.5" /></svg>;
+  }
+}
+
+function ViewportToolbarChevron() {
+  return <svg className="viewport-host__tool-chevron" viewBox="0 0 8 8" aria-hidden="true"><path d="m1.5 2.5 2.5 3 2.5-3" /></svg>;
+}
+
 function initialManipulatorMode(): ManipulatorMode {
   const selfTest = import.meta.env.VITE_MANIPULATOR_SELF_TEST;
   return selfTest === "rotate" || selfTest === "scale" ? selfTest : "translate";
+}
+
+export function nextManipulatorMode(mode: ManipulatorMode): ManipulatorMode {
+  if (mode === "translate") return "rotate";
+  if (mode === "rotate") return "scale";
+  return "translate";
+}
+
+export function nextViewportDisplayMode(mode: ViewportDisplayMode): ViewportDisplayMode {
+  return mode === "lit" ? "wireframe" : "lit";
 }
 
 // Escape hatch for the dock shell: dockview's onDidLayoutChange fires when a
@@ -333,7 +397,7 @@ interface ViewportHostProps {
   showDebugOverlay?: boolean;
   fallbackReason?: string | null;
   recoveryHint?: string | null;
-  displayMode?: "lit" | "wireframe";
+  displayMode?: ViewportDisplayMode;
   showGrid?: boolean;
   showBones?: boolean;
   projection?: CameraProjection;
@@ -342,7 +406,7 @@ interface ViewportHostProps {
   environment?: ViewportEnvironmentSettings;
   lighting?: ViewportLightingSettings;
   onDisplaySettingsChange?: (patch: {
-    displayMode?: "lit" | "wireframe";
+    displayMode?: ViewportDisplayMode;
     showGrid?: boolean;
     showBones?: boolean;
   }) => void;
@@ -757,81 +821,58 @@ export function ViewportHost({
         onPointerMove={(event) => event.stopPropagation()}
       >
         <div className="viewport-host__mode-group" role="group" aria-label="Transform manipulator">
-          {([
-            ["translate", "W", "Move"],
-            ["rotate", "E", "Rotate"],
-            ["scale", "R", "Scale"],
-          ] as const).map(([tool, shortcut, label]) => (
-            <button
-              key={tool}
-              type="button"
-              className={`viewport-host__tool-button${manipulatorMode === tool ? " is-active" : ""}`}
-              aria-label={`${label} manipulator (${shortcut})`}
-              aria-pressed={manipulatorMode === tool}
-              title={`${label} (${shortcut})`}
-              disabled={mode !== "native"}
-              onClick={() => setManipulatorMode(tool)}
-            >
-              {shortcut}
-            </button>
-          ))}
+          <button
+            type="button"
+            className="viewport-host__tool-button viewport-host__tool-button--icon is-active"
+            aria-label={`${manipulatorMode} manipulator. Toggle to ${nextManipulatorMode(manipulatorMode)}`}
+            title={`${manipulatorMode[0].toUpperCase()}${manipulatorMode.slice(1)} (W/E/R shortcuts; click to cycle)`}
+            disabled={mode !== "native"}
+            onClick={() => setManipulatorMode((value) => nextManipulatorMode(value))}
+          >
+            <ViewportToolbarIcon name={manipulatorMode} />
+          </button>
         </div>
         <div className="viewport-host__mode-group" role="group" aria-label="Manipulator orientation and snapping">
           <button
             type="button"
-            className={`viewport-host__tool-button${manipulatorOrientation === "world" ? " is-active" : ""}`}
-            aria-label="World orientation"
-            aria-pressed={manipulatorOrientation === "world"}
-            disabled={mode !== "native"}
-            onClick={() => setManipulatorOrientation("world")}
-          >
-            World
-          </button>
-          <button
-            type="button"
-            className={`viewport-host__tool-button${manipulatorOrientation === "local" ? " is-active" : ""}`}
-            aria-label="Local orientation"
+            className={`viewport-host__tool-button viewport-host__tool-button--icon${manipulatorOrientation === "local" ? " is-active" : ""}`}
+            aria-label={`Manipulator orientation: ${manipulatorOrientation}. Toggle to ${manipulatorOrientation === "world" ? "local" : "world"}`}
             aria-pressed={manipulatorOrientation === "local"}
+            title={`Orientation: ${manipulatorOrientation === "world" ? "World" : "Local"} (click to toggle)`}
             disabled={mode !== "native"}
-            onClick={() => setManipulatorOrientation("local")}
+            onClick={() => setManipulatorOrientation((value) => value === "world" ? "local" : "world")}
           >
-            Local
+            <ViewportToolbarIcon name={manipulatorOrientation} />
           </button>
           <button
             type="button"
-            className={`viewport-host__tool-button${snapEnabled ? " is-active" : ""}`}
+            className={`viewport-host__tool-button viewport-host__tool-button--icon${snapEnabled ? " is-active" : ""}`}
             aria-label="Toggle transform snapping"
             aria-pressed={snapEnabled}
+            title="Transform snapping"
             disabled={mode !== "native"}
             onClick={() => setSnapEnabled((value) => !value)}
           >
-            Snap
+            <ViewportToolbarIcon name="snap" />
           </button>
         </div>
         <div className="viewport-host__mode-group" role="group" aria-label="Viewport display mode">
           <button
             type="button"
-            className={`viewport-host__tool-button${displayMode === "lit" ? " is-active" : ""}`}
-            aria-pressed={displayMode === "lit"}
-            disabled={mode !== "native"}
-            onClick={() => onDisplaySettingsChange?.({ displayMode: "lit" })}
-          >
-            Lit
-          </button>
-          <button
-            type="button"
-            className={`viewport-host__tool-button${displayMode === "wireframe" ? " is-active" : ""}`}
+            className="viewport-host__tool-button viewport-host__tool-button--icon is-active"
+            aria-label={`${displayMode} display mode. Toggle to ${nextViewportDisplayMode(displayMode)}`}
             aria-pressed={displayMode === "wireframe"}
+            title={`${displayMode === "lit" ? "Lit" : "Wireframe"} display (click to toggle)`}
             disabled={mode !== "native"}
-            onClick={() => onDisplaySettingsChange?.({ displayMode: "wireframe" })}
+            onClick={() => onDisplaySettingsChange?.({ displayMode: nextViewportDisplayMode(displayMode) })}
           >
-            Wireframe
+            <ViewportToolbarIcon name={displayMode} />
           </button>
         </div>
         <div className="viewport-host__camera-menu">
           <button
             type="button"
-            className={`viewport-host__tool-button${showCameraMenu ? " is-active" : ""}`}
+            className={`viewport-host__tool-button viewport-host__tool-button--icon viewport-host__tool-button--menu${showCameraMenu ? " is-active" : ""}`}
             aria-label={`Camera settings: ${cameraLabel}`}
             aria-expanded={showCameraMenu}
             aria-haspopup="dialog"
@@ -839,7 +880,8 @@ export function ViewportHost({
             disabled={mode !== "native"}
             onClick={(event) => toggleViewportPopover(event, setShowCameraMenu, showCameraMenu)}
           >
-            Camera ▾
+            <ViewportToolbarIcon name="camera" />
+            <ViewportToolbarChevron />
           </button>
           {showCameraMenu && (
             <div className="viewport-host__camera-popover" role="dialog" aria-label="Camera settings">
@@ -900,7 +942,7 @@ export function ViewportHost({
         <div className="viewport-host__lighting-menu">
           <button
             type="button"
-            className={`viewport-host__tool-button${showLightingMenu ? " is-active" : ""}`}
+            className={`viewport-host__tool-button viewport-host__tool-button--icon viewport-host__tool-button--menu${showLightingMenu ? " is-active" : ""}`}
             aria-label={`Lighting settings: ${lightingLabel}`}
             aria-expanded={showLightingMenu}
             aria-haspopup="dialog"
@@ -908,7 +950,8 @@ export function ViewportHost({
             disabled={mode !== "native"}
             onClick={(event) => toggleViewportPopover(event, setShowLightingMenu, showLightingMenu)}
           >
-            Lighting ▾
+            <ViewportToolbarIcon name="lighting" />
+            <ViewportToolbarChevron />
           </button>
           {showLightingMenu && (
             <div className="viewport-host__lighting-popover" role="dialog" aria-label="Lighting settings">
@@ -1030,7 +1073,7 @@ export function ViewportHost({
         <div className="viewport-host__environment-menu">
           <button
             type="button"
-            className={`viewport-host__tool-button${showEnvironmentMenu ? " is-active" : ""}`}
+            className={`viewport-host__tool-button viewport-host__tool-button--icon viewport-host__tool-button--menu${showEnvironmentMenu ? " is-active" : ""}`}
             aria-label={`Environment settings: ${environment.enabled ? environmentName : "Off"}`}
             aria-expanded={showEnvironmentMenu}
             aria-haspopup="dialog"
@@ -1038,7 +1081,8 @@ export function ViewportHost({
             title={environment.path || "No environment selected"}
             onClick={(event) => toggleViewportPopover(event, setShowEnvironmentMenu, showEnvironmentMenu)}
           >
-            Environment ▾
+            <ViewportToolbarIcon name="environment" />
+            <ViewportToolbarChevron />
           </button>
           {showEnvironmentMenu && (
             <div className="viewport-host__environment-popover" role="dialog" aria-label="Environment settings">
@@ -1107,12 +1151,15 @@ export function ViewportHost({
         <div className="viewport-host__show-menu">
           <button
             type="button"
-            className={`viewport-host__tool-button${showMenu ? " is-active" : ""}`}
+            className={`viewport-host__tool-button viewport-host__tool-button--icon viewport-host__tool-button--menu${showMenu ? " is-active" : ""}`}
+            aria-label="Display options"
             aria-expanded={showMenu}
             aria-haspopup="dialog"
+            title="Display options"
             onClick={(event) => toggleViewportPopover(event, setShowMenu, showMenu)}
           >
-            Show ▾
+            <ViewportToolbarIcon name="show" />
+            <ViewportToolbarChevron />
           </button>
           {showMenu && (
             <div className="viewport-host__show-popover" role="dialog" aria-label="Display options">

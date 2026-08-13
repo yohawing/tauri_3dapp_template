@@ -6,6 +6,8 @@ import {
   createLatestSerialSender,
   createSerialInvoker,
   MAX_SERIAL_INVOKES,
+  nextManipulatorMode,
+  nextViewportDisplayMode,
   normalizeCameraState,
   normalizeViewportRect,
 } from "./ViewportHost";
@@ -38,6 +40,14 @@ describe("ViewportHost rect equality", () => {
 });
 
 describe("ViewportHost settings helpers", () => {
+  it("cycles the compact toolbar modes deterministically", () => {
+    expect(nextManipulatorMode("translate")).toBe("rotate");
+    expect(nextManipulatorMode("rotate")).toBe("scale");
+    expect(nextManipulatorMode("scale")).toBe("translate");
+    expect(nextViewportDisplayMode("lit")).toBe("wireframe");
+    expect(nextViewportDisplayMode("wireframe")).toBe("lit");
+  });
+
   it("rejects malformed or out-of-range Native camera responses", () => {
     const camera = { target: [1, 2, 3], yaw: -0.6, pitch: 0.35, distance: 4 };
     expect(normalizeCameraState(camera)).toEqual(camera);

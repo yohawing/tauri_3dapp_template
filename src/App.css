@@ -253,6 +253,45 @@
   cursor: pointer;
 }
 
+.viewport-host__tool-button--icon {
+  display: inline-flex;
+  width: 27px;
+  min-width: 27px;
+  min-height: 26px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.viewport-host__tool-button--menu {
+  width: 33px;
+  gap: 1px;
+}
+
+.viewport-host__tool-icon {
+  display: block;
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.65;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.viewport-host__tool-chevron {
+  display: block;
+  width: 7px;
+  height: 7px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.35;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.72;
+}
+
 .viewport-host__tool-button:hover:not(:disabled),
 .viewport-host__tool-button:focus-visible:not(:disabled) {
   color: #f2f2f4;
@@ -286,7 +325,7 @@
 .viewport-host__camera-popover {
   position: absolute;
   top: calc(100% + 4px);
-  left: 0;
+  right: 0;
   min-width: 232px;
   padding: 7px;
   color: #d8d8de;
@@ -312,7 +351,7 @@
 .viewport-host__lighting-popover {
   position: absolute;
   top: calc(100% + 4px);
-  left: 0;
+  right: 0;
   width: 300px;
   max-height: min(70vh, 480px);
   overflow: auto;
