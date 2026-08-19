@@ -12,6 +12,20 @@ interface MenuBarProps {
   backendLabel: string;
   documentLabel: string;
   isMac: boolean;
+  /**
+   * Whether to draw the "Renderer" menu, its always-visible Native/Canvas
+   * toggle, and the `backendLabel` sr-only text. Defaults to `true`
+   * (unchanged behavior): this template's own host has a real native wgpu
+   * backend alongside the Canvas/three.js fallback, so the toggle is a live
+   * control there (see `App.tsx`'s `backendLabel` prop, which reflects
+   * `viewportMode`/`rendererStatus`). Pass `false` for a host that only ever
+   * renders one way (e.g. yw-retarget-web, which is Canvas/three.js-only —
+   * no native backend exists to switch to, so a disabled "Native (n/a)" /
+   * permanently-checked "Canvas" pair reads as dead chrome rather than a
+   * control, and `actions` doesn't need `renderer.native`/`renderer.canvas`
+   * entries at all when this is `false`).
+   */
+  showRendererMenu?: boolean;
 }
 
 type OpenMenu = "file" | "view" | "renderer" | null;
@@ -60,7 +74,7 @@ export function runEditorActionSafely(action: EditorAction): Promise<void> {
   }
 }
 
-export function MenuBar({ actions, backendLabel, documentLabel, isMac }: MenuBarProps) {
+export function MenuBar({ actions, backendLabel, documentLabel, isMac, showRendererMenu = true }: MenuBarProps) {
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
   const rootRef = useRef<HTMLElement>(null);
   const triggerRefs = useRef<Record<Exclude<OpenMenu, null>, HTMLButtonElement | null>>({
@@ -219,26 +233,28 @@ export function MenuBar({ actions, backendLabel, documentLabel, isMac }: MenuBar
       <span className="menu-bar__title" title={documentLabel}>Tauri3D</span>
       {renderMenu("file", FILE_ACTIONS)}
       {renderMenu("view", VIEW_ACTIONS)}
-      {renderMenu("renderer", RENDERER_ACTIONS)}
-      <div className="menu-bar__renderer-toggle" role="group" aria-label="Renderer backend">
-        {RENDERER_ACTIONS.map((id) => {
-          const action = actionById(actions, id);
-          const label = id === "renderer.native" ? "Native" : "Canvas";
-          return (
-            <button
-              key={id}
-              type="button"
-              className={`menu-bar__renderer-button${action.checked ? " is-active" : ""}`}
-              aria-pressed={action.checked}
-              disabled={!action.enabled}
-              onClick={() => { void runEditorActionSafely(action); }}
-            >
-              {label}
-            </button>
-          );
-        })}
-      </div>
-      <span className="sr-only">Backend: {backendLabel}</span>
+      {showRendererMenu && renderMenu("renderer", RENDERER_ACTIONS)}
+      {showRendererMenu && (
+        <div className="menu-bar__renderer-toggle" role="group" aria-label="Renderer backend">
+          {RENDERER_ACTIONS.map((id) => {
+            const action = actionById(actions, id);
+            const label = id === "renderer.native" ? "Native" : "Canvas";
+            return (
+              <button
+                key={id}
+                type="button"
+                className={`menu-bar__renderer-button${action.checked ? " is-active" : ""}`}
+                aria-pressed={action.checked}
+                disabled={!action.enabled}
+                onClick={() => { void runEditorActionSafely(action); }}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {showRendererMenu && <span className="sr-only">Backend: {backendLabel}</span>}
     </nav>
   );
 }

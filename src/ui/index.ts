@@ -65,6 +65,26 @@ export type {
 } from "../viewport/ViewportHost";
 export { buildDefaultLayout } from "../shell/layout";
 
+// Three.js scene graph -> SceneNodeSummary[] adapter. Not Tauri, not a
+// concrete data source — a host that owns a live THREE.Object3D tree (this
+// template's own Canvas fallback, or an external three.js-based viewport
+// like yw-retarget-web's) uses this to feed OutlinerView/InspectorView from
+// that tree instead of the Tauri-polled SceneProjection. See that module's
+// doc comment for the full rationale.
+export {
+  createThreeSceneGraphController,
+  defaultThreeNodeKind,
+  snapshotThreeScene,
+  threeObjectTransform,
+} from "../scene/adapters/threeSceneAdapter";
+export type {
+  ThreeNodeKindClassifier,
+  ThreeSceneAdapterOptions,
+  ThreeSceneGraphController,
+  ThreeSceneGraphListener,
+  ThreeSceneSnapshot,
+} from "../scene/adapters/threeSceneAdapter";
+
 // Read-only scene projection DTOs shared by Outliner/Inspector. Pure types —
 // no Tauri, no adapters — the contract an external data source needs to
 // satisfy to drive OutlinerView / InspectorView / TweakpaneInspector.

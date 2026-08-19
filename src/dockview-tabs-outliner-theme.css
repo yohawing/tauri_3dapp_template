@@ -1,0 +1,82 @@
+/**
+ * Optional dockview tab-strip theme matching this template's own
+ * `panels/Outliner.css` tab visual language (the `.outliner-panel__header` /
+ * `.outliner-panel__tab` rows) — dark header strip, a thin blue top-inset
+ * "active" underline, small 10px UI type.
+ *
+ * Not applied automatically: this template's own `App.tsx` still hides every
+ * group's tab header (`group.header.hidden = true`, see App.css's doc
+ * comment on `.dockview-shell .dv-dockview` for why) because each panel
+ * currently draws its own single-tab chrome. This file exists for hosts that
+ * *do* show dockview's native tab strip (multiple panels sharing one group,
+ * switched via dockview's own tabs — see yw-retarget-web's shell/layout.ts)
+ * and want it to read as "the same design system" as this template's panels,
+ * instead of themeAbyss's stock look. Import it after `dockview-react/dist/
+ * styles/dockview.css` and after whichever `theme*` you pass to
+ * `<DockviewReact theme={...}>` — plain CSS load order, no build step
+ * involved.
+ *
+ * Scoped to `.dockview-theme-abyss` (the class `themeAbyss` puts on the root
+ * `.dv-dockview` element) so this never leaks into a host using a different
+ * dockview theme.
+ */
+
+.dockview-theme-abyss {
+  --dv-tabs-and-actions-container-height: 22px;
+  --dv-tabs-and-actions-container-font-size: 10px;
+  --dv-tabs-and-actions-container-background-color: #131316;
+  --dv-activegroup-visiblepanel-tab-background-color: #1c1c21;
+  --dv-activegroup-hiddenpanel-tab-background-color: #131316;
+  --dv-inactivegroup-visiblepanel-tab-background-color: #1c1c21;
+  --dv-inactivegroup-hiddenpanel-tab-background-color: #131316;
+  --dv-activegroup-visiblepanel-tab-color: #f2f2f5;
+  --dv-activegroup-hiddenpanel-tab-color: #8a8a94;
+  --dv-inactivegroup-visiblepanel-tab-color: #f2f2f5;
+  --dv-inactivegroup-hiddenpanel-tab-color: #8a8a94;
+  --dv-tab-divider-color: rgba(255, 255, 255, 0.1);
+  --dv-icon-hover-background-color: rgba(255, 255, 255, 0.1);
+}
+
+.dockview-theme-abyss .dv-tabs-and-actions-container {
+  font-family: var(--font-ui, sans-serif);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.dockview-theme-abyss .dv-tab {
+  padding: 0 11px;
+  font-weight: 400;
+}
+
+/* Mirrors `.outliner-panel__tab--active`'s `box-shadow: inset 0 2px 0
+ * #3b6fc4` top underline exactly (rather than dockview's stock themes'
+ * `border-top` swap, which shifts the tab's box height by the border width). */
+.dockview-theme-abyss .dv-tab.dv-active-tab {
+  box-shadow: inset 0 2px 0 #3b6fc4;
+  font-weight: 500;
+}
+
+.dockview-theme-abyss .dv-tab.dv-inactive-tab:hover {
+  color: #d6d6dc;
+}
+
+/* dockview-core 7.0.4 has no per-panel "closeable: false" affordance (its
+ * `DefaultTab` always appends a `.dv-default-tab-action` close button,
+ * unconditionally, in `init()`) — so a host that never wants panels closed
+ * via their tab (yw-retarget-web: every panel here is a fixed dock-layout
+ * slot, not a document a user opens/closes) has to suppress it in CSS
+ * instead of a component param. Scoped to this opt-in theme (rather than a
+ * global dockview override) so hosts that *do* want closeable tabs and pull
+ * in this theme file for its other rules aren't silently stuck without a
+ * close button; a host wanting both this theme's look and closeable tabs
+ * would need its own more specific override.
+ *
+ * Selector needs the full `.dv-tab .dv-default-tab` ancestor chain (not just
+ * `.dockview-theme-abyss .dv-default-tab-action`): dockview-core's own base
+ * stylesheet targets the same element via `.dv-tab .dv-default-tab
+ * .dv-default-tab-action { display: flex; ... }`, three class selectors deep
+ * (specificity 0-3-0). A two-class-deep override here (0-2-0) loses that
+ * specificity fight regardless of CSS load order, so this has to match (or
+ * exceed) the same depth to actually win. */
+.dockview-theme-abyss .dv-tab .dv-default-tab .dv-default-tab-action {
+  display: none;
+}
