@@ -1,0 +1,6 @@
+[submodule "vendor/kiss3d-toon"]
+	path = vendor/kiss3d-toon
+	url = https://github.com/yohawing/kiss3d-toon.git
+[submodule "vendor/timeline-editor"]
+	path = vendor/timeline-editor
+	url = https://github.com/yohawing/timeline-editor.git

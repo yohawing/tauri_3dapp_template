@@ -1,3 +1,5 @@
+@import "./styles/tokens.css";
+
 /*
  * Global reset for the transparent-WebView PoC.
  *
@@ -30,20 +32,45 @@ body {
 }
 
 body {
-  font-family:
-    Inter,
-    "Segoe UI",
-    -apple-system,
-    BlinkMacSystemFont,
-    Avenir,
-    Helvetica,
-    Arial,
-    sans-serif;
-  font-size: 13px;
-  color: #e4e4e7;
+  font-family: var(--font-ui);
+  font-size: 10px;
+  color: var(--text);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   -webkit-text-size-adjust: 100%;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #3a3a44 transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #3a3a44;
+  border: 2px solid transparent;
+  border-radius: 4px;
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #4e4e5a;
+  background-clip: content-box;
 }

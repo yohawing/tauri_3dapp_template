@@ -10,6 +10,7 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+artifacts/
 *.local
 
 # Editor directories and files
@@ -23,4 +24,7 @@ dist-ssr
 *.sln
 *.sw?
 
-TODO.md
+
+**/*.md
+!/README.md
+!docs/IDEA.md

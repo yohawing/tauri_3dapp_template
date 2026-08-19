@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "name": "BoxTextured Scene",
+  "assets": [
+    {
+      "id": "box",
+      "kind": "gltf",
+      "path": "../vendor/kiss3d-toon/examples/media/gltf/BoxTextured.glb"
+    }
+  ],
+  "instances": [
+    {
+      "id": "box-instance",
+      "asset": "box",
+      "translation": [0.35, 0.25, -0.2],
+      "rotation": [0.0, 0.38268343, 0.0, 0.92387953],
+      "scale": [1.25, 0.9, 1.1],
+      "visible": true
+    }
+  ],
+  "camera": {
+    "target": [0.15, 0.2, 0.0],
+    "yaw": -0.9,
+    "pitch": 0.42,
+    "distance": 3.2
+  }
+}

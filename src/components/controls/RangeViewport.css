@@ -1,0 +1,66 @@
+.range-viewport {
+  position: relative;
+  flex: 0 0 76px;
+  width: 76px;
+  height: 13px;
+  padding: 0 3px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+}
+
+.range-viewport__track {
+  position: relative;
+  width: 100%;
+  height: 8px;
+  border-radius: 4px;
+  background: #3a3a44;
+  cursor: grab;
+  touch-action: none;
+}
+
+.range-viewport__track:active {
+  cursor: grabbing;
+}
+
+.range-viewport__handle {
+  position: absolute;
+  top: 0;
+  width: 5px;
+  height: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: #5f5f6c;
+  cursor: ew-resize;
+  transform: translateX(-50%);
+  touch-action: none;
+}
+
+.range-viewport__handle--start {
+  border-radius: 4px 2px 2px 4px;
+}
+
+.range-viewport__handle--end {
+  border-radius: 2px 4px 4px 2px;
+}
+
+.range-viewport__handle:hover:not(:disabled),
+.range-viewport__handle:focus-visible {
+  background: #777786;
+}
+
+.range-viewport__handle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1px #5a8fe0;
+}
+
+.range-viewport.is-disabled {
+  opacity: 0.45;
+}
+
+.range-viewport.is-disabled .range-viewport__track,
+.range-viewport__handle:disabled {
+  cursor: default;
+}

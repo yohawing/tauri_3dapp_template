@@ -1,7 +1,4 @@
-/* Self-contained styling for the Inspector panel. The panel paints its own
- * opaque background because dockview keeps its containers transparent so the
- * native 3D viewport can show through elsewhere. */
-
+/* Inspector follows the 280px right-dock geometry in the Tauri3D shell. */
 .inspector-panel {
   width: 100%;
   height: 100%;
@@ -9,45 +6,439 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  background: #1e1e22;
-  color: #d4d4d8;
-  font-family:
-    Inter,
-    "Segoe UI",
-    -apple-system,
-    BlinkMacSystemFont,
-    Avenir,
-    Helvetica,
-    Arial,
-    sans-serif;
+  overflow: hidden;
+  background: #1c1c21;
+  color: #d6d6dc;
+  font-family: var(--font-ui);
+  font-size: 10px;
 }
 
-/* Now the single title for this panel — dockview's own tab bar is hidden
- * (see App.tsx's onDidAddGroup), so this header no longer duplicates a tab
- * label above it. Styled to match the app's toolbar (same background/text
- * colors) rather than the old uppercase/11px "tab label" look, since it now
- * carries the full titling job on its own. */
 .inspector-panel__header {
-  flex: 0 0 auto;
-  padding: 7px 10px;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: #e4e4e7;
-  background: rgba(24, 24, 28, 0.92);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  flex: 0 0 20px;
+  height: 20px;
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  background: #131316;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.10);
 }
 
-.inspector-panel__pane {
+.inspector-panel__tab {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  height: 100%;
+  min-width: 0;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 0;
+  color: #8a8a94;
+  background: transparent;
+  font: 400 10px/1 var(--font-ui);
+  cursor: default;
+}
+
+.inspector-panel__tab:hover:not(.inspector-panel__tab--active) { color: #d6d6dc; }
+.inspector-panel__tab--active {
+  color: #f2f2f5;
+  background: #1c1c21;
+  box-shadow: inset 0 2px 0 #3b6fc4;
+  font-weight: 500;
+}
+.inspector-panel__tab:focus-visible {
+  outline: none;
+  box-shadow: inset 0 2px 0 #3b6fc4, var(--focus-ring);
+}
+
+.inspector-selection {
+  flex: 0 0 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0 8px;
+  background: #232329;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+}
+
+.inspector-selection__label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  color: #f2f2f5;
+  font-size: 10px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspector-selection__label::before {
+  content: "✓";
+  flex: 0 0 11px;
+  width: 11px;
+  height: 11px;
+  display: grid;
+  place-items: center;
+  border-radius: 2px;
+  color: #fff;
+  background: #3b6fc4;
+  font-size: 8px;
+  line-height: 1;
+}
+
+.inspector-selection__kind {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  color: #6e6e78;
+  text-transform: uppercase;
+}
+
+.inspector-panel__content {
   flex: 1;
   min-height: 0;
-  overflow: auto;
-  padding: 6px 8px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background: #1c1c21;
 }
 
-/* tweakpane's root element has no explicit width when given a custom
- * `container` (that's only forced for its own default floating wrapper), so
- * as a block element it naturally stretches to fill this 100%-wide parent. */
-.inspector-panel__pane > .tp-rotv {
+.inspector-empty {
+  padding: 12px 8px;
+  color: #8a8a94;
+  font-size: 10px;
+}
+
+.inspector-loading,
+.inspector-error {
+  padding: 12px 8px;
+  color: #8a8a94;
+  font-size: 10px;
+}
+
+.inspector-error {
+  color: #e05561;
+}
+
+.inspector-error__retry {
+  display: block;
+  margin-top: 8px;
+  padding: 3px 8px;
+  color: #d6d6dc;
+  background: #2b2b32;
+  border: 1px solid #454550;
+  border-radius: 2px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.inspector-error__retry:hover,
+.inspector-error__retry:focus-visible {
+  background: #33333b;
+}
+
+/* Tweakpane owns the Inspector controls. The variables below keep its
+ * bindings, point editors, and focus behavior while matching the compact
+ * dark Inspector that preceded the migration. */
+.inspector-pane-host {
+  min-height: 100%;
+  padding: 0;
+  box-sizing: border-box;
+  background: #1c1c21;
+}
+
+.inspector-pane {
   width: 100%;
+  min-height: 100%;
+}
+
+.inspector-pane .tp-dfwv {
+  position: relative;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.inspector-pane .tp-rotv {
+  --tp-base-background-color: #1c1c21;
+  --tp-base-border-radius: 2px;
+  --tp-base-font-family: var(--font-ui);
+  --tp-base-shadow-color: transparent;
+  --tp-blade-border-radius: 2px;
+  --tp-blade-horizontal-padding: 4px;
+  --tp-blade-value-width: min(294px, 74%);
+  --tp-button-background-color: #2b2b32;
+  --tp-button-background-color-active: #3b6fc4;
+  --tp-button-background-color-focus: #33333b;
+  --tp-button-background-color-hover: #33333b;
+  --tp-button-foreground-color: #e8e8ee;
+  --tp-container-background-color: #191920;
+  --tp-container-background-color-active: #2b2b32;
+  --tp-container-background-color-focus: #222229;
+  --tp-container-background-color-hover: #222229;
+  --tp-container-foreground-color: #d6d6dc;
+  --tp-container-horizontal-padding: 8px;
+  --tp-container-vertical-padding: 4px;
+  --tp-container-unit-size: 15px;
+  --tp-container-unit-spacing: 2px;
+  --tp-input-background-color: #131316;
+  --tp-input-background-color-active: #2b2b32;
+  --tp-input-background-color-focus: #24242c;
+  --tp-input-background-color-hover: #1c1c21;
+  --tp-input-foreground-color: #e8e8ee;
+  --tp-label-foreground-color: #9a9aa4;
+  --tp-monitor-background-color: #131316;
+  --tp-monitor-foreground-color: #d6d6dc;
+  --tp-groove-foreground-color: rgba(255, 255, 255, 0.09);
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: 0;
+  box-shadow: none;
+  font-size: 10px;
+  line-height: 1;
+}
+
+/* Flat section headers, matching the old InspectorSection treatment. */
+.inspector-pane .tp-fldv_b {
+  height: 19px;
+  line-height: 19px;
+  padding-left: 8px;
+  padding-right: 8px;
+  border-radius: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.inspector-pane .tp-fldv_t {
+  padding-left: 12px;
+}
+
+.inspector-pane .tp-fldv_m {
+  width: 0;
+  height: 0;
+  left: 9px;
+  right: auto;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid #8a8a94;
+  background: none;
+  border-radius: 0;
+  opacity: 0.9;
+  transform: none;
+}
+
+.inspector-pane .tp-fldv:not(.tp-fldv-expanded) > .tp-fldv_b > .tp-fldv_m {
+  transform: rotate(-90deg);
+}
+
+.inspector-pane .tp-fldv_i {
+  display: none;
+}
+
+.inspector-pane .tp-fldv_c {
+  padding: 5px 0 7px;
+  border-radius: 0;
+}
+
+.inspector-pane > .tp-fldv + .tp-fldv {
+  margin-top: 0;
+}
+
+.inspector-pane > .tp-fldv + .tp-fldv > .tp-fldv_b {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* Old Inspector fields used short rows and a right-aligned value block. */
+.inspector-pane .tp-lblv {
+  box-sizing: border-box;
+  min-height: 17px;
+  height: 17px;
+  padding-left: 8px;
+  padding-right: 8px;
+  line-height: 17px;
+}
+
+.inspector-pane .tp-lblv_l {
+  padding-left: 0;
+  padding-right: 6px;
+  color: #9a9aa4;
+  font-family: var(--font-ui);
+  font-size: 9px;
+  line-height: 17px;
+}
+
+.inspector-pane .tp-lblv_v {
+  width: min(294px, 74%);
+}
+
+.inspector-pane .tp-txtv_i,
+.inspector-pane .tp-lstv_s,
+.inspector-pane .tp-colswv_sw {
+  box-sizing: border-box;
+  height: 15px;
+  min-height: 15px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 2px;
+  color: #e8e8ee;
+  background: #131316;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  line-height: 15px;
+}
+
+.inspector-pane .tp-txtv_i {
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
+.inspector-pane .tp-txtv_i:hover,
+.inspector-pane .tp-lstv_s:hover,
+.inspector-pane .tp-colswv_sw:hover {
+  background: #1c1c21;
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.inspector-pane .tp-txtv_i:focus,
+.inspector-pane .tp-lstv_s:focus,
+.inspector-pane .tp-colswv_sw:focus {
+  background: #24242c;
+  border-color: #3b6fc4;
+  box-shadow: var(--focus-ring);
+}
+
+.inspector-pane .tp-pndtxtv_a + .tp-pndtxtv_a {
+  margin-left: 2px;
+}
+
+.inspector-pane .tp-txtv-fst .tp-txtv_i,
+.inspector-pane .tp-txtv-mid .tp-txtv_i,
+.inspector-pane .tp-txtv-lst .tp-txtv_i {
+  border-radius: 2px;
+}
+
+/* Non-object selections keep Transform monitor-like and readable while their
+ * bindings remain intentionally disabled. */
+.inspector-pane .tp-lblv.tp-v-disabled .tp-lblv_l,
+.inspector-pane .tp-pndtxtv.tp-v-disabled,
+.inspector-pane .tp-pndtxtv.tp-v-disabled .tp-txtv_i {
+  opacity: 1;
+}
+
+.inspector-pane .tp-pndtxtv.tp-v-disabled .tp-txtv_i {
+  color: #d6d6dc;
+  background: #131316;
+}
+
+.inspector-pane .tp-pndtxtv.tp-v-disabled .tp-txtv_i:disabled {
+  opacity: 1;
+}
+
+.inspector-pane .tp-lblv.tp-v-disabled .tp-txtv_i:disabled {
+  opacity: 1;
+}
+
+/* Tweakpane keeps the point components anonymous; restore the old axis cue
+ * inside each compact cell without replacing the Point3d/Point4d binding. */
+.inspector-pane .tp-pndtxtv_a {
+  position: relative;
+  min-width: 0;
+}
+
+.inspector-pane .tp-pndtxtv_a::before {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  left: 5px;
+  color: #6e6e78;
+  font: 9px/15px var(--font-mono);
+  pointer-events: none;
+}
+
+.inspector-pane .tp-pndtxtv_a:nth-child(1)::before { content: "X"; color: #e05561; }
+.inspector-pane .tp-pndtxtv_a:nth-child(2)::before { content: "Y"; color: #7fbf3f; }
+.inspector-pane .tp-pndtxtv_a:nth-child(3)::before { content: "Z"; color: #4a8fe0; }
+.inspector-pane .tp-pndtxtv_a:nth-child(4)::before { content: "W"; color: #b07fe0; }
+
+.inspector-pane .tp-pndtxtv .tp-txtv_i {
+  padding-left: 14px;
+}
+
+.inspector-pane .tp-pndtxtv .tp-txtv_k::before {
+  opacity: 0;
+}
+
+/* Compact color rows and blue accent sliders. */
+.inspector-pane .tp-colv_s {
+  flex: 0 0 24px;
+  width: 24px;
+}
+
+.inspector-pane .tp-colv_t {
+  margin-left: 6px;
+}
+
+.inspector-pane .tp-colswv_sw {
+  height: 13px;
+  min-height: 13px;
+}
+
+.inspector-pane .tp-sldtxtv_t {
+  margin-left: 6px;
+}
+
+.inspector-pane .tp-sldv_t {
+  height: 15px;
+  margin-left: 6px;
+  margin-right: 6px;
+}
+
+.inspector-pane .tp-sldv_t::before {
+  height: 2px;
+  background: #131316;
+}
+
+.inspector-pane .tp-sldv_k::before {
+  background: #3b6fc4;
+}
+
+.inspector-pane .tp-sldv_k::after {
+  width: 10px;
+  height: 10px;
+  right: -5px;
+  background: #8faee8;
+}
+
+/* Match the old small square checkbox and blue checked state. */
+.inspector-pane .tp-ckbv_w {
+  width: 11px;
+  height: 11px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 2px;
+  background: #131316;
+}
+
+.inspector-pane .tp-ckbv_i:checked + .tp-ckbv_w {
+  background: #3b6fc4;
+}
+
+.inspector-pane .tp-ckbv_w svg {
+  width: 8px;
+  height: 8px;
+}
+
+.inspector-pane .tp-ckbv_w svg path {
+  stroke: #fff;
+  stroke-width: 1.6;
+}
+
+.inspector-pane-host .inspector-material-error {
+  margin: 8px 0 0;
+  color: #f0616f;
+  font-size: 9px;
+  line-height: 1.35;
 }

@@ -1,5 +1,12 @@
 import * as THREE from "three";
+import { invoke } from "@tauri-apps/api/core";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import {
+  CanvasPerformanceSampler,
+  parsePerformanceSampleFrames,
+  parsePerformanceTarget,
+  type PerformanceSummary,
+} from "./performanceSampler";
 
 /**
  * Fixed IPC shape shared with the Rust side (see src-tauri/src/protocol.rs
@@ -10,6 +17,29 @@ export interface CameraState {
   yaw: number;
   pitch: number;
   distance: number;
+}
+
+// Keep Canvas OrbitControls inside the Rust camera validator's handoff range.
+// CameraState is a shared wire contract; changing these values requires
+// coordinating src-tauri/src/camera.rs as well.
+export const CAMERA_PITCH_LIMIT = 1.55;
+export const CAMERA_MIN_DISTANCE = 0.5;
+export const CAMERA_MAX_DISTANCE = 100;
+export const CAMERA_MIN_POLAR_ANGLE = Math.PI / 2 - CAMERA_PITCH_LIMIT;
+export const CAMERA_MAX_POLAR_ANGLE = Math.PI / 2 + CAMERA_PITCH_LIMIT;
+
+interface OrbitControlBounds {
+  minDistance: number;
+  maxDistance: number;
+  minPolarAngle: number;
+  maxPolarAngle: number;
+}
+
+export function applyCanvasOrbitBounds(controls: OrbitControlBounds): void {
+  controls.minDistance = CAMERA_MIN_DISTANCE;
+  controls.maxDistance = CAMERA_MAX_DISTANCE;
+  controls.minPolarAngle = CAMERA_MIN_POLAR_ANGLE;
+  controls.maxPolarAngle = CAMERA_MAX_POLAR_ANGLE;
 }
 
 // Mirrors OrbitCamera::eye() in src-tauri/src/camera.rs exactly:
@@ -66,6 +96,90 @@ export interface CanvasBackendHandle {
   dispose: () => CameraState;
 }
 
+export interface CanvasRenderScheduler {
+  /** Render one frame for an explicit invalidation (or a control/resize event). */
+  invalidate: () => void;
+  /** Starts the continuous RAF loop used by the performance sampler. */
+  start: () => void;
+  /** Stops future frames, including callbacks already queued by the browser. */
+  dispose: () => void;
+}
+
+/** Keep optional performance reporting from escaping the render/RAF callback. */
+export function reportCanvasPerformanceSummary(
+  summary: PerformanceSummary,
+  report: (summary: PerformanceSummary) => unknown = (value) =>
+    invoke("report_performance_summary", { summary: value }),
+  onError: (error: unknown) => void = (error) =>
+    console.warn("[perf] failed to report Canvas performance summary:", error),
+): void {
+  const reportError = (error: unknown) => {
+    try {
+      onError(error);
+    } catch {
+      // Diagnostics must not create a second unhandled rejection.
+    }
+  };
+  try {
+    void Promise.resolve(report(summary)).catch(reportError);
+  } catch (error) {
+    reportError(error);
+  }
+}
+
+interface CanvasRenderSchedulerOptions {
+  render: (rafTimestamp?: number) => void;
+  continuous: boolean;
+  requestFrame?: (callback: FrameRequestCallback) => number;
+  cancelFrame?: (handle: number) => void;
+}
+
+/**
+ * Keeps the normal Canvas fallback invalidation-driven while retaining the
+ * continuous RAF required by the opt-in performance sampler. The injected RAF
+ * functions make the lifecycle deterministic without constructing WebGL in
+ * unit tests.
+ */
+export function createCanvasRenderScheduler({
+  render,
+  continuous,
+  requestFrame = window.requestAnimationFrame.bind(window),
+  cancelFrame = window.cancelAnimationFrame.bind(window),
+}: CanvasRenderSchedulerOptions): CanvasRenderScheduler {
+  let disposed = false;
+  let started = false;
+  let rafId: number | null = null;
+
+  const schedule = () => {
+    if (disposed || !continuous || rafId !== null) return;
+    rafId = requestFrame((timestamp) => {
+      rafId = null;
+      if (disposed) return;
+      render(timestamp);
+      schedule();
+    });
+  };
+
+  return {
+    invalidate: () => {
+      if (!disposed) render();
+    },
+    start: () => {
+      if (disposed || started) return;
+      started = true;
+      schedule();
+    },
+    dispose: () => {
+      if (disposed) return;
+      disposed = true;
+      if (rafId !== null) {
+        cancelFrame(rafId);
+        rafId = null;
+      }
+    },
+  };
+}
+
 /**
  * Mounts a three.js canvas filling `host`, rendering the same colored cube as
  * the native wgpu renderer, seeded from `initialCamera`. OrbitControls owns
@@ -93,8 +207,16 @@ export function mountCanvasBackend(
   // otherwise make identical RGB triples look visibly different here — turn
   // it off so the "same numbers" are actually the same pixels.
   renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
-  renderer.setPixelRatio(window.devicePixelRatio);
-  renderer.setSize(width, height);
+  const performanceTarget = parsePerformanceTarget(import.meta.env.VITE_PERF_TARGET);
+  if (performanceTarget) {
+    camera.aspect = performanceTarget[0] / performanceTarget[1];
+    camera.updateProjectionMatrix();
+    renderer.setPixelRatio(1);
+    renderer.setSize(performanceTarget[0], performanceTarget[1], false);
+  } else {
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(width, height);
+  }
   // Absolutely positioned to fill the host, and behind the (already-mounted)
   // overlay div, which relies on host's `position: relative` + DOM order for
   // its own stacking today. Pin z-index explicitly so appending the canvas
@@ -105,57 +227,85 @@ export function mountCanvasBackend(
   renderer.domElement.style.height = "100%";
   renderer.domElement.style.display = "block";
   renderer.domElement.style.zIndex = "0";
+  renderer.domElement.setAttribute("aria-label", "Canvas viewport preview");
   host.appendChild(renderer.domElement);
 
   const materials = FACE_COLORS.map(
     ([r, g, b]) => new THREE.MeshBasicMaterial({ color: new THREE.Color(r, g, b) }),
   );
   const cube = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), materials);
-  scene.add(cube);
+  const grid = new THREE.GridHelper(20, 20, 0x474f5e, 0x292e38);
+  const axes = new THREE.AxesHelper(2.5);
+  scene.add(grid, axes, cube);
 
   const controls = new OrbitControls(camera, renderer.domElement);
+  applyCanvasOrbitBounds(controls);
   controls.target.copy(target);
   controls.update();
 
   let disposed = false;
+  const performanceSampleFrames = parsePerformanceSampleFrames(import.meta.env.VITE_PERF_SAMPLE_FRAMES);
+  const performanceSampler =
+    performanceTarget && performanceSampleFrames !== null
+      ? new CanvasPerformanceSampler(
+          performanceTarget[0],
+          performanceTarget[1],
+          performanceSampleFrames,
+      )
+      : null;
+  const canReportPerformance = "__TAURI_INTERNALS__" in window;
 
-  function render() {
-    renderer.render(scene, camera);
-  }
-  controls.addEventListener("change", render);
-
-  let rafId: number | null = null;
-  function tick() {
+  function render(rafTimestamp?: number) {
     if (disposed) return;
-    render();
-    rafId = requestAnimationFrame(tick);
+    const startedAt = performance.now();
+    renderer.render(scene, camera);
+    const summary = performanceSampler?.observe(startedAt, performance.now() - startedAt, rafTimestamp);
+    if (summary) {
+      console.info(`[perf] ${JSON.stringify(summary)}`);
+      if (canReportPerformance) reportCanvasPerformanceSummary(summary);
+    }
   }
-  rafId = requestAnimationFrame(tick);
+  const scheduler = createCanvasRenderScheduler({
+    render,
+    continuous: performanceSampler !== null,
+  });
+  const renderOnControlChange = () => scheduler.invalidate();
+  controls.addEventListener("change", renderOnControlChange);
+  scheduler.start();
 
   const resizeObserver = new ResizeObserver(() => {
     const w = Math.max(host.clientWidth, 1);
     const h = Math.max(host.clientHeight, 1);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
-    renderer.setSize(w, h);
-    render();
+    if (!performanceTarget) renderer.setSize(w, h);
+    scheduler.invalidate();
   });
   resizeObserver.observe(host);
 
-  render();
+  scheduler.invalidate();
 
   function dispose(): CameraState {
     const final = cameraFromEye(camera.position, controls.target);
     disposed = true;
-    if (rafId !== null) {
-      cancelAnimationFrame(rafId);
-      rafId = null;
-    }
+    scheduler.dispose();
     resizeObserver.disconnect();
-    controls.removeEventListener("change", render);
+    controls.removeEventListener("change", renderOnControlChange);
     controls.dispose();
     materials.forEach((m) => m.dispose());
     cube.geometry.dispose();
+    grid.geometry.dispose();
+    if (Array.isArray(grid.material)) {
+      grid.material.forEach((material) => material.dispose());
+    } else {
+      grid.material.dispose();
+    }
+    axes.geometry.dispose();
+    if (Array.isArray(axes.material)) {
+      axes.material.forEach((material) => material.dispose());
+    } else {
+      axes.material.dispose();
+    }
     renderer.dispose();
     if (renderer.domElement.parentNode === host) {
       host.removeChild(renderer.domElement);

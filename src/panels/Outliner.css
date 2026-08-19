@@ -1,6 +1,4 @@
-/* Self-contained styling for the Outliner panel. The panel paints its own
- * opaque background because dockview keeps its containers transparent so the
- * native 3D viewport can show through elsewhere. */
+/* Outliner chrome mirrors the reference shell's 220px left-dock slice. */
 
 .outliner-panel {
   width: 100%;
@@ -9,73 +7,235 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  background: #1e1e22;
-  color: #d4d4d8;
-  font-family:
-    Inter,
-    "Segoe UI",
-    -apple-system,
-    BlinkMacSystemFont,
-    Avenir,
-    Helvetica,
-    Arial,
-    sans-serif;
+  overflow: hidden;
+  color: #d6d6dc;
+  background: #1c1c21;
+  font-family: var(--font-ui);
+  font-size: 10px;
+  -webkit-font-smoothing: antialiased;
 }
 
-/* Now the single title for this panel — dockview's own tab bar is hidden
- * (see App.tsx's onDidAddGroup), so this header no longer duplicates a tab
- * label above it. Styled to match the app's toolbar (same background/text
- * colors) rather than the old uppercase/11px "tab label" look, since it now
- * carries the full titling job on its own. */
 .outliner-panel__header {
-  flex: 0 0 auto;
-  padding: 7px 10px;
+  flex: 0 0 20px;
+  display: flex;
+  align-items: stretch;
+  min-height: 0;
+  padding: 0;
+  background: #131316;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.outliner-panel__tab {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 11px;
+  border: 0;
+  color: #8a8a94;
+  background: transparent;
+  font: 400 10px/1 var(--font-ui);
+  cursor: default;
+}
+
+.outliner-panel__tab--active {
+  color: #f2f2f5;
+  background: #1c1c21;
+  box-shadow: inset 0 2px 0 #3b6fc4;
+  font-weight: 500;
+}
+
+.outliner-panel__tab:not(:disabled):not(.outliner-panel__tab--active):hover {
+  color: #d6d6dc;
+}
+
+.outliner-panel__tab:disabled {
+  opacity: 1;
+  color: #8a8a94;
+}
+
+.outliner-panel__actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+  padding: 0 8px;
+  color: #8a8a94;
   font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: #e4e4e7;
-  background: rgba(24, 24, 28, 0.92);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  line-height: 1;
+}
+
+.outliner-panel__search {
+  flex: 0 0 22px;
+  display: flex;
+  align-items: center;
+  min-height: 0;
+  padding: 0 7px;
+  background: #1c1c21;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.outliner-panel__search input {
+  appearance: none;
+  width: 100%;
+  height: 15px;
+  min-width: 0;
+  padding: 0 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+  outline: none;
+  color: #d6d6dc;
+  background: #131316;
+  font: 400 9px/1 var(--font-ui);
+}
+
+.outliner-panel__search input::placeholder {
+  color: #6e6e78;
+  opacity: 1;
+}
+
+.outliner-panel__search input:focus {
+  border-color: #5a8fe0;
+}
+
+.outliner-panel__search input::-webkit-search-cancel-button {
+  appearance: none;
 }
 
 .outliner-panel__body {
   flex: 1;
   min-height: 0;
+  padding: 2px 0;
+  overflow: auto;
+  background: #1c1c21;
 }
 
-/* Row rendered by react-arborist's `children` render prop. `style` (passed
- * inline by react-window) controls position/height — this only adds look. */
+/* react-arborist supplies row positioning/indentation through the inline style. */
 .outliner-row {
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 12px;
-  color: #d4d4d8;
+  height: 18px;
+  min-width: 0;
+  color: #d6d6dc;
+  font-size: 10px;
+  line-height: 1;
   white-space: nowrap;
   cursor: default;
 }
 
-.outliner-row:hover {
-  background: rgba(255, 255, 255, 0.06);
-}
-
 .outliner-row--selected {
-  background: rgba(78, 140, 255, 0.25);
-}
-
-.outliner-row--selected:hover {
-  background: rgba(78, 140, 255, 0.32);
+  color: #f2f2f5;
+  background: #3b6fc4;
 }
 
 .outliner-row__caret {
-  flex: 0 0 14px;
-  text-align: center;
-  color: #9a9aa2;
-  font-size: 9px;
+  appearance: none;
+  flex: 0 0 12px;
+  display: grid;
+  place-items: center;
+  width: 12px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  color: #8a8a94;
+  background: transparent;
+  font-size: 11px;
+  line-height: 1;
   cursor: pointer;
 }
 
+.outliner-row__caret:focus-visible {
+  outline: 1px solid #5a8fe0;
+  outline-offset: -1px;
+}
+
+.outliner-row__kind {
+  flex: 0 0 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 2px;
+}
+
 .outliner-row__label {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.outliner-row--hidden .outliner-row__label {
+  opacity: 0.45;
+}
+
+.outliner-row__tag {
+  flex: 0 0 auto;
+  padding-right: 2px;
+  color: #6e6e78;
+  font-family: var(--font-mono);
+  font-size: 8px;
+}
+
+.outliner-row--selected .outliner-row__tag {
+  color: #c8dcff;
+}
+
+.outliner-row__visibility {
+  flex: 0 0 16px;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  margin-right: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  outline: none;
+  color: #8a8a94;
+  background: transparent;
+  font: inherit;
+  line-height: 0;
+  cursor: pointer;
+}
+
+.outliner-row--selected .outliner-row__visibility {
+  color: #dbe8ff;
+}
+
+.outliner-row--hidden .outliner-row__visibility {
+  color: #5c5c66;
+}
+
+.outliner-row__visibility svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.1;
+}
+
+.outliner-row__visibility circle {
+  fill: currentColor;
+  stroke: none;
+}
+
+.outliner-row__visibility:hover,
+.outliner-row__visibility:focus-visible {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.outliner-row__visibility--placeholder {
+  pointer-events: none;
+  cursor: default;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }

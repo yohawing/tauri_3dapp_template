@@ -1,0 +1,39 @@
+:root {
+  /* Tauri3D shell design tokens. Keep the viewport hole transparent; these
+     colors are for DOM-owned chrome and panel surfaces only. */
+  --shell-bg: #0e0e11;
+  --surface-0: #131316;
+  --surface-1: #16161a;
+  --surface-2: #1c1c21;
+  --surface-3: #232329;
+  --surface-4: #2b2b32;
+  --divider: rgba(255, 255, 255, 0.09);
+  --divider-strong: rgba(255, 255, 255, 0.14);
+  --text-strong: #f2f2f5;
+  --text: #d6d6dc;
+  --text-muted: #8a8a94;
+  --text-dim: #6e6e78;
+  --accent: #3b6fc4;
+  --accent-strong: #5a8fe0;
+  --accent-soft: rgba(59, 111, 196, 0.22);
+  --warning: #e0a33a;
+  --error: #f0616f;
+  --font-ui: Inter, "Segoe UI", -apple-system, BlinkMacSystemFont, Avenir, Helvetica, Arial, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", Consolas, monospace;
+  --radius-sm: 3px;
+  --radius-md: 4px;
+  --panel-header-height: 20px;
+  --toolbar-height: 24px;
+  --row-height: 18px;
+  --control-height: 18px;
+  --control-height-sm: 16px;
+  --control-radius: 3px;
+  --control-bg: #131316;
+  --control-bg-hover: #1c1c21;
+  --control-border: rgba(255, 255, 255, 0.12);
+  --control-border-hover: rgba(255, 255, 255, 0.22);
+  --focus-ring: 0 0 0 1px var(--accent-strong);
+  --slider-track: #3a3a44;
+  --slider-fill: var(--accent);
+  --slider-thumb: #b7cdf5;
+}

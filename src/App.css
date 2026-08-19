@@ -2,7 +2,7 @@
  * DCC-style shell layout:
  *
  *   ┌────────────────────────────────────────────┐
- *   │ Toolbar (plain DOM, fixed height)          │
+ *   │ Menu Bar (plain DOM, fixed height)         │
  *   ├──────────────────────────────────────────────┤
  *   │ dockview (fills the rest — Outliner/         │
  *   │ Viewport/Inspector/Timeline are dock panels, │
@@ -28,47 +28,104 @@
   user-select: none;
 }
 
-/* ---------- Toolbar ---------- */
+/* ---------- Menu Bar ---------- */
 
-.toolbar {
+.menu-bar {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 0 12px;
-  height: 40px;
-  background: rgba(24, 24, 28, 0.92);
+  gap: 2px;
+  padding: 0 8px;
+  height: 32px;
+  position: relative;
+  z-index: 1000;
+  background: rgba(24, 24, 28, 0.97);
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-.toolbar__title {
+.menu-bar__title {
   font-weight: 600;
   font-size: 13px;
   letter-spacing: 0.02em;
   color: #f4f4f5;
+  padding: 0 10px 0 2px;
 }
 
-.toolbar__spacer {
-  flex: 1;
+.menu-bar__menu {
+  height: 100%;
+  position: relative;
+  display: flex;
+  align-items: center;
 }
 
-.toolbar__button {
+.menu-bar__trigger {
   appearance: none;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.06);
+  border: 0;
+  background: transparent;
   color: #e4e4e7;
   font-size: 12px;
-  padding: 5px 10px;
-  border-radius: 4px;
+  height: 26px;
+  padding: 0 9px;
+  border-radius: 3px;
   cursor: pointer;
 }
 
-.toolbar__button:hover {
+.menu-bar__trigger:hover,
+.menu-bar__trigger--open {
   background: rgba(255, 255, 255, 0.12);
 }
 
-.toolbar__button:active {
-  background: rgba(255, 255, 255, 0.18);
+.menu-popup {
+  position: absolute;
+  z-index: 1001;
+  top: calc(100% - 1px);
+  left: 0;
+  min-width: 220px;
+  padding: 4px;
+  background: #242429;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 4px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.48);
+}
+
+.menu-popup__item {
+  width: 100%;
+  min-height: 28px;
+  display: grid;
+  grid-template-columns: 16px 1fr auto;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-radius: 3px;
+  padding: 4px 7px;
+  background: transparent;
+  color: #e4e4e7;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.menu-popup__item:hover:not(:disabled),
+.menu-popup__item:focus-visible {
+  outline: none;
+  background: #315a9c;
+}
+
+.menu-popup__item:disabled {
+  color: #71717a;
+  cursor: default;
+}
+
+.menu-popup__check {
+  color: #7db4ff;
+  font-size: 9px;
+  text-align: center;
+}
+
+.menu-popup__shortcut {
+  color: #a1a1aa;
+  padding-left: 18px;
 }
 
 /* ---------- dockview shell ---------- */
@@ -151,6 +208,309 @@
   cursor: grab;
 }
 
+.viewport-host__toolbar {
+  position: absolute;
+  z-index: 5;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  max-width: calc(100% - 16px);
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  padding: 3px;
+  color: #d7d7dc;
+  background: rgb(27 27 33 / 88%);
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 4px;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 24%);
+  font-size: 11px;
+}
+
+.viewport-host__mode-group,
+.viewport-host__show-menu,
+.viewport-host__camera-menu,
+.viewport-host__environment-menu,
+.viewport-host__lighting-menu {
+  display: flex;
+  position: relative;
+}
+
+.viewport-host__mode-group {
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.viewport-host__tool-button {
+  min-height: 22px;
+  padding: 2px 8px;
+  color: #c7c7cd;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.viewport-host__tool-button--icon {
+  display: inline-flex;
+  width: 27px;
+  min-width: 27px;
+  min-height: 26px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.viewport-host__tool-button--menu {
+  width: 33px;
+  gap: 1px;
+}
+
+.viewport-host__tool-icon {
+  display: block;
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.65;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.viewport-host__tool-chevron {
+  display: block;
+  width: 7px;
+  height: 7px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.35;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.72;
+}
+
+.viewport-host__tool-button:hover:not(:disabled),
+.viewport-host__tool-button:focus-visible:not(:disabled) {
+  color: #f2f2f4;
+  background: rgb(255 255 255 / 8%);
+}
+
+.viewport-host__tool-button.is-active {
+  color: #fff;
+  background: rgb(70 112 190 / 74%);
+  border-color: rgb(138 177 242 / 65%);
+}
+
+.viewport-host__tool-button:disabled {
+  color: #777781;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.viewport-host__show-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 128px;
+  padding: 4px;
+  background: #202026;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 4px;
+  box-shadow: 0 8px 20px rgb(0 0 0 / 36%);
+}
+
+.viewport-host__camera-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 232px;
+  padding: 7px;
+  color: #d8d8de;
+  background: #202026;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 4px;
+  box-shadow: 0 8px 20px rgb(0 0 0 / 36%);
+}
+
+.viewport-host__environment-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  width: 280px;
+  padding: 7px;
+  color: #d8d8de;
+  background: #202026;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 4px;
+  box-shadow: 0 8px 20px rgb(0 0 0 / 36%);
+}
+
+.viewport-host__lighting-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  width: 300px;
+  max-height: min(70vh, 480px);
+  overflow: auto;
+  padding: 7px;
+  color: #d8d8de;
+  background: #202026;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 4px;
+  box-shadow: 0 8px 20px rgb(0 0 0 / 36%);
+}
+
+.viewport-host__environment-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.viewport-host__environment-path {
+  overflow: hidden;
+  margin: 6px 0;
+  padding: 5px 6px;
+  color: #aeb0b8;
+  background: rgb(0 0 0 / 20%);
+  border-radius: 3px;
+  font-family: "SF Mono", Consolas, monospace;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viewport-host__environment-field {
+  display: grid;
+  grid-template-columns: 1fr 82px auto;
+  align-items: center;
+  gap: 5px;
+  min-height: 29px;
+  color: #cfd0d6;
+}
+
+.viewport-host__environment-field input {
+  width: 100%;
+  min-width: 0;
+  padding: 3px 5px;
+  color: #eeeef1;
+  background: #151519;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 3px;
+  font: inherit;
+}
+
+.viewport-host__environment-field select {
+  width: 100%;
+  min-width: 0;
+  padding: 3px 5px;
+  color: #eeeef1;
+  background: #151519;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 3px;
+  font: inherit;
+}
+
+.viewport-host__lighting-popover input[type="color"] {
+  width: 34px;
+  min-width: 34px;
+  height: 23px;
+  padding: 1px;
+}
+
+.viewport-host__environment-note {
+  margin-top: 7px;
+  padding-top: 6px;
+  color: #e7c77b;
+  border-top: 1px solid rgb(255 255 255 / 10%);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.viewport-host__environment-field input:disabled {
+  color: #777781;
+  opacity: 0.65;
+}
+
+.viewport-host__camera-section + .viewport-host__camera-section {
+  margin-top: 7px;
+  padding-top: 7px;
+  border-top: 1px solid rgb(255 255 255 / 10%);
+}
+
+.viewport-host__camera-heading {
+  display: block;
+  margin-bottom: 4px;
+  color: #a1a1aa;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.viewport-host__camera-options {
+  display: flex;
+  gap: 3px;
+}
+
+.viewport-host__camera-option {
+  min-height: 24px;
+  padding: 2px 7px;
+  color: #d8d8de;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.viewport-host__camera-option:hover:not(:disabled),
+.viewport-host__camera-option:focus-visible:not(:disabled) {
+  outline: none;
+  background: rgb(255 255 255 / 8%);
+}
+
+.viewport-host__camera-option.is-active {
+  color: #fff;
+  background: rgb(70 112 190 / 74%);
+  border-color: rgb(138 177 242 / 65%);
+}
+
+.viewport-host__camera-option:disabled {
+  color: #777781;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.viewport-host__camera-options--views {
+  flex-wrap: wrap;
+}
+
+.viewport-host__show-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 24px;
+  padding: 2px 6px;
+  color: #d8d8de;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.viewport-host__show-item:hover:not(.is-disabled) {
+  background: rgb(255 255 255 / 8%);
+}
+
+.viewport-host__show-item.is-disabled {
+  color: #777781;
+}
+
+.viewport-host__show-item input {
+  accent-color: #6e9ee8;
+}
+
 .viewport-host__overlay {
   position: absolute;
   z-index: 1;
@@ -189,4 +549,781 @@
   margin-top: 4px;
   color: #a1a1aa;
   white-space: nowrap;
+}
+
+.viewport-host--browser-preview {
+  display: grid;
+  place-items: center;
+  background-color: #09090c;
+  background-image: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.025) 0 8px, transparent 8px 16px);
+}
+
+.viewport-host__preview-label {
+  color: #303038;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+}
+
+.viewport-host__fallback {
+  position: absolute;
+  z-index: 4;
+  top: 12px;
+  left: 50%;
+  display: grid;
+  max-width: min(680px, calc(100% - 32px));
+  padding: 9px 14px;
+  color: #f3d9ad;
+  background: rgb(48 34 19 / 92%);
+  border: 1px solid rgb(216 148 58 / 72%);
+  border-radius: 4px;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 30%);
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+.viewport-host__fallback strong {
+  color: #ffbf66;
+  font-size: 12px;
+}
+
+.viewport-host__fallback span,
+.viewport-host__fallback small {
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viewport-host__fallback small {
+  color: #cbbfae;
+}
+
+/* ---------- Console drawer ---------- */
+
+.console-drawer {
+  flex: 0 0 auto;
+  min-height: 120px;
+  max-height: 65vh;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  z-index: 1100;
+  color: #d4d4d8;
+  background: #17171b;
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+  font-size: 11px;
+}
+
+.console-drawer__resize-handle {
+  position: absolute;
+  z-index: 1;
+  top: -3px;
+  right: 0;
+  left: 0;
+  height: 7px;
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.console-drawer__resize-handle:hover {
+  background: rgba(90, 154, 255, 0.42);
+}
+
+.console-drawer__header,
+.console-drawer__controls {
+  display: flex;
+  align-items: center;
+}
+
+.console-drawer__header {
+  flex: 0 0 34px;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 10px;
+  background: #202026;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.console-drawer__count {
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 9px;
+  color: #a1a1aa;
+  background: rgba(255, 255, 255, 0.08);
+  text-align: center;
+  font-weight: 400;
+}
+
+.console-drawer__controls {
+  gap: 6px;
+}
+
+.console-drawer__filter {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #a1a1aa;
+}
+
+.console-drawer select,
+.console-drawer__button {
+  height: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 3px;
+  color: #d4d4d8;
+  background: #2a2a31;
+  font: inherit;
+}
+
+.console-drawer__button {
+  padding: 0 8px;
+  cursor: pointer;
+}
+
+.console-drawer__button:hover,
+.console-drawer__button--autoscroll.is-active {
+  border-color: rgba(125, 180, 255, 0.6);
+  background: #315a9c;
+}
+
+.console-drawer__entries {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 3px 0;
+  overflow: auto;
+  user-select: text;
+  font-family: "SF Mono", Consolas, monospace;
+  list-style: none;
+}
+
+.console-drawer__entry {
+  display: grid;
+  grid-template-columns: 190px 48px 70px minmax(0, 1fr);
+  gap: 8px;
+  min-height: 24px;
+  align-items: center;
+  padding: 2px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.035);
+}
+
+.console-drawer__entry--warn {
+  background: rgba(245, 158, 11, 0.08);
+}
+
+.console-drawer__entry--error {
+  background: rgba(244, 63, 94, 0.1);
+}
+
+.viewport-host__overlay {
+  top: 8px;
+  left: 8px;
+  padding: 5px 8px;
+  border-color: var(--divider);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  background: rgba(14, 14, 17, 0.72);
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+
+.viewport-host__label {
+  font-family: var(--font-ui);
+  color: var(--text-strong);
+}
+
+.viewport-host__rect,
+.viewport-host__hint {
+  color: var(--text-muted);
+}
+
+.console-drawer__entry--warn .console-drawer__level { color: #fbbf24; }
+.console-drawer__entry--error .console-drawer__level { color: #fb7185; }
+.console-drawer__timestamp,
+.console-drawer__source { color: #8b8b96; }
+.console-drawer__message { overflow-wrap: anywhere; }
+.console-drawer__empty { padding: 12px; color: #71717a; }
+
+/* ---------- Settings modal ---------- */
+
+.settings-modal__backdrop {
+  position: fixed;
+  z-index: 3000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.58);
+}
+
+.settings-modal {
+  width: min(440px, calc(100vw - 32px));
+  color: #e4e4e7;
+  background: #242429;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 7px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.58);
+  user-select: text;
+}
+
+.settings-modal__header,
+.settings-modal__footer {
+  display: flex;
+  align-items: center;
+  padding: 12px 16px;
+}
+
+.settings-modal__header {
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+.settings-modal__title,
+.settings-modal__section-title {
+  margin: 0;
+}
+
+.settings-modal__title { font-size: 16px; }
+.settings-modal__section-title { font-size: 12px; color: #aebfe2; }
+.settings-modal__close {
+  border: 0;
+  color: #a1a1aa;
+  background: transparent;
+  font-size: 22px;
+  cursor: pointer;
+}
+
+.settings-modal__body { padding: 4px 16px 8px; }
+.settings-modal__section { padding: 14px 0; }
+.settings-modal__section + .settings-modal__section { border-top: 1px solid rgba(255, 255, 255, 0.07); }
+.settings-modal__field,
+.settings-modal__checkbox-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 12px;
+  font-size: 12px;
+}
+
+.settings-modal__checkbox-row { justify-content: flex-start; }
+.settings-modal__select {
+  min-width: 130px;
+  height: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+  color: #e4e4e7;
+  background: #17171b;
+}
+
+.settings-modal__footer {
+  justify-content: flex-end;
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+.settings-modal__button {
+  height: 28px;
+  padding: 0 14px;
+  border: 1px solid #5284ca;
+  border-radius: 3px;
+  color: white;
+  background: #315a9c;
+  cursor: pointer;
+}
+
+/* Design-system overrides: keep legacy selectors stable while making the
+ * shell share the same compact tokens as every panel. */
+.app-shell {
+  color: var(--text);
+  font-family: var(--font-ui);
+}
+
+.menu-bar {
+  height: 24px;
+  background: var(--surface-3);
+  border-bottom-color: var(--divider-strong);
+}
+
+.menu-bar__title {
+  color: var(--text-strong);
+  font-size: 11px;
+  padding-right: 12px;
+}
+
+.menu-bar__trigger {
+  color: var(--text);
+  font-size: 10px;
+  height: 18px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+}
+
+.menu-bar__trigger:hover,
+.menu-bar__trigger--open {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.menu-bar__renderer-toggle {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--surface-0);
+  border: 1px solid var(--divider-strong);
+  border-radius: var(--radius-sm);
+  margin-left: auto;
+}
+
+.menu-bar__renderer-button {
+  appearance: none;
+  height: 14px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 2px;
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+  font-size: 9px;
+}
+
+.menu-bar__renderer-button:hover:not(:disabled) {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.menu-bar__renderer-button.is-active {
+  color: var(--text-strong);
+  background: var(--accent);
+}
+
+.menu-popup {
+  min-width: 200px;
+  padding: 3px;
+  background: var(--surface-3);
+  border-color: var(--divider-strong);
+  border-radius: var(--radius-sm);
+}
+
+.menu-popup__item {
+  min-height: 24px;
+  font-size: 10px;
+  border-radius: var(--radius-sm);
+}
+
+.menu-popup__item:hover:not(:disabled),
+.menu-popup__item:focus-visible {
+  background: var(--accent);
+}
+
+.dock-panel-content:not(.dock-panel-content--viewport) {
+  background: var(--surface-2);
+}
+
+@media (max-width: 900px) {
+  .menu-bar__title {
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+}
+
+/* Console is an integrated bottom panel when opened from the View menu or
+ * the Timeline tab. */
+.console-drawer {
+  background: var(--surface-0);
+  color: var(--text);
+  font-family: var(--font-ui);
+}
+
+.console-drawer__header {
+  flex-basis: 44px;
+  min-height: 44px;
+  padding: 0;
+  gap: 0;
+  flex-direction: column;
+  align-items: stretch;
+  background: var(--surface-2);
+  border-bottom-color: var(--divider);
+}
+
+.console-drawer__tabs {
+  display: flex;
+  align-items: stretch;
+  height: 20px;
+  flex: 0 0 20px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.console-drawer__controls {
+  height: 24px;
+  flex: 0 0 24px;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 0 7px;
+}
+
+.console-drawer--embedded {
+  width: 100%;
+  height: 100% !important;
+  min-height: 0;
+  max-height: none;
+  border-top: 0;
+}
+
+.console-drawer--embedded .console-drawer__resize-handle {
+  display: none;
+}
+
+.console-drawer__tab {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 100%;
+  padding: 0 10px;
+  border: 0;
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.console-drawer__tab:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.console-drawer__tab--active {
+  color: var(--text-strong);
+  background: var(--surface-1);
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.console-drawer__filter {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-sm);
+  background: var(--surface-0);
+}
+
+.console-drawer__filter-button {
+  height: 14px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 2px;
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+  font-size: 9px;
+}
+
+.console-drawer__filter-button:hover,
+.console-drawer__filter-button.is-active {
+  color: var(--text-strong);
+  background: var(--accent);
+}
+
+.console-drawer__search {
+  width: 150px;
+  height: 17px;
+  padding: 0 7px;
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-sm);
+  outline: none;
+  color: var(--text);
+  background: var(--surface-0);
+  font-size: 9px;
+}
+
+.console-drawer__search:focus {
+  border-color: var(--accent-strong);
+}
+
+.console-drawer__count {
+  border-radius: 2px;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+
+.console-drawer__entries {
+  background: var(--surface-0);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.console-drawer__entry {
+  min-height: 20px;
+  grid-template-columns: 116px 42px 68px minmax(0, 1fr);
+  gap: 6px;
+  padding: 1px 12px;
+  border-left: 2px solid transparent;
+  border-bottom: 0;
+}
+
+.console-drawer__entry--warn {
+  border-left-color: var(--warning);
+  background: rgba(224, 163, 58, 0.06);
+}
+
+.console-drawer__entry--error {
+  border-left-color: var(--error);
+  background: rgba(240, 97, 111, 0.08);
+}
+
+@media (max-width: 900px) {
+  .console-drawer__search {
+    width: 100px;
+  }
+
+  .console-drawer__filter-button {
+    padding: 0 5px;
+  }
+}
+
+/* Shared compact control language. Components keep their own layout rules;
+ * this block only standardizes interaction states and chrome primitives. */
+.app-shell button,
+.app-shell select,
+.app-shell input {
+  font-family: var(--font-ui);
+}
+
+.app-shell button:focus-visible,
+.app-shell select:focus-visible,
+.app-shell input:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.menu-bar__trigger:disabled,
+.menu-bar__renderer-button:disabled,
+.menu-popup__item:disabled,
+.console-drawer__button:disabled,
+.console-drawer__filter-button:disabled,
+.settings-modal__button:disabled {
+  color: var(--text-dim);
+  opacity: 0.55;
+  cursor: default;
+}
+
+.console-drawer select,
+.console-drawer__button,
+.console-drawer__search,
+.settings-modal__select,
+.settings-modal__button {
+  min-height: var(--control-height-sm);
+  border: 1px solid var(--control-border);
+  border-radius: var(--control-radius);
+  color: var(--text);
+  background: var(--control-bg);
+  font-size: 9px;
+}
+
+.console-drawer select:hover,
+.console-drawer__button:hover:not(:disabled),
+.console-drawer__search:hover,
+.settings-modal__select:hover,
+.settings-modal__button:hover:not(:disabled) {
+  border-color: var(--control-border-hover);
+  background: var(--control-bg-hover);
+}
+
+.console-drawer__button,
+.settings-modal__button {
+  height: var(--control-height);
+  padding: 0 8px;
+  cursor: pointer;
+}
+
+.console-drawer__button--autoscroll.is-active,
+.settings-modal__button {
+  border-color: var(--accent-strong);
+  color: var(--text-strong);
+  background: var(--accent);
+}
+
+.console-drawer__button--autoscroll.is-active:hover,
+.settings-modal__button:hover:not(:disabled) {
+  background: #477aca;
+}
+
+.console-drawer__search {
+  height: var(--control-height-sm);
+  padding: 0 7px;
+  outline: none;
+}
+
+.console-drawer__search::placeholder,
+.outliner-panel__search input::placeholder {
+  color: var(--text-dim);
+  opacity: 1;
+}
+
+.settings-modal__select {
+  min-width: 130px;
+  height: var(--control-height);
+  padding: 0 6px;
+  outline: none;
+}
+
+.settings-modal__checkbox {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--accent-strong);
+}
+
+.settings-modal__checkbox:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.settings-modal__close {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: var(--control-radius);
+}
+
+.settings-modal__close:hover {
+  color: var(--text-strong);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* Reference parity pass (Tauri3D Shell.html):
+ * nav 24px/#232329 with rgba white .10 divider; console controls use the
+ * 13px/17px/200px primitives and 10px/16px diagnostic rows shown there. */
+.menu-bar {
+  height: 24px;
+  background: #232329;
+  border-bottom-color: rgba(255, 255, 255, 0.10);
+}
+
+.menu-bar__trigger {
+  height: 18px;
+  padding: 0 8px;
+  border-radius: 3px;
+  color: #d6d6dc;
+  font-size: 10px;
+}
+
+.menu-bar__renderer-toggle {
+  gap: 2px;
+  padding: 2px;
+  background: #131316;
+  border-color: rgba(255, 255, 255, 0.10);
+  border-radius: 3px;
+}
+
+.menu-bar__renderer-button {
+  height: 14px;
+  padding: 0 8px;
+  border-radius: 2px;
+  color: #9a9aa4;
+  font-size: 9px;
+}
+
+.menu-bar__renderer-button.is-active {
+  color: #f2f2f5;
+  background: #3b6fc4;
+}
+
+.console-drawer__header {
+  background: #1c1c21;
+  border-bottom-color: rgba(255, 255, 255, 0.06);
+}
+
+.console-drawer__filter {
+  gap: 2px;
+  padding: 2px;
+  background: #131316;
+  border-color: rgba(255, 255, 255, 0.09);
+  border-radius: 3px;
+}
+
+.console-drawer__filter-button {
+  height: 13px;
+  padding: 0 8px;
+  border-radius: 2px;
+  font-size: 9px;
+}
+
+.console-drawer__search {
+  width: 200px;
+  flex: 0 0 200px;
+  height: 17px;
+  border-color: rgba(255, 255, 255, 0.09);
+  border-radius: 3px;
+  background: #131316;
+  color: #6e6e78;
+  font-size: 9px;
+}
+
+.console-drawer__button {
+  min-height: 17px;
+  height: 17px;
+  padding: 0 8px;
+  border-color: rgba(255, 255, 255, 0.10);
+  border-radius: 3px;
+  background: #2b2b32;
+  color: #d6d6dc;
+  font-size: 9px;
+}
+
+.console-drawer__button--autoscroll.is-active {
+  border-color: #5a8fe0;
+  background: #3b6fc4;
+  color: #fff;
+}
+
+.console-drawer__entries {
+  padding: 4px 0;
+  background: #131316;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.console-drawer__entry {
+  min-height: 16px;
+  grid-template-columns: auto auto auto minmax(0, 1fr);
+  gap: 6px;
+  padding: 0 12px;
+  border-left-width: 2px;
+  border-bottom: 0;
+  color: #c2c2ca;
+}
+
+.console-drawer__timestamp { color: #5c5c66; }
+.console-drawer__source { color: #7a7a86; }
+.console-drawer__entry .console-drawer__level { color: #8a8a94; }
+.console-drawer__entry--warn .console-drawer__level { color: #e0a33a; }
+.console-drawer__entry--error .console-drawer__level { color: #f0616f; }
+
+.outliner-panel__tab:focus-visible,
+.timeline-panel__tab:focus-visible,
+.console-drawer__tab:focus-visible {
+  outline: none;
+  box-shadow: inset 0 2px 0 var(--accent), var(--focus-ring);
+}
+
+.outliner-panel__search input {
+  height: var(--control-height-sm);
+  border-color: var(--control-border);
+  border-radius: var(--control-radius);
+  outline: none;
+  color: var(--text);
+  background: var(--control-bg);
+}
+
+.outliner-panel__search input:hover {
+  border-color: var(--control-border-hover);
+  background: var(--control-bg-hover);
 }

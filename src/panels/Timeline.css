@@ -1,67 +1,23 @@
-/* Self-contained styling for the Timeline panel. The panel paints its own
- * opaque background because dockview keeps its containers transparent so the
- * native 3D viewport can show through elsewhere. */
-
-.timeline-panel {
-  width: 100%;
-  height: 100%;
+.timeline-host {
   display: flex;
-  flex-direction: column;
   min-width: 0;
   min-height: 0;
-  background: #1e1e22;
-  color: #d4d4d8;
-  font-family:
-    Inter,
-    "Segoe UI",
-    -apple-system,
-    BlinkMacSystemFont,
-    Avenir,
-    Helvetica,
-    Arial,
-    sans-serif;
+  height: 100%;
+  flex-direction: column;
+  background: var(--panel-bg, #17181f);
+  color: var(--text-primary, #eef0f6);
 }
 
-/* Now the single title for this panel — dockview's own tab bar is hidden
- * (see App.tsx's onDidAddGroup), so this header no longer duplicates a tab
- * label above it. Styled to match the app's toolbar (same background/text
- * colors) rather than the old uppercase/11px "tab label" look, since it now
- * carries the full titling job on its own. */
-.timeline-panel__header {
-  flex: 0 0 auto;
-  padding: 7px 10px;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: #e4e4e7;
-  background: rgba(24, 24, 28, 0.92);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+.timeline-host__status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 
-.timeline-panel__ruler {
-  display: flex;
-  flex: 0 0 auto;
-  overflow-x: auto;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-}
-
-.timeline-panel__tick {
-  flex: 0 0 48px;
-  padding: 4px 0 4px 6px;
-  font-size: 10px;
-  color: #9a9aa2;
-  border-left: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.timeline-panel__track {
-  flex: 1;
+.timeline-host > .timeline-editor {
+  flex: 1 1 auto;
   min-height: 0;
-  position: relative;
-  background: repeating-linear-gradient(
-    to right,
-    rgba(255, 255, 255, 0.03),
-    rgba(255, 255, 255, 0.03) 1px,
-    transparent 1px,
-    transparent 48px
-  );
 }

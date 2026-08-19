@@ -31,13 +31,15 @@ export function buildDefaultLayout(api: DockviewApi, mode: ViewportMode): void {
     params: { mode },
   });
 
-  api.addPanel({
+  const timeline = api.addPanel({
     id: "timeline",
     component: "timeline",
     title: "Timeline",
     position: { direction: "below", referencePanel: "viewport" },
-    initialHeight: 140,
+    initialHeight: 112,
+    params: { view: "timeline" },
   });
+  timeline.group.api.setSize({ height: 112 });
 
   api.addPanel({
     id: "outliner",
