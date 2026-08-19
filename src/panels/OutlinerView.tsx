@@ -167,6 +167,13 @@ export interface OutlinerViewProps {
   onQueryChange: (query: string) => void;
   onSelect: (nodeId: string) => void;
   onToggleVisibility: (node: SceneNodeSummary) => void;
+  /** Whether to render this panel's own internal "Outliner / Assets"
+   * pseudo-tab row (the `outliner-panel__header` block below). Defaults to
+   * `true` (unchanged behavior). A host whose real tab affordance already
+   * lives one level up — e.g. dockview's own native tab strip, once a host
+   * stops hiding `group.header` — should pass `false` here instead of
+   * showing two stacked tab rows for the same panel. */
+  showTabStrip?: boolean;
 }
 
 /**
@@ -181,6 +188,7 @@ export function OutlinerView({
   onQueryChange,
   onSelect,
   onToggleVisibility,
+  showTabStrip = true,
 }: OutlinerViewProps) {
   const { ref: bodyRef, size } = useElementSize<HTMLDivElement>();
   const tree = useMemo(
@@ -190,11 +198,13 @@ export function OutlinerView({
 
   return (
     <div className="outliner-panel">
-      <div className="outliner-panel__header">
-        <button type="button" className="outliner-panel__tab outliner-panel__tab--active">Outliner</button>
-        <button type="button" className="outliner-panel__tab" disabled>Assets</button>
-        <span className="outliner-panel__actions" aria-hidden="true">＋ ⋯</span>
-      </div>
+      {showTabStrip && (
+        <div className="outliner-panel__header">
+          <button type="button" className="outliner-panel__tab outliner-panel__tab--active">Outliner</button>
+          <button type="button" className="outliner-panel__tab" disabled>Assets</button>
+          <span className="outliner-panel__actions" aria-hidden="true">＋ ⋯</span>
+        </div>
+      )}
       <label className="outliner-panel__search">
         <span className="sr-only">Search scene nodes</span>
         <input
