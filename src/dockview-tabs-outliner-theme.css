@@ -68,7 +68,15 @@
  * global dockview override) so hosts that *do* want closeable tabs and pull
  * in this theme file for its other rules aren't silently stuck without a
  * close button; a host wanting both this theme's look and closeable tabs
- * would need its own more specific override. */
-.dockview-theme-abyss .dv-default-tab-action {
+ * would need its own more specific override.
+ *
+ * Selector needs the full `.dv-tab .dv-default-tab` ancestor chain (not just
+ * `.dockview-theme-abyss .dv-default-tab-action`): dockview-core's own base
+ * stylesheet targets the same element via `.dv-tab .dv-default-tab
+ * .dv-default-tab-action { display: flex; ... }`, three class selectors deep
+ * (specificity 0-3-0). A two-class-deep override here (0-2-0) loses that
+ * specificity fight regardless of CSS load order, so this has to match (or
+ * exceed) the same depth to actually win. */
+.dockview-theme-abyss .dv-tab .dv-default-tab .dv-default-tab-action {
   display: none;
 }
