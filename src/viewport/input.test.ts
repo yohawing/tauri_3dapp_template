@@ -91,20 +91,10 @@ function receivedInputs(): Array<{ type: string; [key: string]: unknown }> {
 }
 
 describe("attachViewportInput gesture boundaries", () => {
-  let rafCallbacks: FrameRequestCallback[];
-
   beforeEach(() => {
     invoke.mockReset();
     invoke.mockImplementation(() => Promise.resolve());
-    rafCallbacks = [];
     vi.stubGlobal("Element", class {});
-    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
-      rafCallbacks.push(callback);
-      return rafCallbacks.length;
-    });
-    vi.stubGlobal("cancelAnimationFrame", (id: number) => {
-      rafCallbacks[id - 1] = () => undefined;
-    });
   });
 
   afterEach(() => {
@@ -122,6 +112,22 @@ describe("attachViewportInput gesture boundaries", () => {
     expect(commands.map((command, index) => [command, receivedInputs()[index]?.type])).toEqual([
       ["viewport_input", "pointerDown"],
       ["viewport_input", "pointerUp"],
+    ]);
+  });
+
+  it("prefers viewport-local offsets over full-window client coordinates", async () => {
+    const el = new FakeElement();
+    attachViewportInput(el as unknown as HTMLElement);
+    el.dispatch("pointerdown", pointer({
+      clientX: 430,
+      clientY: 340,
+      offsetX: 17,
+      offsetY: 29,
+    }));
+    await settleEventLoop();
+
+    expect(receivedInputs()).toEqual([
+      { type: "pointerDown", x: 17, y: 29, button: 0, modifiers: 0 },
     ]);
   });
 
@@ -367,7 +373,7 @@ describe("attachViewportInput gesture boundaries", () => {
     }
   });
 
-  it("flushes a pending move before pointerup", async () => {
+  it("keeps an immediately queued move before pointerup", async () => {
     const el = new FakeElement();
     attachViewportInput(el as unknown as HTMLElement);
     el.dispatch("pointerdown", pointer());
@@ -388,7 +394,6 @@ describe("attachViewportInput gesture boundaries", () => {
 
     el.dispatch("pointerdown", pointer());
     el.dispatch("pointermove", pointer({ clientX: 70, clientY: 80, buttons: 1 }));
-    rafCallbacks.shift()?.(0);
     el.dispatch("pointermove", pointer({ clientX: 72, clientY: 82, buttons: 0 }));
     el.dispatch("pointerup", pointer({ clientX: 72, clientY: 82, buttons: 0 }));
     await attachment.idle();
@@ -497,13 +502,12 @@ describe("attachViewportInput gesture boundaries", () => {
     expect(receivedInputs().map(({ type }) => type)).toEqual(["pointerDown", "pointerCancel"]);
   });
 
-  it("coalesces ordinary moves to the latest value", async () => {
+  it("coalesces unsent drag moves to the latest value", async () => {
     const el = new FakeElement();
     const attachment = attachViewportInput(el as unknown as HTMLElement);
     el.dispatch("pointerdown", pointer());
     el.dispatch("pointermove", pointer({ clientX: 40 }));
     el.dispatch("pointermove", pointer({ clientX: 90 }));
-    rafCallbacks[0]?.(0);
     await settleEventLoop();
 
     expect(receivedInputs().map(({ type }) => type)).toEqual(["pointerDown", "pointerMove"]);
@@ -511,29 +515,37 @@ describe("attachViewportInput gesture boundaries", () => {
     attachment.detach();
   });
 
-  it("sends buttonless viewport hover moves after a gesture ends", async () => {
+  it("sends the leading buttonless hover move without waiting for animation frame", async () => {
+    const requestAnimationFrame = vi.fn();
+    vi.stubGlobal("requestAnimationFrame", requestAnimationFrame);
     const el = new FakeElement();
     const attachment = attachViewportInput(el as unknown as HTMLElement);
     el.dispatch("pointermove", pointer({ buttons: 0, clientX: 70, clientY: 80 }));
-    rafCallbacks[0]?.(0);
-    await settleEventLoop();
+    await settleMicrotasks();
 
     expect(receivedInputs()).toEqual([
       { type: "pointerMove", x: 60, y: 60, buttons: 0, modifiers: 0 },
     ]);
+    expect(requestAnimationFrame).not.toHaveBeenCalled();
     attachment.detach();
   });
 
-  it("coalesces consecutive buttonless hover moves to the latest value", async () => {
+  it("keeps the leading hover move and coalesces stalled trailing moves to the latest value", async () => {
+    const request = deferred<void>();
+    let count = 0;
+    invoke.mockImplementation(() => (count++ === 0 ? request.promise : Promise.resolve()));
     const el = new FakeElement();
     const attachment = attachViewportInput(el as unknown as HTMLElement);
     el.dispatch("pointermove", pointer({ buttons: 0, clientX: 40 }));
+    await settleMicrotasks();
     el.dispatch("pointermove", pointer({ buttons: 0, clientX: 90 }));
-    rafCallbacks[0]?.(0);
-    await settleEventLoop();
+    el.dispatch("pointermove", pointer({ buttons: 0, clientX: 110 }));
+    request.resolve();
+    await attachment.idle();
 
     expect(receivedInputs()).toEqual([
-      { type: "pointerMove", x: 80, y: 20, buttons: 0, modifiers: 0 },
+      { type: "pointerMove", x: 30, y: 20, buttons: 0, modifiers: 0 },
+      { type: "pointerMove", x: 100, y: 20, buttons: 0, modifiers: 0 },
     ]);
     attachment.detach();
   });
@@ -558,9 +570,7 @@ describe("attachViewportInput gesture boundaries", () => {
     await settleMicrotasks();
 
     el.dispatch("pointermove", pointer({ clientX: 40 }));
-    rafCallbacks[0]?.(0);
     el.dispatch("pointermove", pointer({ clientX: 90 }));
-    rafCallbacks[1]?.(16);
     request.resolve();
     await attachment.idle();
 

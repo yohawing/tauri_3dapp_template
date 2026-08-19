@@ -14,8 +14,9 @@ artifacts/
 *.local
 
 # Editor directories and files
-.vscode/*
-!.vscode/extensions.json
+/.claude/
+/.vscode/
+/.githooks/
 .idea
 .DS_Store
 *.suo

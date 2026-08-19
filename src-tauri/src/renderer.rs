@@ -7,16 +7,6 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::Instant;
 
-use glam::Vec2;
-use kiss3d::color::Color;
-use kiss3d::light::LightType;
-use kiss3d::post_processing::Tonemap;
-use kiss3d::prelude::{
-    AnimationPlayer, Camera3d, CanvasSetup, Light, NumSamples, OrbitCamera3d, Projection, Quat,
-    RenderFrameStatus, RenderViewport, SceneNode3d, SurfaceSkipReason, SurfaceUnavailableReason,
-    Vec3, Window, ORANGE,
-};
-
 use crate::performance::{target_from_env, PerformanceSampler};
 use crate::protocol::{
     CameraProjection, CameraSettings, CameraState, ManipulatorMode, ManipulatorOrientation,
@@ -29,6 +19,15 @@ use crate::scene_projection::{
     SelectedSceneNode,
 };
 use crate::timeline_playback::{TimelinePlaybackCommand, TimelinePlaybackSnapshot};
+use glam::Vec2;
+use kiss3d::color::Color;
+use kiss3d::light::LightType;
+use kiss3d::post_processing::Tonemap;
+use kiss3d::prelude::{
+    AnimationPlayer, Camera3d, CanvasSetup, Light, NumSamples, OrbitCamera3d, Projection, Quat,
+    RenderFrameStatus, RenderViewport, SceneNode3d, SurfaceSkipReason, SurfaceUnavailableReason,
+    Vec3, Window, ORANGE,
+};
 
 pub const SCENE_ID: &str = "scene";
 pub const KEY_LIGHT_ID: &str = "key-light";
@@ -78,6 +77,21 @@ const MAX_BONE_DEPTH: usize = 512;
 const MAX_RUNTIME_INSTANCES_PER_ASSET: usize = 64;
 const MAX_RUNTIME_LABEL_BYTES: usize = 1024;
 const MAX_RUNTIME_SCENE_NODES: usize = 262_144;
+
+fn new_embedded_window(
+    window: tauri::WebviewWindow,
+    width: u32,
+    height: u32,
+    setup: CanvasSetup,
+) -> Window {
+    #[cfg(target_os = "macos")]
+    let surface_target = crate::macos_view::ContentViewSurfaceTarget::new(window)
+        .expect("Tauri window must expose its current macOS content view");
+    #[cfg(not(target_os = "macos"))]
+    let surface_target = window;
+
+    pollster::block_on(Window::new_embedded(surface_target, width, height, setup))
+}
 const STATIC_RUNTIME_SCENE_NODES: usize = 2;
 const MAX_RUNTIME_PROJECTION_TEXT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_ASSET_SOURCE_BYTES: u64 = 1024 * 1024 * 1024;
@@ -563,8 +577,7 @@ impl Renderer {
             ..CanvasSetup::default()
         };
 
-        let mut kiss_window =
-            pollster::block_on(Window::new_embedded(window, width, height, setup));
+        let mut kiss_window = new_embedded_window(window, width, height, setup);
         kiss_window.set_background_color(Color::new(0.0, 0.0, 0.0, 0.0));
 
         let mut scene = SceneNode3d::empty();
@@ -617,8 +630,7 @@ impl Renderer {
             ..CanvasSetup::default()
         };
 
-        let mut kiss_window =
-            pollster::block_on(Window::new_embedded(window, width, height, setup));
+        let mut kiss_window = new_embedded_window(window, width, height, setup);
         kiss_window.set_background_color(Color::new(0.0, 0.0, 0.0, 0.0));
 
         let runtime = build_runtime_scene(scene_document, resolved_assets)?;
@@ -4985,6 +4997,44 @@ mod tests {
             assert!(left.screen_direction.distance(right.screen_direction) < 0.0001);
             assert!((left.pixels_per_world_unit - right.pixels_per_world_unit).abs() < 0.0001);
         }
+    }
+
+    #[test]
+    fn manipulator_projection_matches_the_render_camera_matrix() {
+        let camera = CameraState {
+            target: [0.25, -0.4, 0.1],
+            yaw: -0.6,
+            pitch: 0.35,
+            distance: 4.0,
+        };
+        let settings = CameraSettings::default();
+        let rect = ViewportRect {
+            x: 180.0,
+            y: 32.0,
+            width: 800.0,
+            height: 600.0,
+            scale_factor: 2.0,
+        };
+        let target = Vec3::from_array(camera.target);
+        let (sin_yaw, cos_yaw) = camera.yaw.sin_cos();
+        let (sin_pitch, cos_pitch) = camera.pitch.sin_cos();
+        let eye = target
+            + camera.distance * Vec3::new(cos_pitch * cos_yaw, sin_pitch, cos_pitch * sin_yaw);
+        let mut render_camera = OrbitCamera3d::new(eye, target);
+        render_camera.set_fov(settings.fov_degrees.to_radians());
+        let world = Vec3::new(0.9, 0.7, -0.3);
+        let clip = render_camera.transformation() * world.extend(1.0);
+        let ndc = clip.truncate() / clip.w;
+        let rendered = Vec2::new(
+            (ndc.x + 1.0) * rect.width * 0.5,
+            (1.0 - ndc.y) * rect.height * 0.5,
+        );
+        let picked = project_world_to_viewport(world, camera, settings, rect).unwrap();
+
+        assert!(
+            picked.distance(rendered) < 0.001,
+            "picked={picked:?} rendered={rendered:?}"
+        );
     }
 
     #[test]

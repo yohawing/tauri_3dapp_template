@@ -427,8 +427,8 @@ function App() {
   );
   const onViewportCameraViewChange = useCallback(
     (preset: CameraViewPreset) => {
-      if (viewportMode !== "native") return;
       setCameraViewPreset(preset);
+      if (viewportMode !== "native") return;
       void cameraPresetInvoke("set_camera_view", { preset }).catch((error) => {
         appendDiagnostic("warn", "viewport", `Camera view preset unavailable: ${safeDiagnosticText(error)}`);
       });

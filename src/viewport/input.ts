@@ -200,10 +200,10 @@ function isViewportUiTarget(target: EventTarget | null): boolean {
  * sendViewportInput. Coordinates are CSS px local to `el` (clientX/Y minus
  * the element's current bounding rect origin), matching the fixed contract.
  *
- * Returns an attachment whose `detach` removes all listeners and cancels any
- * pending rAF-coalesced pointermove. Detach also terminates the native gesture
- * so a backend switch cannot leave Orbit or the manipulator armed; `idle`
- * fences the ordered IPC tail for that detach.
+ * Returns an attachment whose `detach` removes all listeners and drops any
+ * queued pointermove. Detach also terminates the native gesture so a backend
+ * switch cannot leave Orbit or the manipulator armed; `idle` fences the
+ * ordered IPC tail for that detach.
  */
 export interface ViewportInputAttachment {
   detach(): void;
@@ -213,9 +213,6 @@ export interface ViewportInputAttachment {
 
 export function attachViewportInput(el: HTMLElement): ViewportInputAttachment {
   const attachmentGeneration = ++currentViewportInputAttachmentGeneration;
-  let moveRafId: number | null = null;
-  let pendingMove: ViewportInput | null = null;
-  let pendingMoveEpoch = 0;
   let gestureEpoch = 0;
   let cancelledThroughEpoch = -1;
   const dispatchTail = createOrderedViewportInputTail();
@@ -237,28 +234,18 @@ export function attachViewportInput(el: HTMLElement): ViewportInputAttachment {
     );
   }
 
-  // pointermove fires far faster than we can usefully forward over IPC and
-  // faster than the native renderer can consume. Keep only the latest event
-  // per frame ("latest-value-wins") and flush at most once per rAF.
-  function flushPendingMove() {
-    moveRafId = null;
-    if (pendingMove) {
-      const move = pendingMove;
-      const epoch = pendingMoveEpoch;
-      pendingMove = null;
-      enqueue(move, epoch);
-    }
-  }
-
-  function scheduleMove(input: ViewportInput) {
-    pendingMove = input;
-    pendingMoveEpoch = gestureEpoch;
-    if (moveRafId === null) {
-      moveRafId = requestAnimationFrame(flushPendingMove);
-    }
-  }
-
   function localPoint(e: PointerEvent): { x: number; y: number } | null {
+    // Prefer coordinates already expressed in the ViewportHost's own padding
+    // box. This avoids crossing WKWebView's window/client coordinate boundary
+    // on macOS, where a translated WebView can otherwise leave a constant
+    // full-window offset in native gizmo picking.
+    if (
+      e.target === el &&
+      isViewportCoordinate(e.offsetX) &&
+      isViewportCoordinate(e.offsetY)
+    ) {
+      return { x: e.offsetX, y: e.offsetY };
+    }
     const rect = el.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
@@ -308,18 +295,18 @@ export function attachViewportInput(el: HTMLElement): ViewportInputAttachment {
     // events. Forward them through the same latest-value queue so Native can
     // update manipulator highlighting without resurrecting an old gesture.
     const point = localPoint(e);
-    if (!point) {
-      dropPendingMove();
-      return;
-    }
+    if (!point) return;
     const { x, y } = point;
-    scheduleMove({
+    // Send the leading position immediately instead of waiting for the next
+    // WebView animation frame. The ordered IPC tail keeps at most one request
+    // in flight and replaces an unsent move with the latest absolute position.
+    enqueue({
       type: "pointerMove",
       x,
       y,
       buttons: e.buttons,
       modifiers: modifiersFromEvent(e),
-    });
+    }, gestureEpoch);
   }
 
   function finishPointer(e: PointerEvent, kind: "up" | "cancel") {
@@ -335,12 +322,7 @@ export function attachViewportInput(el: HTMLElement): ViewportInputAttachment {
       return;
     }
     const { x, y } = point;
-    if (kind === "up") {
-      // A final rAF move belongs before pointerup. This is deliberately not
-      // done for cancel: detach/cancel must not manufacture a last transform.
-      flushPendingMove();
-    } else {
-      dropPendingMove();
+    if (kind === "cancel") {
       cancelledThroughEpoch = Math.max(cancelledThroughEpoch, gestureEpoch);
     }
     activePointerId = null;
@@ -363,19 +345,10 @@ export function attachViewportInput(el: HTMLElement): ViewportInputAttachment {
   }
 
   function cancelGesture() {
-    dropPendingMove();
     cancelledThroughEpoch = Math.max(cancelledThroughEpoch, gestureEpoch);
     activePointerId = null;
     enqueue({ type: "pointerCancel" }, gestureEpoch, true);
     gestureEpoch += 1;
-  }
-
-  function dropPendingMove() {
-    pendingMove = null;
-    if (moveRafId !== null) {
-      cancelAnimationFrame(moveRafId);
-      moveRafId = null;
-    }
   }
 
   function onContextMenu(e: Event) {

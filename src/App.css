@@ -524,6 +524,7 @@
   line-height: 1.5;
   color: #e4e4e7;
   font-family: "SF Mono", Consolas, monospace;
+  pointer-events: none;
 }
 
 .viewport-host__label {

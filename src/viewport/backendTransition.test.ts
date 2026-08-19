@@ -41,6 +41,8 @@ function makeDependencies(overrides: Partial<BackendTransitionDependencies> = {}
       calls.disposes += 1;
       return CAMERA;
     }),
+    updateSettings: vi.fn(),
+    setViewPreset: vi.fn(),
   };
   const dependencies: BackendTransitionDependencies = {
     deactivateNative: vi.fn(async () => {
@@ -88,6 +90,20 @@ describe("BackendTransitionController", () => {
     expect(calls.writes).toEqual([CAMERA]);
     expect(calls.activate).toBe(1);
     expect(calls.errors).toEqual([]);
+  });
+
+  it("routes live viewport updates only to the mounted Canvas generation", async () => {
+    const { dependencies, handle } = makeDependencies();
+    const controller = new BackendTransitionController(dependencies);
+
+    controller.updateCanvas((canvas) => canvas.setViewPreset("front"));
+    expect(handle.setViewPreset).not.toHaveBeenCalled();
+
+    controller.transition("canvas");
+    await settle();
+    controller.updateCanvas((canvas) => canvas.setViewPreset("front"));
+
+    expect(handle.setViewPreset).toHaveBeenCalledWith("front");
   });
 
   it("waits for the previous Native input tail before deactivating", async () => {

@@ -1646,6 +1646,8 @@ mod tests {
         assert_eq!(
             PathBuf::from(&imported.assets.last().unwrap().path),
             asset_path
+                .canonicalize()
+                .expect("canonicalize imported asset")
         );
         assert_eq!(imported.instances.last().unwrap().id, "hero-model-2-1-2");
         assert_eq!(imported.instances.last().unwrap().asset, "hero-model-2");
