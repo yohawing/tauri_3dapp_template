@@ -1,8 +1,9 @@
 import { useEffect, useRef } from "react";
 import { Pane } from "tweakpane";
 import type { BindingApi } from "@tweakpane/core";
-import { dispatchSceneCommand } from "../scene/adapters/sceneProjectionDataSource";
-import type { SceneTransform, SelectedSceneNode } from "../scene/core/projection";
+import type { SceneCommand, SceneTransform, SelectedSceneNode } from "../scene/core/projection";
+
+export type SceneCommandDispatch = (command: SceneCommand) => void;
 
 type Refreshable = { refresh(): void };
 type ColorValue = [number, number, number, number];
@@ -135,6 +136,7 @@ function addTransformFolder(
   model: PaneModel,
   selected: SelectedSceneNode,
   bindings: Refreshable[],
+  dispatch: SceneCommandDispatch,
 ): void {
   const folder = pane.addFolder({ title: "Transform", expanded: true });
   const position = track(
@@ -149,7 +151,7 @@ function addTransformFolder(
   );
   listen(position, () => {
     const transform = editableTransform(model);
-    if (transform) dispatchSceneCommand({ type: "setTransform", nodeId: selected.id, transform });
+    if (transform) dispatch({ type: "setTransform", nodeId: selected.id, transform });
   });
   const rotation = track(
     bindings,
@@ -164,7 +166,7 @@ function addTransformFolder(
   );
   listen(rotation, () => {
     const transform = editableTransform(model);
-    if (transform) dispatchSceneCommand({ type: "setTransform", nodeId: selected.id, transform });
+    if (transform) dispatch({ type: "setTransform", nodeId: selected.id, transform });
   });
   const scale = track(
     bindings,
@@ -178,7 +180,7 @@ function addTransformFolder(
   );
   listen(scale, () => {
     const transform = editableTransform(model);
-    if (transform) dispatchSceneCommand({ type: "setTransform", nodeId: selected.id, transform });
+    if (transform) dispatch({ type: "setTransform", nodeId: selected.id, transform });
   });
 }
 
@@ -187,6 +189,7 @@ function addMaterialFolder(
   model: PaneModel,
   selected: SelectedSceneNode,
   bindings: Refreshable[],
+  dispatch: SceneCommandDispatch,
 ): void {
   if (!selected.material || !model.material) return;
 
@@ -202,7 +205,7 @@ function addMaterialFolder(
   );
   listen(color, (value) => {
     if (typeof value !== "string") return;
-    dispatchSceneCommand({
+    dispatch({
       type: "setBaseColor",
       nodeId,
       color: hexToColor(value, alpha),
@@ -219,7 +222,7 @@ function addMaterialFolder(
     }),
   );
   listen(metallic, (value) => {
-    dispatchSceneCommand({ type: "setMetallic", nodeId, value });
+    dispatch({ type: "setMetallic", nodeId, value });
   });
 
   const roughness = track(
@@ -232,7 +235,7 @@ function addMaterialFolder(
     }),
   );
   listen(roughness, (value) => {
-    dispatchSceneCommand({ type: "setRoughness", nodeId, value });
+    dispatch({ type: "setRoughness", nodeId, value });
   });
 }
 
@@ -241,6 +244,7 @@ function addLightFolder(
   model: PaneModel,
   selected: SelectedSceneNode,
   bindings: Refreshable[],
+  dispatch: SceneCommandDispatch,
 ): void {
   if (!selected.light || !model.light) return;
 
@@ -258,7 +262,7 @@ function addLightFolder(
   );
   listen(color, (value) => {
     if (typeof value !== "string") return;
-    dispatchSceneCommand({
+    dispatch({
       type: "setLightColor",
       nodeId,
       color: hexToColor(value, light.color[3]),
@@ -275,7 +279,7 @@ function addLightFolder(
     }),
   );
   listen(intensity, (value) => {
-    dispatchSceneCommand({ type: "setLightIntensity", nodeId, value });
+    dispatch({ type: "setLightIntensity", nodeId, value });
   });
 
   if (light.direction) {
@@ -290,13 +294,13 @@ function addLightFolder(
     );
     listen(direction, (value) => {
       const next = point3ToTuple(value);
-      if (next) dispatchSceneCommand({ type: "setLightDirection", nodeId, direction: next });
+      if (next) dispatch({ type: "setLightDirection", nodeId, direction: next });
     });
   }
 
   const enabled = track(bindings, folder.addBinding(model.light, "enabled", { label: "Enabled" }));
   listen(enabled, (value) => {
-    dispatchSceneCommand({ type: "setLightEnabled", nodeId, enabled: value });
+    dispatch({ type: "setLightEnabled", nodeId, enabled: value });
   });
 
   const castsShadows = track(
@@ -304,19 +308,24 @@ function addLightFolder(
     folder.addBinding(model.light, "castsShadows", { label: "Cast shadows" }),
   );
   listen(castsShadows, (value) => {
-    dispatchSceneCommand({ type: "setLightCastsShadows", nodeId, castsShadows: value });
+    dispatch({ type: "setLightCastsShadows", nodeId, castsShadows: value });
   });
 }
 
 export function TweakpaneInspector({
   selected,
   materialError,
+  onCommand,
 }: {
   selected: SelectedSceneNode;
   materialError?: string;
+  /** Where edits go. The host owns the transport (Tauri IPC, fixture, etc). */
+  onCommand: SceneCommandDispatch;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const sessionRef = useRef<PaneSession | null>(null);
+  const onCommandRef = useRef(onCommand);
+  onCommandRef.current = onCommand;
   // Binding options such as `disabled` are fixed when Pane controls are
   // created. Rebuild if Native changes editability, otherwise a node can stay
   // locked (or editable) after a projection update even though its value is
@@ -330,10 +339,11 @@ export function TweakpaneInspector({
     const pane = new Pane({ container });
     const model = createPaneModel(selected);
     const bindings: Refreshable[] = [];
+    const dispatch: SceneCommandDispatch = (command) => onCommandRef.current(command);
 
-    addTransformFolder(pane, model, selected, bindings);
-    addLightFolder(pane, model, selected, bindings);
-    addMaterialFolder(pane, model, selected, bindings);
+    addTransformFolder(pane, model, selected, bindings, dispatch);
+    addLightFolder(pane, model, selected, bindings, dispatch);
+    addMaterialFolder(pane, model, selected, bindings, dispatch);
 
     const session: PaneSession = { pane, nodeId: selected.id, model, bindings };
     sessionRef.current = session;
