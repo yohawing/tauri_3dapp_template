@@ -22,6 +22,8 @@ npm run tauri dev
 
 Native rendererは`vendor/kiss3d-toon`のforkをpath dependencyとして使用します。このforkではTauriが所有するwindow／event loopへKiss3dを埋め込むためのAPIと、アプリ本体に合わせたwgpu 30対応を追加しています。forkを更新する場合は、先にsubmodule側の変更をcommit／pushし、その後このリポジトリでsubmodule pointerを更新してください。
 
+Timeline Editorも`vendor/timeline-editor`をsubmoduleとして固定し、Frontendからlocal packageとして参照します。更新する場合は公開Repo側のcommitを先にpushし、このリポジトリのsubmodule pointerと`package-lock.json`を更新してください。
+
 Frontendだけをブラウザーで確認する場合:
 
 ```powershell

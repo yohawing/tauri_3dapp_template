@@ -14,7 +14,7 @@
   "dependencies": {
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.7.2",
-    "@yohawing/timeline-editor": "git+https://github.com/yohawing/timeline-editor.git#4ac9179e190805d20603c4e48b58f05933bd1cbd",
+    "@yohawing/timeline-editor": "file:vendor/timeline-editor",
     "dockview-react": "^7.0.4",
     "react": "^19.1.0",
     "react-arborist": "^3.16.0",
