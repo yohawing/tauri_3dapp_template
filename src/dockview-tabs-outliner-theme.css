@@ -58,3 +58,17 @@
 .dockview-theme-abyss .dv-tab.dv-inactive-tab:hover {
   color: #d6d6dc;
 }
+
+/* dockview-core 7.0.4 has no per-panel "closeable: false" affordance (its
+ * `DefaultTab` always appends a `.dv-default-tab-action` close button,
+ * unconditionally, in `init()`) — so a host that never wants panels closed
+ * via their tab (yw-retarget-web: every panel here is a fixed dock-layout
+ * slot, not a document a user opens/closes) has to suppress it in CSS
+ * instead of a component param. Scoped to this opt-in theme (rather than a
+ * global dockview override) so hosts that *do* want closeable tabs and pull
+ * in this theme file for its other rules aren't silently stuck without a
+ * close button; a host wanting both this theme's look and closeable tabs
+ * would need its own more specific override. */
+.dockview-theme-abyss .dv-default-tab-action {
+  display: none;
+}

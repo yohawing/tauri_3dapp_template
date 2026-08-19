@@ -12,6 +12,18 @@ export interface InspectorViewProps {
    * empty state) around it.
    */
   children?: ReactNode;
+  /**
+   * Whether to draw this component's own `inspector-panel__header` "Inspector"
+   * tab row. Defaults to `true` (this template's own `App.tsx` hides every
+   * dockview group's native tab strip, so that own-drawn header is this
+   * panel's only tab affordance there — see `App.css`'s doc comment on
+   * `.dockview-shell .dv-dockview`). Pass `false` for a host that instead
+   * shows dockview's *native* tab strip for this panel's group (the tab
+   * already reads "Inspector" there — see yw-retarget-web's `shell/layout.ts`
+   * doc comment), where this own header would otherwise stack as a second,
+   * redundant "Inspector" label directly beneath the real dockview tab.
+   */
+  showHeader?: boolean;
 }
 
 /**
@@ -20,12 +32,14 @@ export interface InspectorViewProps {
  * Tauri IPC — the host supplies the selection summary and renders whatever
  * editing controls it wants as `children`.
  */
-export function InspectorView({ summary, children }: InspectorViewProps) {
+export function InspectorView({ summary, children, showHeader = true }: InspectorViewProps) {
   return (
     <div className="inspector-panel">
-      <div className="inspector-panel__header">
-        <span className="inspector-panel__tab inspector-panel__tab--active">Inspector</span>
-      </div>
+      {!showHeader ? null : (
+        <div className="inspector-panel__header">
+          <span className="inspector-panel__tab inspector-panel__tab--active">Inspector</span>
+        </div>
+      )}
       {!summary ? null : (
         <div className="inspector-selection">
           <span className="inspector-selection__label">{summary.label}</span>
