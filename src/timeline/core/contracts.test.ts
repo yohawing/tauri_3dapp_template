@@ -15,11 +15,10 @@ describe("timeline display contracts", () => {
     expect(overlapsHalfOpen({ start: 0, end: 2.01 }, { start: 2, end: 4 })).toBe(true);
   });
 
-  it("keeps seconds continuous and ticks integral", () => {
-    expect(normalizeTime({ kind: "seconds" }, 1.25)).toBe(1.25);
-    expect(normalizeTime({ kind: "ticks", ticksPerSecond: 48_000 }, 60_000)).toBe(60_000);
-    expect(() => normalizeTime({ kind: "seconds" }, Number.POSITIVE_INFINITY)).toThrow();
-    expect(() => normalizeTime({ kind: "ticks", ticksPerSecond: 48_000 }, 1.5)).toThrow();
+  it("keeps canonical timeline time finite seconds", () => {
+    expect(normalizeTime(1.25)).toBe(1.25);
+    expect(() => normalizeTime(Number.POSITIVE_INFINITY)).toThrow();
+    expect(() => normalizeTime(Number.NaN)).toThrow();
   });
 
   it("keeps groups and bindings as separate entities", () => {
