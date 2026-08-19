@@ -1,9 +1,9 @@
 import { lazy, Suspense, useCallback, useState } from "react";
 import { safeDiagnosticText } from "../console/contracts";
-import { useSceneProjection } from "../scene/adapters/sceneProjectionDataSource";
+import { dispatchSceneCommand, useSceneProjection } from "../scene/adapters/sceneProjectionDataSource";
 import type { SceneProjection } from "../scene/core/projection";
 import { focusLazyPanelHost, LazyPanelBoundary } from "../components/LazyPanelBoundary";
-import "./Inspector.css";
+import { InspectorView } from "./InspectorView";
 
 function createLazyTweakpaneInspector() {
   return lazy(() =>
@@ -32,6 +32,13 @@ export function latestMaterialErrors(results: SceneProjection["commandResults"],
   return errors.length > 0 ? errors.join(" · ") : undefined;
 }
 
+/**
+ * Data-wired container: subscribes to the Native scene projection singleton
+ * and renders the presentational `InspectorView` shell with a lazily-loaded
+ * Tweakpane control surface as its content. `InspectorView` itself has no
+ * data source or Tauri dependency — this file wires the app's live scene
+ * data and command dispatch to it.
+ */
 export function Inspector() {
   const projection = useSceneProjection();
   const selected = projection.selected;
@@ -45,44 +52,32 @@ export function Inspector() {
     setTweakpaneInspector(() => createLazyTweakpaneInspector());
   }, []);
   return (
-    <div className="inspector-panel">
-      <div className="inspector-panel__header">
-        <span className="inspector-panel__tab inspector-panel__tab--active">Inspector</span>
-      </div>
+    <InspectorView summary={summary}>
       {!selected || !summary ? null : (
-        <div className="inspector-selection">
-          <span className="inspector-selection__label">{summary.label}</span>
-          <span className="inspector-selection__kind">{summary.kind}</span>
-        </div>
+        <LazyPanelBoundary
+          key={`${selected.id}:${tweakpaneGeneration}`}
+          source="inspector"
+          diagnosticMessage={(error) => `Inspector controls unavailable: ${safeDiagnosticText(error)}`}
+          onError={(error, info) => console.error("[Inspector] Tweakpane controls failed to load", error, info.componentStack)}
+          fallback={(
+            <div className="inspector-error" role="alert">
+              <span>Inspector controls unavailable</span>
+              <button type="button" className="inspector-error__retry" onClick={retryTweakpane}>
+                Retry
+              </button>
+            </div>
+          )}
+        >
+          <Suspense fallback={<InspectorLoading />}>
+            <TweakpaneInspector
+              key={selected.id}
+              selected={selected}
+              materialError={materialError}
+              onCommand={dispatchSceneCommand}
+            />
+          </Suspense>
+        </LazyPanelBoundary>
       )}
-      <div className="inspector-panel__content">
-        {!selected || !summary ? (
-          <div className="inspector-empty">No scene node selected</div>
-        ) : (
-          <LazyPanelBoundary
-            key={`${selected.id}:${tweakpaneGeneration}`}
-            source="inspector"
-            diagnosticMessage={(error) => `Inspector controls unavailable: ${safeDiagnosticText(error)}`}
-            onError={(error, info) => console.error("[Inspector] Tweakpane controls failed to load", error, info.componentStack)}
-            fallback={(
-              <div className="inspector-error" role="alert">
-                <span>Inspector controls unavailable</span>
-                <button type="button" className="inspector-error__retry" onClick={retryTweakpane}>
-                  Retry
-                </button>
-              </div>
-            )}
-          >
-            <Suspense fallback={<InspectorLoading />}>
-              <TweakpaneInspector
-                key={selected.id}
-                selected={selected}
-                materialError={materialError}
-              />
-            </Suspense>
-          </LazyPanelBoundary>
-        )}
-      </div>
-    </div>
+    </InspectorView>
   );
 }
