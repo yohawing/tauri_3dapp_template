@@ -1,4 +1,6 @@
 mod camera;
+#[cfg(target_os = "macos")]
+mod macos_view;
 mod performance;
 mod protocol;
 mod renderer;
@@ -179,10 +181,33 @@ fn viewport_rect_logging_enabled() -> bool {
 
 #[tauri::command]
 fn set_viewport_rect(
+    window: tauri::WebviewWindow,
     state: tauri::State<RendererControl>,
     log: tauri::State<ViewportRectLog>,
-    rect: ViewportRect,
-) {
+    mut rect: ViewportRect,
+) -> Result<(), String> {
+    // The native surface is sized in physical pixels. On macOS WKWebView's
+    // reported devicePixelRatio can briefly disagree with the NSWindow backing
+    // scale while moving between displays, which shifts both rendering and
+    // gizmo hit-testing. Use the surface owner's scale factor as the authority.
+    let native_scale = window
+        .scale_factor()
+        .map_err(|error| format!("failed to read native window scale factor: {error}"))?
+        as f32;
+    if !native_scale.is_finite() || native_scale <= 0.0 {
+        return Err("native window scale factor must be finite and positive".into());
+    }
+    rect.scale_factor = native_scale;
+
+    // A transparent Tauri window uses a full-height Wry parent view on macOS,
+    // while WKWebView's visible CSS origin begins below the title bar. Place
+    // the native surface viewport at that same origin. This is intentionally
+    // a translation only; pointer-local Y remains top-down and is not flipped.
+    #[cfg(target_os = "macos")]
+    {
+        rect.y += macos_view::webview_top_inset(&window)?;
+    }
+
     if viewport_rect_logging_enabled() {
         let mut last = log.last.lock().unwrap();
         if *last != Some(rect) {
@@ -196,6 +221,7 @@ fn set_viewport_rect(
     }
 
     *state.viewport_rect.lock().unwrap() = Some(rect);
+    Ok(())
 }
 
 #[tauri::command]
@@ -470,11 +496,17 @@ fn read_bounded_file(path: &Path, limit: u64) -> std::io::Result<Vec<u8>> {
 /// camera so both interactions share one ordered input stream.
 #[tauri::command]
 fn viewport_input(
+    app: tauri::AppHandle,
     state: tauri::State<RendererControl>,
     input: ViewportInput,
 ) -> Result<(), String> {
     input.validate()?;
-    enqueue_viewport_input(&mut state.viewport_inputs.lock().unwrap(), input)
+    enqueue_viewport_input(&mut state.viewport_inputs.lock().unwrap(), input)?;
+    // Pointer hover must not wait behind the periodic render wake. Posting an
+    // event immediately lets MainEventsCleared consume the latest coalesced
+    // position and redraw gizmo highlighting without a visible trailing lag.
+    let _ = app.run_on_main_thread(|| {});
+    Ok(())
 }
 
 /// Toggles the native renderer on/off so the frontend can hand the viewport
@@ -935,6 +967,29 @@ pub fn run() {
                 NATIVE_RENDERER.with(|slot| {
                     if let Some(renderer) = slot.borrow_mut().as_mut() {
                         renderer.resize(size.width, size.height);
+                    }
+                });
+            }
+            RunEvent::WindowEvent {
+                event:
+                    WindowEvent::ScaleFactorChanged {
+                        scale_factor,
+                        new_inner_size,
+                        ..
+                    },
+                ..
+            } => {
+                let scale_factor = scale_factor as f32;
+                if scale_factor.is_finite() && scale_factor > 0.0 {
+                    let renderer_control = app_handle.state::<RendererControl>();
+                    let mut viewport_rect = renderer_control.viewport_rect.lock().unwrap();
+                    if let Some(rect) = viewport_rect.as_mut() {
+                        rect.scale_factor = scale_factor;
+                    }
+                }
+                NATIVE_RENDERER.with(|slot| {
+                    if let Some(renderer) = slot.borrow_mut().as_mut() {
+                        renderer.resize(new_inner_size.width, new_inner_size.height);
                     }
                 });
             }

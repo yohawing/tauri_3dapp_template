@@ -125,6 +125,22 @@ describe("attachViewportInput gesture boundaries", () => {
     ]);
   });
 
+  it("prefers viewport-local offsets over full-window client coordinates", async () => {
+    const el = new FakeElement();
+    attachViewportInput(el as unknown as HTMLElement);
+    el.dispatch("pointerdown", pointer({
+      clientX: 430,
+      clientY: 340,
+      offsetX: 17,
+      offsetY: 29,
+    }));
+    await settleEventLoop();
+
+    expect(receivedInputs()).toEqual([
+      { type: "pointerDown", x: 17, y: 29, button: 0, modifiers: 0 },
+    ]);
+  });
+
   it("drops malformed pointer coordinates while accepting the Rust boundary", async () => {
     const el = new FakeElement();
     attachViewportInput(el as unknown as HTMLElement);

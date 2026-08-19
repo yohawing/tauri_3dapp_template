@@ -259,6 +259,17 @@ export function attachViewportInput(el: HTMLElement): ViewportInputAttachment {
   }
 
   function localPoint(e: PointerEvent): { x: number; y: number } | null {
+    // Prefer coordinates already expressed in the ViewportHost's own padding
+    // box. This avoids crossing WKWebView's window/client coordinate boundary
+    // on macOS, where a translated WebView can otherwise leave a constant
+    // full-window offset in native gizmo picking.
+    if (
+      e.target === el &&
+      isViewportCoordinate(e.offsetX) &&
+      isViewportCoordinate(e.offsetY)
+    ) {
+      return { x: e.offsetX, y: e.offsetY };
+    }
     const rect = el.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;

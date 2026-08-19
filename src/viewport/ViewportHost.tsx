@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type MouseEvent as ReactMouseEvent, type SetStateAction } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { attachViewportInput, maybeRunViewportInputSelfTest } from "./input";
-import type { CameraState } from "./canvasBackend";
+import type { CameraState, CanvasViewportSettings } from "./canvasBackend";
 import { BackendTransitionController } from "./backendTransition";
 import type { ViewportEnvironmentSettings, ViewportLightingSettings, ViewportTonemap } from "../settings/model";
 import { isFiniteF32 } from "../wireValidation";
@@ -463,6 +463,16 @@ export function ViewportHost({
   const viewportRectSenderRef = useRef<LatestSerialSender<ViewportRect> | null>(null);
   const inputIdleRef = useRef<Promise<void>>(Promise.resolve());
   const lifecycleEpochRef = useRef(0);
+  const canvasSettingsRef = useRef<CanvasViewportSettings>({
+    displayMode,
+    showGrid,
+    showBones,
+    projection,
+    fov,
+    manipulatorMode: initialManipulatorMode(),
+    manipulatorOrientation: "world",
+    snapEnabled: false,
+  });
   const transitionControllerRef = useRef<BackendTransitionController | null>(null);
   if (transitionControllerRef.current === null) {
     const tauriAvailable = "__TAURI_INTERNALS__" in window;
@@ -500,7 +510,7 @@ export function ViewportHost({
           if (!host) {
             throw new Error("ViewportHost is not mounted");
           }
-          return mountCanvasBackend(host, camera);
+          return mountCanvasBackend(host, camera, canvasSettingsRef.current);
         };
       },
       reportError: reportBackendTransitionError,
@@ -512,6 +522,16 @@ export function ViewportHost({
   const [manipulatorMode, setManipulatorMode] = useState<ManipulatorMode>(initialManipulatorMode);
   const [manipulatorOrientation, setManipulatorOrientation] = useState<ManipulatorOrientation>("world");
   const [snapEnabled, setSnapEnabled] = useState(false);
+  canvasSettingsRef.current = {
+    displayMode,
+    showGrid,
+    showBones,
+    projection,
+    fov,
+    manipulatorMode,
+    manipulatorOrientation,
+    snapEnabled,
+  };
   const [showMenu, setShowMenu] = useState(false);
   const [showCameraMenu, setShowCameraMenu] = useState(
     () => Boolean(import.meta.env.VITE_VIEWPORT_CAMERA_MENU_SELF_TEST),
@@ -580,7 +600,6 @@ export function ViewportHost({
   }, [mode, snapEnabled]);
 
   useEffect(() => {
-    if (mode !== "native") return;
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target;
       if (
@@ -594,7 +613,7 @@ export function ViewportHost({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [mode]);
+  }, []);
 
   useEffect(() => {
     if (mode !== "native" || !("__TAURI_INTERNALS__" in window)) return;
@@ -632,6 +651,22 @@ export function ViewportHost({
       },
     });
   }, [lighting, mode]);
+
+  useEffect(() => {
+    if (mode !== "canvas") return;
+    transitionController.updateCanvas((handle) => handle.updateSettings(canvasSettingsRef.current));
+  }, [
+    displayMode,
+    fov,
+    manipulatorMode,
+    manipulatorOrientation,
+    mode,
+    projection,
+    showBones,
+    showGrid,
+    snapEnabled,
+    transitionController,
+  ]);
 
   useEffect(() => {
     if (!showMenu && !showCameraMenu && !showEnvironmentMenu && !showLightingMenu) return;
@@ -809,6 +844,9 @@ export function ViewportHost({
 
   const chooseCameraView = (preset: CameraViewPreset) => {
     closeViewportSettings(true);
+    if (mode === "canvas") {
+      transitionController.updateCanvas((handle) => handle.setViewPreset(preset));
+    }
     onCameraViewChange?.(preset);
   };
 
@@ -826,7 +864,6 @@ export function ViewportHost({
             className="viewport-host__tool-button viewport-host__tool-button--icon is-active"
             aria-label={`${manipulatorMode} manipulator. Toggle to ${nextManipulatorMode(manipulatorMode)}`}
             title={`${manipulatorMode[0].toUpperCase()}${manipulatorMode.slice(1)} (W/E/R shortcuts; click to cycle)`}
-            disabled={mode !== "native"}
             onClick={() => setManipulatorMode((value) => nextManipulatorMode(value))}
           >
             <ViewportToolbarIcon name={manipulatorMode} />
@@ -839,7 +876,6 @@ export function ViewportHost({
             aria-label={`Manipulator orientation: ${manipulatorOrientation}. Toggle to ${manipulatorOrientation === "world" ? "local" : "world"}`}
             aria-pressed={manipulatorOrientation === "local"}
             title={`Orientation: ${manipulatorOrientation === "world" ? "World" : "Local"} (click to toggle)`}
-            disabled={mode !== "native"}
             onClick={() => setManipulatorOrientation((value) => value === "world" ? "local" : "world")}
           >
             <ViewportToolbarIcon name={manipulatorOrientation} />
@@ -850,7 +886,6 @@ export function ViewportHost({
             aria-label="Toggle transform snapping"
             aria-pressed={snapEnabled}
             title="Transform snapping"
-            disabled={mode !== "native"}
             onClick={() => setSnapEnabled((value) => !value)}
           >
             <ViewportToolbarIcon name="snap" />
@@ -863,7 +898,6 @@ export function ViewportHost({
             aria-label={`${displayMode} display mode. Toggle to ${nextViewportDisplayMode(displayMode)}`}
             aria-pressed={displayMode === "wireframe"}
             title={`${displayMode === "lit" ? "Lit" : "Wireframe"} display (click to toggle)`}
-            disabled={mode !== "native"}
             onClick={() => onDisplaySettingsChange?.({ displayMode: nextViewportDisplayMode(displayMode) })}
           >
             <ViewportToolbarIcon name={displayMode} />
@@ -877,7 +911,6 @@ export function ViewportHost({
             aria-expanded={showCameraMenu}
             aria-haspopup="dialog"
             title={cameraLabel}
-            disabled={mode !== "native"}
             onClick={(event) => toggleViewportPopover(event, setShowCameraMenu, showCameraMenu)}
           >
             <ViewportToolbarIcon name="camera" />
@@ -894,7 +927,6 @@ export function ViewportHost({
                       type="button"
                       className={`viewport-host__camera-option${projection === option ? " is-active" : ""}`}
                       aria-pressed={projection === option}
-                      disabled={mode !== "native"}
                       onClick={() => onCameraSettingsChange?.({ projection: option })}
                     >
                       {option[0].toUpperCase() + option.slice(1)}
@@ -911,7 +943,6 @@ export function ViewportHost({
                       type="button"
                       className={`viewport-host__camera-option${fov === option ? " is-active" : ""}`}
                       aria-pressed={fov === option}
-                      disabled={mode !== "native"}
                       onClick={() => onCameraSettingsChange?.({ fov: option })}
                     >
                       {option}°
@@ -928,7 +959,6 @@ export function ViewportHost({
                       type="button"
                       className={`viewport-host__camera-option${viewPreset === option ? " is-active" : ""}`}
                       aria-pressed={viewPreset === option}
-                      disabled={mode !== "native"}
                       onClick={() => chooseCameraView(option)}
                     >
                       {option[0].toUpperCase() + option.slice(1)}
@@ -1107,7 +1137,7 @@ export function ViewportHost({
               <div className="viewport-host__environment-path" title={environment.path}>
                 {environment.path || "No environment selected"}
               </div>
-              <label className={`viewport-host__show-item${mode !== "native" ? " is-disabled" : ""}`}>
+              <label className="viewport-host__show-item">
                 <input
                   type="checkbox"
                   checked={environment.enabled}
@@ -1163,20 +1193,18 @@ export function ViewportHost({
           </button>
           {showMenu && (
             <div className="viewport-host__show-popover" role="dialog" aria-label="Display options">
-              <label className={`viewport-host__show-item${mode !== "native" ? " is-disabled" : ""}`}>
+              <label className="viewport-host__show-item">
                 <input
                   type="checkbox"
                   checked={showGrid}
-                  disabled={mode !== "native"}
                   onChange={(event) => onDisplaySettingsChange?.({ showGrid: event.currentTarget.checked })}
                 />
                 <span>Grid</span>
               </label>
-              <label className={`viewport-host__show-item${mode !== "native" ? " is-disabled" : ""}`}>
+              <label className="viewport-host__show-item">
                 <input
                   type="checkbox"
                   checked={showBones}
-                  disabled={mode !== "native"}
                   onChange={(event) => onDisplaySettingsChange?.({ showBones: event.currentTarget.checked })}
                 />
                 <span>Bones</span>

@@ -44,6 +44,17 @@ export class BackendTransitionController {
 
   public constructor(private readonly dependencies: BackendTransitionDependencies) {}
 
+  /** Apply a live update only when the current Canvas generation is mounted. */
+  public updateCanvas(update: (handle: CanvasBackendHandle) => void): void {
+    const state = this.current;
+    if (!state || state.cancelled || state.mode !== "canvas" || !state.canvasHandle) return;
+    try {
+      update(state.canvasHandle);
+    } catch (error) {
+      this.dependencies.reportError(error);
+    }
+  }
+
   /** Start a mode transition and return the generation-owned cleanup. */
   public transition(mode: BackendTransitionMode): TransitionCleanup {
     if (this.disposed) {

@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { invoke } from "@tauri-apps/api/core";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { TransformControls } from "three/addons/controls/TransformControls.js";
 import {
   CanvasPerformanceSampler,
   parsePerformanceSampleFrames,
@@ -17,6 +18,17 @@ export interface CameraState {
   yaw: number;
   pitch: number;
   distance: number;
+}
+
+export interface CanvasViewportSettings {
+  displayMode: "lit" | "wireframe";
+  showGrid: boolean;
+  showBones: boolean;
+  projection: "perspective" | "orthographic";
+  fov: number;
+  manipulatorMode: "translate" | "rotate" | "scale";
+  manipulatorOrientation: "world" | "local";
+  snapEnabled: boolean;
 }
 
 // Keep Canvas OrbitControls inside the Rust camera validator's handoff range.
@@ -94,6 +106,8 @@ export interface CanvasBackendHandle {
   /** Disposes the renderer/scene and returns the final camera state, for
    * handing continuity back to the native side. */
   dispose: () => CameraState;
+  updateSettings: (settings: CanvasViewportSettings) => void;
+  setViewPreset: (preset: "front" | "right" | "top" | "perspective") => void;
 }
 
 export interface CanvasRenderScheduler {
@@ -188,6 +202,7 @@ export function createCanvasRenderScheduler({
 export function mountCanvasBackend(
   host: HTMLElement,
   initialCamera: CameraState,
+  initialSettings: CanvasViewportSettings,
 ): CanvasBackendHandle {
   const scene = new THREE.Scene();
   scene.background = CLEAR_COLOR;
@@ -195,10 +210,15 @@ export function mountCanvasBackend(
   const width = Math.max(host.clientWidth, 1);
   const height = Math.max(host.clientHeight, 1);
 
-  const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100);
+  const perspectiveCamera = new THREE.PerspectiveCamera(initialSettings.fov, width / height, 0.1, 100);
+  const orthographicCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);
+  let camera: THREE.PerspectiveCamera | THREE.OrthographicCamera = perspectiveCamera;
   const target = new THREE.Vector3(...initialCamera.target);
-  camera.position.copy(eyeFromCamera(initialCamera));
-  camera.lookAt(target);
+  const initialEye = eyeFromCamera(initialCamera);
+  perspectiveCamera.position.copy(initialEye);
+  orthographicCamera.position.copy(initialEye);
+  perspectiveCamera.lookAt(target);
+  orthographicCamera.lookAt(target);
 
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   // The wgpu surface picks a non-sRGB format specifically to avoid an extra
@@ -238,10 +258,15 @@ export function mountCanvasBackend(
   const axes = new THREE.AxesHelper(2.5);
   scene.add(grid, axes, cube);
 
-  const controls = new OrbitControls(camera, renderer.domElement);
+  const controls = new OrbitControls<THREE.Camera>(camera, renderer.domElement);
   applyCanvasOrbitBounds(controls);
   controls.target.copy(target);
   controls.update();
+
+  const transformControls = new TransformControls(camera, renderer.domElement);
+  const transformHelper = transformControls.getHelper();
+  scene.add(transformHelper);
+  transformControls.attach(cube);
 
   let disposed = false;
   const performanceSampleFrames = parsePerformanceSampleFrames(import.meta.env.VITE_PERF_SAMPLE_FRAMES);
@@ -271,19 +296,84 @@ export function mountCanvasBackend(
   });
   const renderOnControlChange = () => scheduler.invalidate();
   controls.addEventListener("change", renderOnControlChange);
+  transformControls.addEventListener("change", renderOnControlChange);
+  const toggleOrbitWhileDragging = (event: { value?: unknown }) => {
+    controls.enabled = event.value !== true;
+  };
+  transformControls.addEventListener("dragging-changed", toggleOrbitWhileDragging);
   scheduler.start();
+
+  function updateProjection(widthPx: number, heightPx: number, fov: number) {
+    const aspect = widthPx / heightPx;
+    perspectiveCamera.aspect = aspect;
+    perspectiveCamera.fov = fov;
+    perspectiveCamera.updateProjectionMatrix();
+
+    const distance = camera.position.distanceTo(controls.target);
+    const halfHeight = distance * Math.tan(THREE.MathUtils.degToRad(fov) * 0.5);
+    orthographicCamera.left = -halfHeight * aspect;
+    orthographicCamera.right = halfHeight * aspect;
+    orthographicCamera.top = halfHeight;
+    orthographicCamera.bottom = -halfHeight;
+    orthographicCamera.updateProjectionMatrix();
+  }
+
+  function selectCamera(projection: CanvasViewportSettings["projection"], fov: number) {
+    const next = projection === "orthographic" ? orthographicCamera : perspectiveCamera;
+    if (next !== camera) {
+      next.position.copy(camera.position);
+      next.quaternion.copy(camera.quaternion);
+      next.up.copy(camera.up);
+      camera = next;
+      controls.object = camera;
+      transformControls.camera = camera;
+    }
+    const projectionWidth = performanceTarget?.[0] ?? Math.max(host.clientWidth, 1);
+    const projectionHeight = performanceTarget?.[1] ?? Math.max(host.clientHeight, 1);
+    updateProjection(projectionWidth, projectionHeight, fov);
+    controls.update();
+  }
+
+  function updateSettings(settings: CanvasViewportSettings) {
+    grid.visible = settings.showGrid;
+    axes.visible = settings.showBones;
+    materials.forEach((material) => {
+      material.wireframe = settings.displayMode === "wireframe";
+    });
+    transformControls.setMode(settings.manipulatorMode);
+    transformControls.setSpace(settings.manipulatorOrientation);
+    transformControls.setTranslationSnap(settings.snapEnabled ? 1 : null);
+    transformControls.setRotationSnap(settings.snapEnabled ? THREE.MathUtils.degToRad(15) : null);
+    transformControls.setScaleSnap(settings.snapEnabled ? 0.1 : null);
+    selectCamera(settings.projection, settings.fov);
+    scheduler.invalidate();
+  }
+
+  function setViewPreset(preset: "front" | "right" | "top" | "perspective") {
+    const current = cameraFromEye(camera.position, controls.target);
+    const pose = {
+      ...current,
+      ...(preset === "front" ? { yaw: -Math.PI / 2, pitch: 0 } : {}),
+      ...(preset === "right" ? { yaw: 0, pitch: 0 } : {}),
+      ...(preset === "top" ? { yaw: -Math.PI / 2, pitch: CAMERA_PITCH_LIMIT } : {}),
+      ...(preset === "perspective" ? { yaw: -0.6, pitch: 0.35 } : {}),
+    };
+    camera.position.copy(eyeFromCamera(pose));
+    camera.lookAt(controls.target);
+    controls.update();
+    scheduler.invalidate();
+  }
 
   const resizeObserver = new ResizeObserver(() => {
     const w = Math.max(host.clientWidth, 1);
     const h = Math.max(host.clientHeight, 1);
-    camera.aspect = w / h;
-    camera.updateProjectionMatrix();
+    updateProjection(performanceTarget?.[0] ?? w, performanceTarget?.[1] ?? h, perspectiveCamera.fov);
     if (!performanceTarget) renderer.setSize(w, h);
     scheduler.invalidate();
   });
   resizeObserver.observe(host);
 
-  scheduler.invalidate();
+  updateSettings(initialSettings);
 
   function dispose(): CameraState {
     const final = cameraFromEye(camera.position, controls.target);
@@ -291,6 +381,11 @@ export function mountCanvasBackend(
     scheduler.dispose();
     resizeObserver.disconnect();
     controls.removeEventListener("change", renderOnControlChange);
+    transformControls.removeEventListener("change", renderOnControlChange);
+    transformControls.removeEventListener("dragging-changed", toggleOrbitWhileDragging);
+    transformControls.detach();
+    transformControls.dispose();
+    scene.remove(transformHelper);
     controls.dispose();
     materials.forEach((m) => m.dispose());
     cube.geometry.dispose();
@@ -313,5 +408,5 @@ export function mountCanvasBackend(
     return final;
   }
 
-  return { dispose };
+  return { dispose, updateSettings, setViewPreset };
 }
