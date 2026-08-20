@@ -1,9 +1,12 @@
 import { isBoundedUtf8String, isFiniteF32 } from "../wireValidation";
 
 export const SETTINGS_STORAGE_KEY = "tauri3d.settings";
-export const SETTINGS_VERSION = 4;
+export const SETTINGS_VERSION = 5;
 const MAX_SETTINGS_STORAGE_BYTES = 256 * 1024;
-const LEGACY_SETTINGS_VERSIONS = [1, 2, 3] as const;
+const LEGACY_SETTINGS_VERSIONS = [1, 2, 3, 4] as const;
+
+export const UI_SCALES = [0.8, 1, 1.25, 1.5] as const;
+export type UiScale = (typeof UI_SCALES)[number];
 
 export const CONSOLE_LEVELS = ["info", "warn", "error"] as const;
 export type ConsoleLevel = (typeof CONSOLE_LEVELS)[number];
@@ -57,6 +60,9 @@ export interface ViewportLightingSettings {
 }
 
 export interface Settings {
+  ui: {
+    scale: UiScale;
+  };
   viewport: {
     debugOverlay: boolean;
     displayMode: "lit" | "wireframe";
@@ -79,6 +85,9 @@ export interface Settings {
  * and follows new entries.
  */
 export const DEFAULT_SETTINGS: Settings = {
+  ui: {
+    scale: 1,
+  },
   viewport: {
     debugOverlay: false,
     displayMode: "lit",
@@ -117,6 +126,7 @@ export interface SettingsStorage {
 
 function cloneDefaults(): Settings {
   return {
+    ui: { ...DEFAULT_SETTINGS.ui },
     viewport: {
       ...DEFAULT_SETTINGS.viewport,
       environment: { ...DEFAULT_SETTINGS.viewport.environment },
@@ -132,6 +142,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isConsoleLevel(value: unknown): value is ConsoleLevel {
   return typeof value === "string" && (CONSOLE_LEVELS as readonly string[]).includes(value);
+}
+
+export function isUiScale(value: unknown): value is UiScale {
+  return typeof value === "number" && (UI_SCALES as readonly number[]).includes(value);
 }
 
 function isProjection(value: unknown): value is Settings["viewport"]["projection"] {
@@ -167,8 +181,13 @@ export function normalizeSettings(value: unknown): Settings {
   const defaults = cloneDefaults();
   if (!isRecord(value)) return defaults;
 
+  const ui = isRecord(value.ui) ? value.ui : undefined;
   const viewport = isRecord(value.viewport) ? value.viewport : undefined;
   const consoleSettings = isRecord(value.console) ? value.console : undefined;
+
+  if (isUiScale(ui?.scale)) {
+    defaults.ui.scale = ui.scale;
+  }
 
   if (typeof viewport?.debugOverlay === "boolean") {
     defaults.viewport.debugOverlay = viewport.debugOverlay;
@@ -261,8 +280,8 @@ function resolveStorage(storage: SettingsStorage | null | undefined): SettingsSt
 }
 
 /**
- * Load and validate the versioned frontend settings. Versions 1 through 3 remain
- * accepted so lighting additions do not discard existing editor
+ * Load and validate the versioned frontend settings. Versions 1 through 4 remain
+ * accepted so later additions do not discard existing editor
  * preferences; fields absent from an older payload use their defaults.
  */
 export function loadSettings(storage?: SettingsStorage | null): Settings {

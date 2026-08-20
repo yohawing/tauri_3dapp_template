@@ -45,7 +45,7 @@
 
 .menu-bar__title {
   font-weight: 600;
-  font-size: 13px;
+  font-size: var(--font-size-xl);
   letter-spacing: 0.02em;
   color: #f4f4f5;
   padding: 0 10px 0 2px;
@@ -63,7 +63,7 @@
   border: 0;
   background: transparent;
   color: #e4e4e7;
-  font-size: 12px;
+  font-size: var(--font-size-lg);
   height: 26px;
   padding: 0 9px;
   border-radius: 3px;
@@ -101,7 +101,7 @@
   background: transparent;
   color: #e4e4e7;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--font-size-lg);
   text-align: left;
   cursor: pointer;
 }
@@ -119,7 +119,7 @@
 
 .menu-popup__check {
   color: #7db4ff;
-  font-size: 9px;
+  font-size: var(--font-size-xs);
   text-align: center;
 }
 
@@ -225,7 +225,7 @@
   border: 1px solid rgb(255 255 255 / 12%);
   border-radius: 4px;
   box-shadow: 0 4px 14px rgb(0 0 0 / 24%);
-  font-size: 11px;
+  font-size: var(--font-size-md);
 }
 
 .viewport-host__mode-group,
@@ -255,23 +255,23 @@
 
 .viewport-host__tool-button--icon {
   display: inline-flex;
-  width: 27px;
-  min-width: 27px;
-  min-height: 26px;
+  width: 2.3125rem;
+  min-width: 2.3125rem;
+  min-height: var(--toolbar-height);
   align-items: center;
   justify-content: center;
   padding: 0;
 }
 
 .viewport-host__tool-button--menu {
-  width: 33px;
+  width: 2.8125rem;
   gap: 1px;
 }
 
 .viewport-host__tool-icon {
   display: block;
-  width: 16px;
-  height: 16px;
+  width: var(--icon-size-md);
+  height: var(--icon-size-md);
   fill: none;
   stroke: currentColor;
   stroke-width: 1.65;
@@ -282,8 +282,8 @@
 
 .viewport-host__tool-chevron {
   display: block;
-  width: 7px;
-  height: 7px;
+  width: 0.625rem;
+  height: 0.625rem;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.35;
@@ -376,7 +376,7 @@
   background: rgb(0 0 0 / 20%);
   border-radius: 3px;
   font-family: "SF Mono", Consolas, monospace;
-  font-size: 10px;
+  font-size: var(--font-size-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -424,7 +424,7 @@
   padding-top: 6px;
   color: #e7c77b;
   border-top: 1px solid rgb(255 255 255 / 10%);
-  font-size: 10px;
+  font-size: var(--font-size-sm);
   line-height: 1.35;
 }
 
@@ -443,7 +443,7 @@
   display: block;
   margin-bottom: 4px;
   color: #a1a1aa;
-  font-size: 10px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -462,7 +462,7 @@
   border: 1px solid transparent;
   border-radius: 3px;
   font: inherit;
-  font-size: 11px;
+  font-size: var(--font-size-md);
   cursor: pointer;
 }
 
@@ -520,7 +520,7 @@
   background: rgba(24, 24, 28, 0.75);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 4px;
-  font-size: 11px;
+  font-size: var(--font-size-md);
   line-height: 1.5;
   color: #e4e4e7;
   font-family: "SF Mono", Consolas, monospace;
@@ -562,7 +562,7 @@
 .viewport-host__preview-label {
   color: #303038;
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: var(--font-size-xs);
   letter-spacing: 0.08em;
 }
 
@@ -585,13 +585,13 @@
 
 .viewport-host__fallback strong {
   color: #ffbf66;
-  font-size: 12px;
+  font-size: var(--font-size-lg);
 }
 
 .viewport-host__fallback span,
 .viewport-host__fallback small {
   overflow: hidden;
-  font-size: 11px;
+  font-size: var(--font-size-md);
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -614,7 +614,7 @@
   color: #d4d4d8;
   background: #17171b;
   border-top: 1px solid rgba(255, 255, 255, 0.14);
-  font-size: 11px;
+  font-size: var(--font-size-md);
 }
 
 .console-drawer__resize-handle {
@@ -727,7 +727,7 @@
   color: var(--text);
   background: rgba(14, 14, 17, 0.72);
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: var(--font-size-xs);
 }
 
 .viewport-host__label {
@@ -785,13 +785,13 @@
   margin: 0;
 }
 
-.settings-modal__title { font-size: 16px; }
-.settings-modal__section-title { font-size: 12px; color: #aebfe2; }
+.settings-modal__title { font-size: var(--font-size-2xl); }
+.settings-modal__section-title { font-size: var(--font-size-lg); color: #aebfe2; }
 .settings-modal__close {
   border: 0;
   color: #a1a1aa;
   background: transparent;
-  font-size: 22px;
+  font-size: var(--font-size-display);
   cursor: pointer;
 }
 
@@ -805,7 +805,7 @@
   justify-content: space-between;
   gap: 16px;
   margin-top: 12px;
-  font-size: 12px;
+  font-size: var(--font-size-lg);
 }
 
 .settings-modal__checkbox-row { justify-content: flex-start; }
@@ -841,21 +841,21 @@
 }
 
 .menu-bar {
-  height: 24px;
+  height: var(--toolbar-height);
   background: var(--surface-3);
   border-bottom-color: var(--divider-strong);
 }
 
 .menu-bar__title {
   color: var(--text-strong);
-  font-size: 11px;
+  font-size: var(--font-size-md);
   padding-right: 12px;
 }
 
 .menu-bar__trigger {
   color: var(--text);
-  font-size: 10px;
-  height: 18px;
+  font-size: var(--font-size-sm);
+  height: var(--control-height);
   padding: 0 8px;
   border-radius: var(--radius-sm);
 }
@@ -877,14 +877,14 @@
 
 .menu-bar__renderer-button {
   appearance: none;
-  height: 14px;
+  height: var(--control-height-sm);
   padding: 0 8px;
   border: 0;
   border-radius: 2px;
   color: var(--text-muted);
   background: transparent;
   cursor: pointer;
-  font-size: 9px;
+  font-size: var(--font-size-xs);
 }
 
 .menu-bar__renderer-button:hover:not(:disabled) {
@@ -906,8 +906,8 @@
 }
 
 .menu-popup__item {
-  min-height: 24px;
-  font-size: 10px;
+  min-height: var(--row-height);
+  font-size: var(--font-size-sm);
   border-radius: var(--radius-sm);
 }
 
@@ -939,8 +939,8 @@
 }
 
 .console-drawer__header {
-  flex-basis: 44px;
-  min-height: 44px;
+  flex-basis: calc(var(--panel-header-height) + var(--toolbar-height));
+  min-height: calc(var(--panel-header-height) + var(--toolbar-height));
   padding: 0;
   gap: 0;
   flex-direction: column;
@@ -952,14 +952,14 @@
 .console-drawer__tabs {
   display: flex;
   align-items: stretch;
-  height: 20px;
-  flex: 0 0 20px;
+  height: var(--panel-header-height);
+  flex: 0 0 var(--panel-header-height);
   border-bottom: 1px solid var(--divider);
 }
 
 .console-drawer__controls {
-  height: 24px;
-  flex: 0 0 24px;
+  height: var(--toolbar-height);
+  flex: 0 0 var(--toolbar-height);
   justify-content: flex-end;
   gap: 6px;
   padding: 0 7px;
@@ -988,7 +988,7 @@
   color: var(--text-muted);
   background: transparent;
   cursor: pointer;
-  font-size: 10px;
+  font-size: var(--font-size-sm);
 }
 
 .console-drawer__tab:hover {
@@ -1012,14 +1012,14 @@
 }
 
 .console-drawer__filter-button {
-  height: 14px;
+  height: var(--control-height-sm);
   padding: 0 8px;
   border: 0;
   border-radius: 2px;
   color: var(--text-muted);
   background: transparent;
   cursor: pointer;
-  font-size: 9px;
+  font-size: var(--font-size-xs);
 }
 
 .console-drawer__filter-button:hover,
@@ -1030,14 +1030,14 @@
 
 .console-drawer__search {
   width: 150px;
-  height: 17px;
+  height: var(--control-height-sm);
   padding: 0 7px;
   border: 1px solid var(--divider);
   border-radius: var(--radius-sm);
   outline: none;
   color: var(--text);
   background: var(--surface-0);
-  font-size: 9px;
+  font-size: var(--font-size-xs);
 }
 
 .console-drawer__search:focus {
@@ -1049,18 +1049,18 @@
   background: transparent;
   color: var(--text-dim);
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: var(--font-size-xs);
 }
 
 .console-drawer__entries {
   background: var(--surface-0);
   font-family: var(--font-mono);
-  font-size: 10px;
-  line-height: 16px;
+  font-size: var(--font-size-sm);
+  line-height: var(--control-height-sm);
 }
 
 .console-drawer__entry {
-  min-height: 20px;
+  min-height: var(--row-height);
   grid-template-columns: 116px 42px 68px minmax(0, 1fr);
   gap: 6px;
   padding: 1px 12px;
@@ -1124,7 +1124,7 @@
   border-radius: var(--control-radius);
   color: var(--text);
   background: var(--control-bg);
-  font-size: 9px;
+  font-size: var(--font-size-xs);
 }
 
 .console-drawer select:hover,
@@ -1175,8 +1175,8 @@
 }
 
 .settings-modal__checkbox {
-  width: 13px;
-  height: 13px;
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
   margin: 0;
   accent-color: var(--accent-strong);
 }
@@ -1187,8 +1187,8 @@
 }
 
 .settings-modal__close {
-  width: 20px;
-  height: 20px;
+  width: var(--panel-header-height);
+  height: var(--panel-header-height);
   padding: 0;
   border-radius: var(--control-radius);
 }
@@ -1202,17 +1202,17 @@
  * nav 24px/#232329 with rgba white .10 divider; console controls use the
  * 13px/17px/200px primitives and 10px/16px diagnostic rows shown there. */
 .menu-bar {
-  height: 24px;
+  height: var(--toolbar-height);
   background: #232329;
   border-bottom-color: rgba(255, 255, 255, 0.10);
 }
 
 .menu-bar__trigger {
-  height: 18px;
+  height: var(--control-height);
   padding: 0 8px;
   border-radius: 3px;
   color: #d6d6dc;
-  font-size: 10px;
+  font-size: var(--font-size-sm);
 }
 
 .menu-bar__renderer-toggle {
@@ -1224,11 +1224,11 @@
 }
 
 .menu-bar__renderer-button {
-  height: 14px;
+  height: var(--control-height-sm);
   padding: 0 8px;
   border-radius: 2px;
   color: #9a9aa4;
-  font-size: 9px;
+  font-size: var(--font-size-xs);
 }
 
 .menu-bar__renderer-button.is-active {
@@ -1250,32 +1250,32 @@
 }
 
 .console-drawer__filter-button {
-  height: 13px;
+  height: var(--control-height-sm);
   padding: 0 8px;
   border-radius: 2px;
-  font-size: 9px;
+  font-size: var(--font-size-xs);
 }
 
 .console-drawer__search {
   width: 200px;
   flex: 0 0 200px;
-  height: 17px;
+  height: var(--control-height-sm);
   border-color: rgba(255, 255, 255, 0.09);
   border-radius: 3px;
   background: #131316;
   color: #6e6e78;
-  font-size: 9px;
+  font-size: var(--font-size-xs);
 }
 
 .console-drawer__button {
-  min-height: 17px;
-  height: 17px;
+  min-height: var(--control-height-sm);
+  height: var(--control-height-sm);
   padding: 0 8px;
   border-color: rgba(255, 255, 255, 0.10);
   border-radius: 3px;
   background: #2b2b32;
   color: #d6d6dc;
-  font-size: 9px;
+  font-size: var(--font-size-xs);
 }
 
 .console-drawer__button--autoscroll.is-active {
@@ -1288,12 +1288,12 @@
   padding: 4px 0;
   background: #131316;
   font-family: var(--font-mono);
-  font-size: 10px;
-  line-height: 16px;
+  font-size: var(--font-size-sm);
+  line-height: var(--control-height-sm);
 }
 
 .console-drawer__entry {
-  min-height: 16px;
+  min-height: var(--row-height);
   grid-template-columns: auto auto auto minmax(0, 1fr);
   gap: 6px;
   padding: 0 12px;

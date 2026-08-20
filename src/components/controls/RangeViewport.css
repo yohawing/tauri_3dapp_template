@@ -2,7 +2,7 @@
   position: relative;
   flex: 0 0 76px;
   width: 76px;
-  height: 13px;
+  height: var(--control-height-sm);
   padding: 0 3px;
   box-sizing: border-box;
   display: inline-flex;
@@ -12,7 +12,7 @@
 .range-viewport__track {
   position: relative;
   width: 100%;
-  height: 8px;
+  height: 0.6875rem;
   border-radius: 4px;
   background: #3a3a44;
   cursor: grab;
@@ -26,8 +26,8 @@
 .range-viewport__handle {
   position: absolute;
   top: 0;
-  width: 5px;
-  height: 8px;
+  width: 0.4375rem;
+  height: 0.6875rem;
   margin: 0;
   padding: 0;
   border: 0;

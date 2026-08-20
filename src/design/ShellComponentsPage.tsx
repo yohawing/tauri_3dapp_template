@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useState } from "react";
 import type { EditorAction } from "../actions/editorActions";
 import { CheckboxInput, CompactNumberInput, CompactSelect, RangeInput } from "../components/controls/CompactControls";
 import { RangeViewport, type RangeViewportValue } from "../components/controls/RangeViewport";
@@ -70,9 +70,13 @@ const storyLinks = [
 export function ShellComponentsPage() {
   const actions = useMemo(makeActions, []);
   const [settings, setSettings] = useState<Settings>(() => ({
+    ui: { ...DEFAULT_SETTINGS.ui },
     viewport: { ...DEFAULT_SETTINGS.viewport },
     console: { ...DEFAULT_SETTINGS.console },
   }));
+  useLayoutEffect(() => {
+    document.documentElement.style.fontSize = `${settings.ui.scale * 16}px`;
+  }, [settings.ui.scale]);
   const [scalarPreview, setScalarPreview] = useState(0.62);
   const [rangePreview, setRangePreview] = useState<RangeViewportValue>({ start: 12, end: 62 });
   const [consoleStore] = useState(() => {

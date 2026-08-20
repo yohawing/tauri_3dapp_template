@@ -20,6 +20,11 @@ const kindMeta = {
   bone: { tag: "BONE", color: "#d89252" },
 } as const;
 
+// react-arborist positions virtual rows numerically, so this must match the
+// --row-height design token rather than relying on the CSS height alone.
+const OUTLINER_ROW_HEIGHT = 25;
+const OUTLINER_INDENT = 19;
+
 function VisibilityIcon({ hidden }: { hidden: boolean }) {
   return hidden ? (
     <svg viewBox="0 0 16 16" aria-hidden="true">
@@ -164,6 +169,7 @@ export interface OutlinerViewProps {
   selectedNodeId: string | null;
   /** Controlled search query (already bound to `boundSearchQuery`). */
   query: string;
+  uiScale?: number;
   onQueryChange: (query: string) => void;
   onSelect: (nodeId: string) => void;
   onToggleVisibility: (node: SceneNodeSummary) => void;
@@ -185,6 +191,7 @@ export function OutlinerView({
   nodes,
   selectedNodeId,
   query,
+  uiScale = 1,
   onQueryChange,
   onSelect,
   onToggleVisibility,
@@ -222,8 +229,8 @@ export function OutlinerView({
             aria-label="Scene nodes"
             width={size.width}
             height={size.height}
-            rowHeight={18}
-            indent={14}
+            rowHeight={OUTLINER_ROW_HEIGHT * uiScale}
+            indent={OUTLINER_INDENT * uiScale}
             openByDefault
             disableEdit
             disableDrag

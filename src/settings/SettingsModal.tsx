@@ -1,6 +1,12 @@
 import { useEffect, useRef } from "react";
 import { CheckboxInput, CompactSelect } from "../components/controls/CompactControls";
-import { CONSOLE_LEVELS, type ConsoleLevel, type Settings } from "./model";
+import {
+  CONSOLE_LEVELS,
+  UI_SCALES,
+  isUiScale,
+  type ConsoleLevel,
+  type Settings,
+} from "./model";
 
 export interface SettingsModalProps {
   open: boolean;
@@ -96,6 +102,15 @@ export function SettingsModal({ open, settings, onChange, onClose }: SettingsMod
     );
   };
 
+  const setUiScale = (value: string) => {
+    const scale = Number(value);
+    if (!isUiScale(scale)) return;
+    commitSettings((current) => ({
+      ...current,
+      ui: { ...current.ui, scale },
+    }));
+  };
+
   const setMinimumLevel = (minimumLevel: ConsoleLevel) => {
     commitSettings((current) =>
       ({
@@ -149,6 +164,26 @@ export function SettingsModal({ open, settings, onChange, onClose }: SettingsMod
         </header>
 
         <div className="settings-modal__body">
+          <section className="settings-modal__section" aria-labelledby="settings-appearance-title">
+            <h3 id="settings-appearance-title" className="settings-modal__section-title">
+              Appearance
+            </h3>
+            <label className="settings-modal__field">
+              <span className="settings-modal__label">UI scale</span>
+              <CompactSelect
+                className="settings-modal__select"
+                value={settings.ui.scale}
+                onChange={(event) => setUiScale(event.currentTarget.value)}
+              >
+                {UI_SCALES.map((scale) => (
+                  <option key={scale} value={scale}>
+                    {Math.round(scale * 100)}%
+                  </option>
+                ))}
+              </CompactSelect>
+            </label>
+          </section>
+
           <section className="settings-modal__section" aria-labelledby="settings-viewport-title">
             <h3 id="settings-viewport-title" className="settings-modal__section-title">
               Viewport
