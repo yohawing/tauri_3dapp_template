@@ -13,6 +13,15 @@ interface MenuBarProps {
   documentLabel: string;
   isMac: boolean;
   /**
+   * The app-name text drawn in the bar itself (left of the File/View
+   * triggers). Defaults to `"Tauri3D"` (unchanged behavior) — this was a
+   * hardcoded literal until this prop existed, so a host whose own name
+   * isn't "Tauri3D" (e.g. yw-retarget-web) had no way to show its own brand
+   * here; `documentLabel` doesn't cover this, it's only ever used as the
+   * element's hover `title`.
+   */
+  brand?: string;
+  /**
    * Whether to draw the "Renderer" menu, its always-visible Native/Canvas
    * toggle, and the `backendLabel` sr-only text. Defaults to `true`
    * (unchanged behavior): this template's own host has a real native wgpu
@@ -74,7 +83,14 @@ export function runEditorActionSafely(action: EditorAction): Promise<void> {
   }
 }
 
-export function MenuBar({ actions, backendLabel, documentLabel, isMac, showRendererMenu = true }: MenuBarProps) {
+export function MenuBar({
+  actions,
+  backendLabel,
+  documentLabel,
+  isMac,
+  brand = "Tauri3D",
+  showRendererMenu = true,
+}: MenuBarProps) {
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
   const rootRef = useRef<HTMLElement>(null);
   const triggerRefs = useRef<Record<Exclude<OpenMenu, null>, HTMLButtonElement | null>>({
@@ -230,7 +246,7 @@ export function MenuBar({ actions, backendLabel, documentLabel, isMac, showRende
 
   return (
     <nav ref={rootRef} className="menu-bar" aria-label="Application menu">
-      <span className="menu-bar__title" title={documentLabel}>Tauri3D</span>
+      <span className="menu-bar__title" title={documentLabel}>{brand}</span>
       {renderMenu("file", FILE_ACTIONS)}
       {renderMenu("view", VIEW_ACTIONS)}
       {showRendererMenu && renderMenu("renderer", RENDERER_ACTIONS)}
