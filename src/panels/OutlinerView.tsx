@@ -1,8 +1,31 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Tree, type NodeRendererProps } from "react-arborist";
 import type { SceneNodeSummary } from "../scene/core/projection";
 import { boundSearchQuery, MAX_SEARCH_QUERY_BYTES, normalizeSearchQuery } from "../searchQuery";
 import "./Outliner.css";
+
+/** Node id -> explicit expand/collapse state. Ids absent from the map fall
+ * back to whatever `defaultOpen` a given `<Tree>`/toggle call was given.
+ * Structurally identical to react-arborist's own (unexported) `OpenMap`. */
+export type OutlinerOpenState = Record<string, boolean>;
+
+/**
+ * Mirrors react-arborist's internal open-state toggle reducer
+ * (`state/open-slice.js`'s `VISIBILITY_TOGGLE`) so callers can track the same
+ * expand/collapse semantics from outside the mounted `<Tree>` instance —
+ * react-arborist only accepts open state as a one-time `initialOpenState`
+ * seed, it has no fully-controlled "current open state" prop, so persisting
+ * expand state across an unmount/remount means reproducing this toggle
+ * ourselves rather than reading it back out of react-arborist.
+ */
+export function toggleOutlinerNode(
+  openState: OutlinerOpenState,
+  id: string,
+  defaultOpen: boolean,
+): OutlinerOpenState {
+  const wasOpen = openState[id] ?? defaultOpen;
+  return { ...openState, [id]: !wasOpen };
+}
 
 interface SceneNode extends SceneNodeSummary {
   children?: SceneNode[];
@@ -180,6 +203,28 @@ export interface OutlinerViewProps {
    * stops hiding `group.header` — should pass `false` here instead of
    * showing two stacked tab rows for the same panel. */
   showTabStrip?: boolean;
+  /**
+   * Node ids explicitly expanded/collapsed. Passed straight through to
+   * react-arborist's `initialOpenState`, which only seeds the tree once per
+   * mount (react-arborist has no fully-controlled "current open state"
+   * prop) — so a caller that wants expand state to survive this component
+   * unmounting (e.g. a dockview tab switch away and back) must persist this
+   * map somewhere outside OutlinerView (a ref, a module-level singleton, a
+   * store) and feed the latest value back in via this prop plus
+   * `onOpenStateChange` below. Omit to let OutlinerView keep its own state
+   * for as long as this instance stays mounted, and no longer — the
+   * presentational default, matching how every other prop here works.
+   */
+  openState?: OutlinerOpenState;
+  /** Expand state for a node absent from `openState`. Defaults to `false`
+   * (collapsed) — react-arborist's own default is `true`, which is exactly
+   * the bug this prop exists to override (a freshly mounted tree opening
+   * every node). */
+  defaultOpen?: boolean;
+  /** Called after a node is expanded or collapsed with the resulting full
+   * map, so a caller can persist it (see `openState` above). Fires whether
+   * or not `openState` is controlled. */
+  onOpenStateChange?: (openState: OutlinerOpenState) => void;
 }
 
 /**
@@ -196,11 +241,31 @@ export function OutlinerView({
   onSelect,
   onToggleVisibility,
   showTabStrip = true,
+  openState,
+  defaultOpen = false,
+  onOpenStateChange,
 }: OutlinerViewProps) {
   const { ref: bodyRef, size } = useElementSize<HTMLDivElement>();
   const tree = useMemo(
     () => toTree(nodes, onToggleVisibility, query),
     [nodes, onToggleVisibility, query],
+  );
+
+  // Uncontrolled fallback: only used while the caller doesn't pass its own
+  // `openState`. Still lost on unmount, same as any other component-local
+  // state — a caller that needs persistence across remounts supplies
+  // `openState`/`onOpenStateChange` itself (see Outliner.tsx's container).
+  const [uncontrolledOpenState, setUncontrolledOpenState] = useState<OutlinerOpenState>({});
+  const isControlled = openState !== undefined;
+  const effectiveOpenState = isControlled ? openState : uncontrolledOpenState;
+
+  const handleToggle = useCallback(
+    (id: string) => {
+      const next = toggleOutlinerNode(effectiveOpenState, id, defaultOpen);
+      if (!isControlled) setUncontrolledOpenState(next);
+      onOpenStateChange?.(next);
+    },
+    [effectiveOpenState, defaultOpen, isControlled, onOpenStateChange],
   );
 
   return (
@@ -231,7 +296,9 @@ export function OutlinerView({
             height={size.height}
             rowHeight={OUTLINER_ROW_HEIGHT * uiScale}
             indent={OUTLINER_INDENT * uiScale}
-            openByDefault
+            openByDefault={defaultOpen}
+            initialOpenState={effectiveOpenState}
+            onToggle={handleToggle}
             disableEdit
             disableDrag
             selection={selectedNodeId ?? undefined}
