@@ -21,3 +21,42 @@
   flex: 1 1 auto;
   min-height: 0;
 }
+
+/* The vendored editor keeps its geometry API stable at 26px rows. Scale its
+   shell chrome and typography here so it follows the host design tokens. */
+.timeline-editor {
+  --timeline-control-height: var(--control-height);
+  grid-template-rows: calc(var(--panel-header-height) + var(--toolbar-height)) minmax(0, 1fr);
+  font-size: var(--font-size-sm);
+}
+
+.timeline-editor__tabs {
+  height: var(--panel-header-height);
+  flex-basis: var(--panel-header-height);
+}
+
+.timeline-editor__tab { font-size: var(--font-size-sm); }
+
+.timeline-editor__toolbar {
+  height: var(--toolbar-height);
+  flex-basis: var(--toolbar-height);
+}
+
+.timeline-editor__button { width: var(--control-height); }
+
+.timeline-editor__row-disclosure { font-size: var(--font-size-md); }
+
+.timeline-editor__readout,
+.timeline-editor__fps,
+.timeline-editor__tree-heading,
+.timeline-editor__row { font-size: var(--font-size-xs); }
+
+.timeline-editor__tick,
+.timeline-editor--compact .timeline-editor__tree-heading,
+.timeline-editor--compact .timeline-editor__row { font-size: var(--font-size-2xs); }
+
+.timeline-editor__body { grid-template-rows: var(--row-height) minmax(0, 1fr); }
+
+.timeline-editor--compact {
+  grid-template-rows: calc(var(--panel-header-height) + var(--toolbar-height)) minmax(0, 1fr);
+}

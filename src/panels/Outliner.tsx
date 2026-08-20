@@ -15,7 +15,7 @@ export { MAX_OUTLINER_QUERY_BYTES, normalizeOutlinerQuery };
  * (tree building, row rendering, search filtering) lives in OutlinerView —
  * this file's only job is wiring the app's live data source to it.
  */
-export function Outliner() {
+export function Outliner({ uiScale = 1 }: { uiScale?: number }) {
   const projection = useSceneProjection();
   const [query, setQuery] = useState("");
   const visibilityFailureRef = useRef<number | null>(null);
@@ -48,6 +48,7 @@ export function Outliner() {
       nodes={projection.nodes}
       selectedNodeId={projection.selectedNodeId}
       query={query}
+      uiScale={uiScale}
       onQueryChange={setQuery}
       onSelect={onSelect}
       onToggleVisibility={onToggleVisibility}

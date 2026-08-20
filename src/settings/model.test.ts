@@ -45,9 +45,10 @@ describe("settings persistence", () => {
     expect(first).not.toBe(DEFAULT_SETTINGS);
   });
 
-  it("restores a saved v4 payload", () => {
+  it("restores a saved v5 payload", () => {
     const storage = new MemoryStorage();
     const settings = {
+      ui: { scale: 1.25 as const },
       viewport: {
         debugOverlay: false,
         displayMode: "wireframe" as const,
@@ -113,6 +114,7 @@ describe("settings persistence", () => {
     );
 
     expect(loadSettings(storage)).toEqual({
+      ui: DEFAULT_SETTINGS.ui,
       viewport: { ...DEFAULT_SETTINGS.viewport, debugOverlay: false },
       console: {
         minimumLevel: DEFAULT_SETTINGS.console.minimumLevel,
@@ -200,6 +202,35 @@ describe("settings persistence", () => {
     );
 
     expect(loadSettings(storage).viewport.lighting).toEqual(DEFAULT_SETTINGS.viewport.lighting);
+  });
+
+  it("accepts v4 settings and applies the default UI scale", () => {
+    const storage = new MemoryStorage();
+    storage.setItem(
+      SETTINGS_STORAGE_KEY,
+      JSON.stringify({
+        version: 4,
+        settings: {
+          viewport: { debugOverlay: true },
+          console: { minimumLevel: "info", autoScroll: true },
+        },
+      }),
+    );
+
+    expect(loadSettings(storage).ui).toEqual(DEFAULT_SETTINGS.ui);
+  });
+
+  it("rejects unsupported UI scales independently", () => {
+    const storage = new MemoryStorage();
+    storage.setItem(
+      SETTINGS_STORAGE_KEY,
+      JSON.stringify({
+        version: SETTINGS_VERSION,
+        settings: { ui: { scale: 1.1 } },
+      }),
+    );
+
+    expect(loadSettings(storage).ui).toEqual(DEFAULT_SETTINGS.ui);
   });
 
   it("rejects malformed lighting values independently", () => {

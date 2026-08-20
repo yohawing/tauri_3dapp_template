@@ -1,4 +1,4 @@
-import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
@@ -32,6 +32,7 @@ import {
   normalizeViewportEnvironmentSettings,
   saveSettings,
   type Settings,
+  type UiScale,
   type ViewportEnvironmentSettings,
   type ViewportLightingSettings,
 } from "./settings/model";
@@ -80,7 +81,10 @@ function createLazyOutliner() {
   );
 }
 
+const UiScaleContext = createContext<UiScale>(1);
+
 function LazyOutlinerPanel() {
+  const uiScale = useContext(UiScaleContext);
   const [generation, setGeneration] = useState(0);
   const [Outliner, setOutliner] = useState(createLazyOutliner);
   const retry = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
@@ -102,7 +106,7 @@ function LazyOutlinerPanel() {
       )}
     >
       <Suspense fallback={<div role="status">Loading outliner…</div>}>
-        <Outliner />
+        <Outliner uiScale={uiScale} />
       </Suspense>
     </LazyPanelBoundary>
   );
@@ -309,6 +313,10 @@ function App() {
   const [settings, setSettings] = useState<Settings>(() => loadSettings());
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
+  useLayoutEffect(() => {
+    document.documentElement.style.fontSize = `${settings.ui.scale * 16}px`;
+    requestViewportRemeasure();
+  }, [settings.ui.scale]);
   // Seed from wall time so a frontend reload in the same native process does
   // not restart its request ordering below the Rust-side latest sequence.
   const environmentRequestSequenceRef = useRef(Date.now());
@@ -1259,6 +1267,7 @@ function App() {
   }, []);
 
   return (
+    <UiScaleContext.Provider value={settings.ui.scale}>
     <div className="app-shell">
       <MenuBar
         actions={actions}
@@ -1312,6 +1321,7 @@ function App() {
         onClose={() => setSettingsOpen(false)}
       />
     </div>
+    </UiScaleContext.Provider>
   );
 }
 

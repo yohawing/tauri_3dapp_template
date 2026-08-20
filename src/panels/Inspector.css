@@ -10,12 +10,12 @@
   background: #1c1c21;
   color: #d6d6dc;
   font-family: var(--font-ui);
-  font-size: 10px;
+  font-size: var(--font-size-sm);
 }
 
 .inspector-panel__header {
-  flex: 0 0 20px;
-  height: 20px;
+  flex: 0 0 var(--panel-header-height);
+  height: var(--panel-header-height);
   display: flex;
   align-items: stretch;
   min-width: 0;
@@ -34,7 +34,7 @@
   border-radius: 0;
   color: #8a8a94;
   background: transparent;
-  font: 400 10px/1 var(--font-ui);
+  font: 400 var(--font-size-sm)/1 var(--font-ui);
   cursor: default;
 }
 
@@ -51,8 +51,8 @@
 }
 
 .inspector-selection {
-  flex: 0 0 22px;
-  height: 22px;
+  flex: 0 0 var(--toolbar-height);
+  height: var(--toolbar-height);
   display: flex;
   align-items: center;
   gap: 6px;
@@ -69,7 +69,7 @@
   min-width: 0;
   overflow: hidden;
   color: #f2f2f5;
-  font-size: 10px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -77,22 +77,22 @@
 
 .inspector-selection__label::before {
   content: "✓";
-  flex: 0 0 11px;
-  width: 11px;
-  height: 11px;
+  flex: 0 0 var(--icon-size-sm);
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
   display: grid;
   place-items: center;
   border-radius: 2px;
   color: #fff;
   background: #3b6fc4;
-  font-size: 8px;
+  font-size: var(--font-size-2xs);
   line-height: 1;
 }
 
 .inspector-selection__kind {
   flex: 0 0 auto;
   font-family: var(--font-mono);
-  font-size: 8px;
+  font-size: var(--font-size-2xs);
   letter-spacing: 0.06em;
   color: #6e6e78;
   text-transform: uppercase;
@@ -109,14 +109,14 @@
 .inspector-empty {
   padding: 12px 8px;
   color: #8a8a94;
-  font-size: 10px;
+  font-size: var(--font-size-sm);
 }
 
 .inspector-loading,
 .inspector-error {
   padding: 12px 8px;
   color: #8a8a94;
-  font-size: 10px;
+  font-size: var(--font-size-sm);
 }
 
 .inspector-error {
@@ -181,7 +181,7 @@
   --tp-container-foreground-color: #d6d6dc;
   --tp-container-horizontal-padding: 8px;
   --tp-container-vertical-padding: 4px;
-  --tp-container-unit-size: 15px;
+  --tp-container-unit-size: var(--control-height-sm);
   --tp-container-unit-spacing: 2px;
   --tp-input-background-color: #131316;
   --tp-input-background-color-active: #2b2b32;
@@ -196,20 +196,20 @@
   box-sizing: border-box;
   border-radius: 0;
   box-shadow: none;
-  font-size: 10px;
+  font-size: var(--font-size-sm);
   line-height: 1;
 }
 
 /* Flat section headers, matching the old InspectorSection treatment. */
 .inspector-pane .tp-fldv_b {
-  height: 19px;
-  line-height: 19px;
+  height: var(--panel-header-height);
+  line-height: var(--panel-header-height);
   padding-left: 8px;
   padding-right: 8px;
   border-radius: 0;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   font-family: var(--font-ui);
-  font-size: 10px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
 }
 
@@ -255,11 +255,11 @@
 /* Old Inspector fields used short rows and a right-aligned value block. */
 .inspector-pane .tp-lblv {
   box-sizing: border-box;
-  min-height: 17px;
-  height: 17px;
+  min-height: var(--row-height);
+  height: var(--row-height);
   padding-left: 8px;
   padding-right: 8px;
-  line-height: 17px;
+  line-height: var(--row-height);
 }
 
 .inspector-pane .tp-lblv_l {
@@ -267,8 +267,8 @@
   padding-right: 6px;
   color: #9a9aa4;
   font-family: var(--font-ui);
-  font-size: 9px;
-  line-height: 17px;
+  font-size: var(--font-size-xs);
+  line-height: var(--row-height);
 }
 
 .inspector-pane .tp-lblv_v {
@@ -279,16 +279,16 @@
 .inspector-pane .tp-lstv_s,
 .inspector-pane .tp-colswv_sw {
   box-sizing: border-box;
-  height: 15px;
-  min-height: 15px;
+  height: var(--control-height-sm);
+  min-height: var(--control-height-sm);
   border: 1px solid rgba(255, 255, 255, 0.09);
   border-radius: 2px;
   color: #e8e8ee;
   background: #131316;
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: var(--font-size-xs);
   font-variant-numeric: tabular-nums;
-  line-height: 15px;
+  line-height: var(--control-height-sm);
 }
 
 .inspector-pane .tp-txtv_i {
@@ -355,7 +355,7 @@
   top: 0;
   left: 5px;
   color: #6e6e78;
-  font: 9px/15px var(--font-mono);
+  font: var(--font-size-xs)/var(--control-height-sm) var(--font-mono);
   pointer-events: none;
 }
 
@@ -383,8 +383,8 @@
 }
 
 .inspector-pane .tp-colswv_sw {
-  height: 13px;
-  min-height: 13px;
+  height: var(--control-height-sm);
+  min-height: var(--control-height-sm);
 }
 
 .inspector-pane .tp-sldtxtv_t {
@@ -392,7 +392,7 @@
 }
 
 .inspector-pane .tp-sldv_t {
-  height: 15px;
+  height: var(--control-height-sm);
   margin-left: 6px;
   margin-right: 6px;
 }
@@ -407,16 +407,16 @@
 }
 
 .inspector-pane .tp-sldv_k::after {
-  width: 10px;
-  height: 10px;
-  right: -5px;
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
+  right: -0.4375rem;
   background: #8faee8;
 }
 
 /* Match the old small square checkbox and blue checked state. */
 .inspector-pane .tp-ckbv_w {
-  width: 11px;
-  height: 11px;
+  width: 15px;
+  height: 15px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 2px;
   background: #131316;
@@ -427,8 +427,8 @@
 }
 
 .inspector-pane .tp-ckbv_w svg {
-  width: 8px;
-  height: 8px;
+  width: 11px;
+  height: 11px;
 }
 
 .inspector-pane .tp-ckbv_w svg path {
@@ -439,6 +439,6 @@
 .inspector-pane-host .inspector-material-error {
   margin: 8px 0 0;
   color: #f0616f;
-  font-size: 9px;
+  font-size: var(--font-size-xs);
   line-height: 1.35;
 }
