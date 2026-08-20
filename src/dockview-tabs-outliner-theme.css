@@ -22,8 +22,15 @@
  */
 
 .dockview-theme-abyss {
-  --dv-tabs-and-actions-container-height: 22px;
-  --dv-tabs-and-actions-container-font-size: 10px;
+  /* rem, so this tracks a host's root font-size ("UI scale") the same way
+     tokens.css's own --control-height-* and --font-size-* tokens do. 22px
+     happens to be exactly --control-height-sm (1.375rem); reused rather than
+     re-declared so the two stay in lockstep. 10px has no existing token at
+     that exact size, so it's a literal rem value instead of being forced
+     onto a nearby token that would shift the default (16px-root) rendered
+     size. */
+  --dv-tabs-and-actions-container-height: var(--control-height-sm);
+  --dv-tabs-and-actions-container-font-size: 0.625rem;
   --dv-tabs-and-actions-container-background-color: #131316;
   --dv-activegroup-visiblepanel-tab-background-color: #1c1c21;
   --dv-activegroup-hiddenpanel-tab-background-color: #131316;
@@ -43,7 +50,7 @@
 }
 
 .dockview-theme-abyss .dv-tab {
-  padding: 0 11px;
+  padding: 0 0.6875rem; /* 11px */
   font-weight: 400;
 }
 
