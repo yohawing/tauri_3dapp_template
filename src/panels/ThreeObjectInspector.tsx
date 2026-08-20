@@ -7,6 +7,32 @@ import { reflectThreeObject, type ReflectedField } from "../scene/adapters/three
 // Tweakpane variables it defines apply here unchanged.
 import "./Inspector.css";
 
+/** Structural equality for the plain values a Tweakpane binding round-trips
+ * (string/number/boolean, or a `{x,y,z}` vector3 object) — used to decide
+ * whether an accepted edit's authoritative readback actually differs from
+ * what the user just typed (see the `binding.on("change", ...)` handler
+ * below for why this check exists at all). `event.value`'s shape always
+ * matches `field.get()`'s for the same field, so this only ever compares
+ * like with like. */
+export function fieldValuesEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a === "number" && typeof b === "number") return Object.is(a, b);
+  if (
+    typeof a === "object" &&
+    a !== null &&
+    typeof b === "object" &&
+    b !== null &&
+    "x" in a &&
+    "y" in a &&
+    "z" in a
+  ) {
+    const av = a as { x: number; y: number; z: number };
+    const bv = b as { x: number; y: number; z: number };
+    return av.x === bv.x && av.y === bv.y && av.z === bv.z;
+  }
+  return false;
+}
+
 /**
  * Tweakpane control surface driven by `reflectThreeObject`'s generic
  * binding descriptors, for a host that selected a real `THREE.Object3D`
@@ -67,9 +93,20 @@ export function ThreeObjectInspector({
         // The reflector may reject an edit (non-finite number, malformed
         // hex, …) without throwing — re-read the authoritative value so a
         // rejected edit visibly snaps back instead of leaving the pane
-        // showing a value the three.js object never actually took.
-        model.value = field.get();
-        binding.refresh();
+        // showing a value the three.js object never actually took. Only do
+        // this when the authoritative value actually differs from what was
+        // just typed: Tweakpane (v4.0.5) does not de-duplicate `rawValue`
+        // writes by structural equality (a fresh `{x,y,z}`/hex-string object
+        // reads as "changed" even when every field is identical), so calling
+        // `binding.refresh()` unconditionally here re-fires this same
+        // "change" handler synchronously on *every* accepted edit — an
+        // infinite recursion (RangeError: Maximum call stack size exceeded)
+        // that reproduces on the very first successful edit to any field.
+        const accepted = field.get();
+        if (!fieldValuesEqual(accepted, event.value)) {
+          model.value = accepted;
+          binding.refresh();
+        }
       });
     };
 
