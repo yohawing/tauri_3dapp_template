@@ -5,9 +5,22 @@ import {
   useSceneProjection,
 } from "../scene/adapters/sceneProjectionDataSource";
 import type { SceneNodeSummary } from "../scene/core/projection";
-import { OutlinerView, MAX_OUTLINER_QUERY_BYTES, normalizeOutlinerQuery } from "./OutlinerView";
+import {
+  OutlinerView,
+  MAX_OUTLINER_QUERY_BYTES,
+  normalizeOutlinerQuery,
+  type OutlinerOpenState,
+} from "./OutlinerView";
 
 export { MAX_OUTLINER_QUERY_BYTES, normalizeOutlinerQuery };
+
+// Module-level (outside React) so expand/collapse state survives this
+// container unmounting — e.g. dockview closing/reopening the Outliner tab —
+// as long as the module itself stays loaded. Mirrors how
+// sceneProjectionDataSource's own singleton survives the same remounts.
+// Scoped to the process/tab lifetime only: a full page reload resets it,
+// same as every other in-memory projection state this panel already reads.
+let sharedOutlinerOpenState: OutlinerOpenState = {};
 
 /**
  * Data-wired container: subscribes to the Native scene projection singleton
@@ -18,7 +31,13 @@ export { MAX_OUTLINER_QUERY_BYTES, normalizeOutlinerQuery };
 export function Outliner({ uiScale = 1 }: { uiScale?: number }) {
   const projection = useSceneProjection();
   const [query, setQuery] = useState("");
+  const [openState, setOpenState] = useState<OutlinerOpenState>(sharedOutlinerOpenState);
   const visibilityFailureRef = useRef<number | null>(null);
+
+  const handleOpenStateChange = useCallback((next: OutlinerOpenState) => {
+    sharedOutlinerOpenState = next;
+    setOpenState(next);
+  }, []);
 
   useEffect(() => {
     const failure = [...projection.commandResults]
@@ -52,6 +71,8 @@ export function Outliner({ uiScale = 1 }: { uiScale?: number }) {
       onQueryChange={setQuery}
       onSelect={onSelect}
       onToggleVisibility={onToggleVisibility}
+      openState={openState}
+      onOpenStateChange={handleOpenStateChange}
     />
   );
 }
