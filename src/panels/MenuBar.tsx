@@ -22,6 +22,26 @@ interface MenuBarProps {
    */
   brand?: string;
   /**
+   * Whether to draw the brand `<span>` at all. Defaults to `true` (unchanged
+   * behavior). Passing `brand=""` already blanks the text (JSX default
+   * params only apply to `undefined`, so an empty string renders an empty
+   * span), but the span still takes up its `padding-right` box, leaving a
+   * small gap in the bar. Pass `false` here for a host that wants the brand
+   * slot gone entirely rather than just visually empty (e.g.
+   * yw-retarget-web, which has no brand text of its own to show).
+   */
+  showBrand?: boolean;
+  /**
+   * Whether to draw the "View" menu (Inspector/Console/Settings/Layout
+   * reset). Defaults to `true` (unchanged behavior). Pass `false` for a host
+   * that doesn't expose those panels/actions at all (e.g. yw-retarget-web,
+   * which has its own panel-visibility model and previously hid this menu
+   * with a `:has()` CSS rule targeting `#menu-trigger-view` — this prop
+   * replaces that hack). Symmetric to `showRendererMenu` below; `actions`
+   * doesn't need `view.*` entries at all when this is `false`.
+   */
+  showViewMenu?: boolean;
+  /**
    * Whether to draw the "Renderer" menu, its always-visible Native/Canvas
    * toggle, and the `backendLabel` sr-only text. Defaults to `true`
    * (unchanged behavior): this template's own host has a real native wgpu
@@ -89,6 +109,8 @@ export function MenuBar({
   documentLabel,
   isMac,
   brand = "Tauri3D",
+  showBrand = true,
+  showViewMenu = true,
   showRendererMenu = true,
 }: MenuBarProps) {
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
@@ -246,9 +268,11 @@ export function MenuBar({
 
   return (
     <nav ref={rootRef} className="menu-bar" aria-label="Application menu">
-      <span className="menu-bar__title" title={documentLabel}>{brand}</span>
+      {showBrand && (
+        <span className="menu-bar__title" title={documentLabel}>{brand}</span>
+      )}
       {renderMenu("file", FILE_ACTIONS)}
-      {renderMenu("view", VIEW_ACTIONS)}
+      {showViewMenu && renderMenu("view", VIEW_ACTIONS)}
       {showRendererMenu && renderMenu("renderer", RENDERER_ACTIONS)}
       {showRendererMenu && (
         <div className="menu-bar__renderer-toggle" role="group" aria-label="Renderer backend">
