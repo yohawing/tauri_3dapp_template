@@ -7,10 +7,10 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: #1c1c21;
-  color: #d6d6dc;
+  background: var(--surface-2);
+  color: var(--text);
   font-family: var(--font-ui);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-xs);
 }
 
 .inspector-panel__header {
@@ -19,8 +19,8 @@
   display: flex;
   align-items: stretch;
   min-width: 0;
-  background: #131316;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+  background: var(--surface-0);
+  border-bottom: 1px solid var(--divider);
 }
 
 .inspector-panel__tab {
@@ -32,22 +32,22 @@
   padding: 0 11px;
   border: 0;
   border-radius: 0;
-  color: #8a8a94;
+  color: var(--text-muted);
   background: transparent;
-  font: 400 var(--font-size-sm)/1 var(--font-ui);
+  font: 400 var(--font-size-2xs)/1 var(--font-ui);
   cursor: default;
 }
 
-.inspector-panel__tab:hover:not(.inspector-panel__tab--active) { color: #d6d6dc; }
+.inspector-panel__tab:hover:not(.inspector-panel__tab--active) { color: var(--text); }
 .inspector-panel__tab--active {
-  color: #f2f2f5;
-  background: #1c1c21;
-  box-shadow: inset 0 2px 0 #3b6fc4;
+  color: var(--text-strong);
+  background: var(--surface-2);
+  box-shadow: inset 0 2px 0 var(--accent);
   font-weight: 500;
 }
 .inspector-panel__tab:focus-visible {
   outline: none;
-  box-shadow: inset 0 2px 0 #3b6fc4, var(--focus-ring);
+  box-shadow: inset 0 2px 0 var(--accent), var(--focus-ring);
 }
 
 .inspector-selection {
@@ -58,8 +58,8 @@
   gap: 6px;
   min-width: 0;
   padding: 0 8px;
-  background: #232329;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+  background: var(--surface-3);
+  border-bottom: 1px solid var(--divider);
 }
 
 .inspector-selection__label {
@@ -68,8 +68,8 @@
   gap: 6px;
   min-width: 0;
   overflow: hidden;
-  color: #f2f2f5;
-  font-size: var(--font-size-sm);
+  color: var(--text-strong);
+  font-size: var(--font-size-xs);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -83,8 +83,8 @@
   display: grid;
   place-items: center;
   border-radius: 2px;
-  color: #fff;
-  background: #3b6fc4;
+  color: var(--on-accent);
+  background: var(--accent);
   font-size: var(--font-size-2xs);
   line-height: 1;
 }
@@ -94,7 +94,7 @@
   font-family: var(--font-mono);
   font-size: var(--font-size-2xs);
   letter-spacing: 0.06em;
-  color: #6e6e78;
+  color: var(--text-dim);
   text-transform: uppercase;
 }
 
@@ -103,33 +103,33 @@
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
-  background: #1c1c21;
+  background: var(--surface-2);
 }
 
 .inspector-empty {
   padding: 12px 8px;
-  color: #8a8a94;
-  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
 }
 
 .inspector-loading,
 .inspector-error {
   padding: 12px 8px;
-  color: #8a8a94;
-  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
 }
 
 .inspector-error {
-  color: #e05561;
+  color: var(--error-text);
 }
 
 .inspector-error__retry {
   display: block;
   margin-top: 8px;
   padding: 3px 8px;
-  color: #d6d6dc;
-  background: #2b2b32;
-  border: 1px solid #454550;
+  color: var(--text);
+  background: var(--surface-4);
+  border: 1px solid var(--divider-strong);
   border-radius: 2px;
   font: inherit;
   cursor: pointer;
@@ -137,7 +137,7 @@
 
 .inspector-error__retry:hover,
 .inspector-error__retry:focus-visible {
-  background: #33333b;
+  background: var(--surface-4);
 }
 
 /* Tweakpane owns the Inspector controls. The variables below keep its
@@ -147,7 +147,7 @@
   min-height: 100%;
   padding: 0;
   box-sizing: border-box;
-  background: #1c1c21;
+  background: var(--surface-2);
 }
 
 .inspector-pane {
@@ -162,55 +162,60 @@
 }
 
 .inspector-pane .tp-rotv {
-  --tp-base-background-color: #1c1c21;
+  --tp-base-background-color: var(--surface-2);
   --tp-base-border-radius: 2px;
   --tp-base-font-family: var(--font-ui);
   --tp-base-shadow-color: transparent;
   --tp-blade-border-radius: 2px;
   --tp-blade-horizontal-padding: 4px;
   --tp-blade-value-width: min(294px, 74%);
-  --tp-button-background-color: #2b2b32;
-  --tp-button-background-color-active: #3b6fc4;
-  --tp-button-background-color-focus: #33333b;
-  --tp-button-background-color-hover: #33333b;
-  --tp-button-foreground-color: #e8e8ee;
-  --tp-container-background-color: #191920;
-  --tp-container-background-color-active: #2b2b32;
-  --tp-container-background-color-focus: #222229;
-  --tp-container-background-color-hover: #222229;
-  --tp-container-foreground-color: #d6d6dc;
+  --tp-button-background-color: var(--surface-4);
+  --tp-button-background-color-active: var(--accent);
+  --tp-button-background-color-focus: var(--surface-3);
+  --tp-button-background-color-hover: var(--surface-3);
+  --tp-button-foreground-color: var(--text-strong);
+  --tp-container-background-color: var(--surface-1);
+  --tp-container-background-color-active: var(--surface-4);
+  --tp-container-background-color-focus: var(--surface-3);
+  --tp-container-background-color-hover: var(--surface-3);
+  --tp-container-foreground-color: var(--text);
   --tp-container-horizontal-padding: 8px;
   --tp-container-vertical-padding: 4px;
   --tp-container-unit-size: var(--control-height-sm);
   --tp-container-unit-spacing: 2px;
-  --tp-input-background-color: #131316;
-  --tp-input-background-color-active: #2b2b32;
-  --tp-input-background-color-focus: #24242c;
-  --tp-input-background-color-hover: #1c1c21;
-  --tp-input-foreground-color: #e8e8ee;
-  --tp-label-foreground-color: #9a9aa4;
-  --tp-monitor-background-color: #131316;
-  --tp-monitor-foreground-color: #d6d6dc;
-  --tp-groove-foreground-color: rgba(255, 255, 255, 0.09);
+  --tp-input-background-color: var(--control-bg);
+  --tp-input-background-color-active: var(--surface-4);
+  --tp-input-background-color-focus: var(--surface-3);
+  --tp-input-background-color-hover: var(--control-bg-hover);
+  --tp-input-foreground-color: var(--text-strong);
+  --tp-label-foreground-color: var(--text-muted);
+  --tp-monitor-background-color: var(--control-bg);
+  --tp-monitor-foreground-color: var(--text);
+  --tp-groove-foreground-color: var(--divider);
   width: 100%;
   box-sizing: border-box;
   border-radius: 0;
   box-shadow: none;
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-xs);
   line-height: 1;
 }
 
-/* Flat section headers, matching the old InspectorSection treatment. */
+/* Flat section headers — the shared "section heading" style (11px / 600 /
+   uppercase / muted) so a Tweakpane folder title reads like every other
+   panel's section title instead of a heavier 14px bar. */
 .inspector-pane .tp-fldv_b {
   height: var(--panel-header-height);
   line-height: var(--panel-header-height);
   padding-left: 8px;
   padding-right: 8px;
   border-radius: 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--divider-faint);
+  color: var(--text-muted);
   font-family: var(--font-ui);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-2xs);
   font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .inspector-pane .tp-fldv_t {
@@ -224,7 +229,7 @@
   right: auto;
   border-left: 4px solid transparent;
   border-right: 4px solid transparent;
-  border-top: 5px solid #8a8a94;
+  border-top: 5px solid var(--text-muted);
   background: none;
   border-radius: 0;
   opacity: 0.9;
@@ -249,7 +254,7 @@
 }
 
 .inspector-pane > .tp-fldv + .tp-fldv > .tp-fldv_b {
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid var(--divider-faint);
 }
 
 /* Old Inspector fields used short rows and a right-aligned value block. */
@@ -265,7 +270,7 @@
 .inspector-pane .tp-lblv_l {
   padding-left: 0;
   padding-right: 6px;
-  color: #9a9aa4;
+  color: var(--text-muted);
   font-family: var(--font-ui);
   font-size: var(--font-size-xs);
   line-height: var(--row-height);
@@ -281,10 +286,10 @@
   box-sizing: border-box;
   height: var(--control-height-sm);
   min-height: var(--control-height-sm);
-  border: 1px solid rgba(255, 255, 255, 0.09);
+  border: 1px solid var(--divider);
   border-radius: 2px;
-  color: #e8e8ee;
-  background: #131316;
+  color: var(--text-strong);
+  background: var(--surface-0);
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
   font-variant-numeric: tabular-nums;
@@ -299,15 +304,15 @@
 .inspector-pane .tp-txtv_i:hover,
 .inspector-pane .tp-lstv_s:hover,
 .inspector-pane .tp-colswv_sw:hover {
-  background: #1c1c21;
-  border-color: rgba(255, 255, 255, 0.18);
+  background: var(--surface-2);
+  border-color: var(--divider-strong);
 }
 
 .inspector-pane .tp-txtv_i:focus,
 .inspector-pane .tp-lstv_s:focus,
 .inspector-pane .tp-colswv_sw:focus {
-  background: #24242c;
-  border-color: #3b6fc4;
+  background: var(--surface-3);
+  border-color: var(--accent);
   box-shadow: var(--focus-ring);
 }
 
@@ -330,8 +335,8 @@
 }
 
 .inspector-pane .tp-pndtxtv.tp-v-disabled .tp-txtv_i {
-  color: #d6d6dc;
-  background: #131316;
+  color: var(--text);
+  background: var(--surface-0);
 }
 
 .inspector-pane .tp-pndtxtv.tp-v-disabled .tp-txtv_i:disabled {
@@ -354,15 +359,15 @@
   z-index: 1;
   top: 0;
   left: 5px;
-  color: #6e6e78;
+  color: var(--text-dim);
   font: var(--font-size-xs)/var(--control-height-sm) var(--font-mono);
   pointer-events: none;
 }
 
-.inspector-pane .tp-pndtxtv_a:nth-child(1)::before { content: "X"; color: #e05561; }
-.inspector-pane .tp-pndtxtv_a:nth-child(2)::before { content: "Y"; color: #7fbf3f; }
-.inspector-pane .tp-pndtxtv_a:nth-child(3)::before { content: "Z"; color: #4a8fe0; }
-.inspector-pane .tp-pndtxtv_a:nth-child(4)::before { content: "W"; color: #b07fe0; }
+.inspector-pane .tp-pndtxtv_a:nth-child(1)::before { content: "X"; color: var(--axis-x); }
+.inspector-pane .tp-pndtxtv_a:nth-child(2)::before { content: "Y"; color: var(--axis-y); }
+.inspector-pane .tp-pndtxtv_a:nth-child(3)::before { content: "Z"; color: var(--axis-z); }
+.inspector-pane .tp-pndtxtv_a:nth-child(4)::before { content: "W"; color: var(--axis-w); }
 
 .inspector-pane .tp-pndtxtv .tp-txtv_i {
   padding-left: 14px;
@@ -399,31 +404,31 @@
 
 .inspector-pane .tp-sldv_t::before {
   height: 2px;
-  background: #131316;
+  background: var(--surface-0);
 }
 
 .inspector-pane .tp-sldv_k::before {
-  background: #3b6fc4;
+  background: var(--accent);
 }
 
 .inspector-pane .tp-sldv_k::after {
   width: var(--icon-size-sm);
   height: var(--icon-size-sm);
   right: -0.4375rem;
-  background: #8faee8;
+  background: var(--accent-ink);
 }
 
 /* Match the old small square checkbox and blue checked state. */
 .inspector-pane .tp-ckbv_w {
   width: 15px;
   height: 15px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--divider-strong);
   border-radius: 2px;
-  background: #131316;
+  background: var(--surface-0);
 }
 
 .inspector-pane .tp-ckbv_i:checked + .tp-ckbv_w {
-  background: #3b6fc4;
+  background: var(--accent);
 }
 
 .inspector-pane .tp-ckbv_w svg {
@@ -432,13 +437,13 @@
 }
 
 .inspector-pane .tp-ckbv_w svg path {
-  stroke: #fff;
+  stroke: var(--on-accent);
   stroke-width: 1.6;
 }
 
 .inspector-pane-host .inspector-material-error {
   margin: 8px 0 0;
-  color: #f0616f;
+  color: var(--error-text);
   font-size: var(--font-size-xs);
   line-height: 1.35;
 }
