@@ -1,23 +1,44 @@
 :root {
   /* Tauri3D shell design tokens. Keep the viewport hole transparent; these
      colors are for DOM-owned chrome and panel surfaces only. */
+  --shell-deep: #09090c; /* viewport / lowest layer */
   --shell-bg: #0e0e11;
   --surface-0: #131316;
   --surface-1: #16161a;
   --surface-2: #1c1c21;
   --surface-3: #232329;
   --surface-4: #2b2b32;
+  --divider-faint: rgba(255, 255, 255, 0.06); /* hairlines inside a panel (folder rows) */
   --divider: rgba(255, 255, 255, 0.09);
   --divider-strong: rgba(255, 255, 255, 0.14);
   --text-strong: #f2f2f5;
   --text: #d6d6dc;
   --text-muted: #8a8a94;
   --text-dim: #6e6e78;
+  --text-faint: #4a4a54; /* disabled glyphs only — never body text */
   --accent: #3b6fc4;
   --accent-strong: #5a8fe0;
   --accent-soft: rgba(59, 111, 196, 0.22);
+  --accent-ink: #8faee8; /* secondary accent text / slider knob */
+  --on-accent: #fff; /* text on an --accent fill */
+  /* Status colors come as fill / text / soft-background triples so a host
+     never has to reuse the fill for text (too saturated on dark surfaces). */
   --warning: #e0a33a;
+  --warning-text: #e0a33a;
+  --warning-bg: rgba(224, 163, 58, 0.16);
+  --on-warning: #1a1200;
   --error: #f0616f;
+  --error-text: #f0616f;
+  --error-bg: rgba(240, 97, 111, 0.16);
+  --success: #5fb37a;
+  --success-text: #5fb37a;
+  --success-bg: rgba(95, 179, 122, 0.16);
+  /* XYZW axis cues (Inspector point editors) — the one place the 3D-tool
+     convention (X red / Y green / Z blue) wins over the palette. */
+  --axis-x: #e05561;
+  --axis-y: #7fbf3f;
+  --axis-z: #4a8fe0;
+  --axis-w: #b07fe0;
   --font-ui: Inter, "Segoe UI", -apple-system, BlinkMacSystemFont, Avenir, Helvetica, Arial, sans-serif;
   --font-mono: "JetBrains Mono", "SF Mono", Consolas, monospace;
   /* The shell was originally drawn around an 8px minimum. Keep the same

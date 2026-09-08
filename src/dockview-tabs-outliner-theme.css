@@ -31,22 +31,22 @@
      size. */
   --dv-tabs-and-actions-container-height: var(--control-height-sm);
   --dv-tabs-and-actions-container-font-size: 0.625rem;
-  --dv-tabs-and-actions-container-background-color: #131316;
-  --dv-activegroup-visiblepanel-tab-background-color: #1c1c21;
-  --dv-activegroup-hiddenpanel-tab-background-color: #131316;
-  --dv-inactivegroup-visiblepanel-tab-background-color: #1c1c21;
-  --dv-inactivegroup-hiddenpanel-tab-background-color: #131316;
-  --dv-activegroup-visiblepanel-tab-color: #f2f2f5;
-  --dv-activegroup-hiddenpanel-tab-color: #8a8a94;
-  --dv-inactivegroup-visiblepanel-tab-color: #f2f2f5;
-  --dv-inactivegroup-hiddenpanel-tab-color: #8a8a94;
-  --dv-tab-divider-color: rgba(255, 255, 255, 0.1);
-  --dv-icon-hover-background-color: rgba(255, 255, 255, 0.1);
+  --dv-tabs-and-actions-container-background-color: var(--surface-0);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--surface-2);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--surface-0);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--surface-2);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--surface-0);
+  --dv-activegroup-visiblepanel-tab-color: var(--text-strong);
+  --dv-activegroup-hiddenpanel-tab-color: var(--text-muted);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--text-strong);
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--text-muted);
+  --dv-tab-divider-color: var(--divider);
+  --dv-icon-hover-background-color: var(--divider);
 }
 
 .dockview-theme-abyss .dv-tabs-and-actions-container {
   font-family: var(--font-ui, sans-serif);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid var(--divider);
 }
 
 .dockview-theme-abyss .dv-tab {
@@ -55,15 +55,15 @@
 }
 
 /* Mirrors `.outliner-panel__tab--active`'s `box-shadow: inset 0 2px 0
- * #3b6fc4` top underline exactly (rather than dockview's stock themes'
+ * var(--accent)` top underline exactly (rather than dockview's stock themes'
  * `border-top` swap, which shifts the tab's box height by the border width). */
 .dockview-theme-abyss .dv-tab.dv-active-tab {
-  box-shadow: inset 0 2px 0 #3b6fc4;
+  box-shadow: inset 0 2px 0 var(--accent);
   font-weight: 500;
 }
 
 .dockview-theme-abyss .dv-tab.dv-inactive-tab:hover {
-  color: #d6d6dc;
+  color: var(--text);
 }
 
 /* dockview-core 7.0.4 has no per-panel "closeable: false" affordance (its
